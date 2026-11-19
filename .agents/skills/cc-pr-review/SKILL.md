@@ -53,7 +53,7 @@ filled in: the brief is that session's only context.
    `packages/api` changes. One deploy per machine: take
    `bash .agents/skills/cc-pr-review/scripts/deploy-lock.sh acquire <tag>`
    before `deploy`, `release` after `stop`, and wait when it is held.
-   Containers named `canyonos-<other project>-*` belong to someone else.
+   Containers named `canyonos-<other workflow group>-*` belong to someone else.
    Deploy copies of the examples from a scratch folder, with `api_port`,
    `dashboard_port` and `redis_port` that `docker ps --format '{{.Ports}}'`
    does not show. Only `deploy` needs the lock: run `bun run check`,
@@ -75,7 +75,7 @@ filled in: the brief is that session's only context.
 ## What counts
 
 - Findings: valid input breaks; state left half-applied; behavior silently
-  changed; existing projects, examples, docs or the skill contradicted.
+  changed; existing workflows, examples, docs or the skill contradicted.
 - Not findings: invalid config failing fast; a backfill for stored data while
   no production exists; anything already broken on `main` (list it as a
   follow-up candidate instead). A bug on `main` the owner asks about in the

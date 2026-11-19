@@ -14,16 +14,16 @@ folder is `.canyon/config`.
 | `scaling.yaml`                                                  | When to add and remove replicas                                                                      | [Autoscaling](SCALING.md)                                |
 | `policy.yaml`                                                   | Which agents a request may reach                                                                     | [Policy](RUNTIME_CONTRACT.md#policy)                     |
 | `governance.yaml`                                               | Per agent: refuse calls while an agent it needs is down, and switch model or refuse past a spend     | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
-| `.env`, in the project folder (beside `.canyon` after convert)  | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
-| `deployment.yaml`, in the deployment folder                     | Where every project's agents run, the ports, Redis and telemetry, for the whole deployment           | [Top-level keys](WORKFLOW_CONFIG.md#top-level-keys)      |
+| `.env`, in the workflow folder (beside `.canyon` after convert)  | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
+| `workflow_group.yaml`, in the workflow group folder                     | Where every workflow's agents run, the ports, Redis and telemetry, for the whole workflow group           | [Top-level keys](WORKFLOW_CONFIG.md#top-level-keys)      |
 
 ## Apply a change
 
 | You changed               | Run                                                         |
 | ------------------------- | ----------------------------------------------------------- |
-| Settings, in the terminal | `canyonos config`, then `canyonos sync <project folder>...` |
-| A file in `config/`       | `canyonos sync <project folder>...`                         |
-| Your code or `.env`       | `canyonos deploy <project folder>...`                       |
+| Settings, in the terminal | `canyonos config`, then `canyonos sync <workflow folder>...` |
+| A file in `config/`       | `canyonos sync <workflow folder>...`                         |
+| Your code or `.env`       | `canyonos deploy <workflow folder>...`                       |
 
 `canyonos config` and `canyonos sync` apply to a deploy on Docker; on Kubernetes, run
 `canyonos deploy` again. With nothing deployed, every change applies on the next
@@ -82,8 +82,8 @@ Each agent is measured on its own load. See [Autoscaling](SCALING.md).
 
 ## Run it somewhere else
 
-`provider` in `deployment.yaml` decides where the agents run: `local` (Docker on
+`provider` in `workflow_group.yaml` decides where the agents run: `local` (Docker on
 this machine, the default), or `ec2-pool` and `ec2-assign` for EC2 machines.
-`target: kubernetes` in `deployment.yaml` moves the whole deployment to a Kubernetes
-cluster; Kubernetes deploys don't support multi-folder deployments yet. See
+`target: kubernetes` in `workflow_group.yaml` moves the whole workflow group to a Kubernetes
+cluster; Kubernetes deploys don't support multi-folder workflow groups yet. See
 [Local](LOCAL.md), [EC2](EC2.md) and [Kubernetes](KUBERNETES.md).

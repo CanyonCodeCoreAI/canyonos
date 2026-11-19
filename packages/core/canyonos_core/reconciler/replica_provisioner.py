@@ -242,7 +242,7 @@ class ReplicaProvisioner(object):
                 replica_id,
             )
         except ForeignContainerError:
-            # The container under this name is another project's: left in the
+            # The container under this name is another workflow group's: left in the
             # record, remove_unfinished would remove theirs as ours.
             self._delete_replica_record(replica_id, {"agent_name": agent_name})
             raise

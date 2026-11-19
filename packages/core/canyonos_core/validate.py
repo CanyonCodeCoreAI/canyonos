@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Contracts a project has to keep that the schema alone cannot see.
+"""Contracts a workflow has to keep that the schema alone cannot see.
 
-`check_project` reads the project's config. What it cannot read is the Python
+`check_workflow` reads the workflow's config. What it cannot read is the Python
 beside it: a class the controller loads by name, or a method the executor calls
 without awaiting. Each of those survives a green build and fails inside a
 container, or on its first request, so they are checked here against the same
@@ -12,7 +12,7 @@ image Python or the runtime's module names.
 
     python -m canyonos_core.validate <root> [--json]
 
-Exit 0 when the project is clean, 1 when anything was found, and 2 when it could
+Exit 0 when the workflow is clean, 1 when anything was found, and 2 when it could
 not be checked because `config/workflow_config.yaml` is missing.
 """
 
@@ -24,7 +24,7 @@ import sys
 import textwrap
 from typing import NamedTuple
 
-from canyonos_core.schema import CONFIG_PATH, CodeAgent, check_project
+from canyonos_core.schema import CONFIG_PATH, CodeAgent, check_workflow
 from canyonos_core.stub_generator import AGENT_FLAT_MODULES
 
 UNCHECKED = 2
@@ -33,7 +33,7 @@ WRAP_WIDTH = 78
 
 
 class ManifestNotFound(RuntimeError):
-    """Raised by `validate_root` when the project has no manifest to check."""
+    """Raised by `validate_root` when the workflow has no manifest to check."""
 
 
 class Finding(NamedTuple):
@@ -165,7 +165,7 @@ def _binds(node, name):
 
 
 def _imported_file(root, path, node):
-    """The source file an `ImportFrom` reads, or None outside the project."""
+    """The source file an `ImportFrom` reads, or None outside the workflow."""
     if node.level:
         package = os.path.dirname(os.path.relpath(path, root))
         for _ in range(node.level - 1):
@@ -186,7 +186,7 @@ def _resolve_class(root, path, tree, name, seen=frozenset()):
 
     Follows what the controller's getattr(module, name) would reach without
     running anything: a class statement, an alias of another name, and a
-    `from ... import` of a module in the project.
+    `from ... import` of a module in the workflow.
     """
     if (path, name) in seen:
         return _UNREADABLE
@@ -406,7 +406,7 @@ def _check_method(report, class_path, class_name, function, methods, complete):
 
 
 def _check_flat_collisions(report, root):
-    """A project module at the source root the runtime's own copy lands on."""
+    """A workflow module at the source root the runtime's own copy lands on."""
     for entry in sorted(os.listdir(root)):
         if entry not in AGENT_FLAT_MODULES:
             continue
@@ -417,9 +417,9 @@ def _check_flat_collisions(report, root):
             "CANYON-FLAT-COLLISION",
             path,
             1,
-            f"a project module named `{entry}` sits at the root of the source copy",
+            f"a workflow module named `{entry}` sits at the root of the source copy",
             "The shared CanyonOS Core runtime is copied flat into the image "
-            f"after the project sweep, so this file is replaced by Core's own "
+            f"after the workflow sweep, so this file is replaced by Core's own "
             f"{entry}. Rename it or move it into a package directory.",
         )
 
@@ -475,7 +475,7 @@ def _check_package_reexport(report, root, agent_spec):
 
 
 class _Report:
-    """The findings so far, with every path written relative to the project root."""
+    """The findings so far, with every path written relative to the workflow root."""
 
     def __init__(self, root):
         self.root = root
@@ -497,7 +497,7 @@ class _Report:
 
 
 def validate_root(root):
-    """Every violation in the project at `root`, schema first, contracts after.
+    """Every violation in the workflow at `root`, schema first, contracts after.
 
     Raise `ManifestNotFound` when `root` holds no manifest; otherwise never raise,
     and leave the caller to decide how to report. Schema violations come back
@@ -511,7 +511,7 @@ def validate_root(root):
         )
 
     report = _Report(root)
-    manifest, violations = check_project(root)
+    manifest, violations = check_workflow(root)
     for violation in violations:
         report.add(
             "CANYON-SCHEMA",
@@ -521,7 +521,7 @@ def validate_root(root):
             if violation.field
             else violation.message,
             "The in-container deploy runs this same check before it generates a "
-            "single stub, and rejects the project rather than building it.",
+            "single stub, and rejects the workflow rather than building it.",
         )
 
     if manifest is None:
@@ -532,7 +532,7 @@ def validate_root(root):
             continue
         entrypoint_path = os.path.join(root, agent_spec.entrypoint)
         if not os.path.isfile(entrypoint_path) or not _inside(root, entrypoint_path):
-            continue  # reported by check_project
+            continue  # reported by check_workflow
         _check_adapter(report, root, entrypoint_path, agent_spec)
         _check_package_reexport(report, root, agent_spec)
 
@@ -563,7 +563,7 @@ def payload(root, findings):
 
 def finding_text(finding):
     """Return the lines `canyonos validate` prints for one finding, joined by newlines.
-    Used here and by the server's project upload, which sends them to the CLI."""
+    Used here and by the server's workflow upload, which sends them to the CLI."""
     where = finding.path
     if where and finding.line:
         where = f"{where}:{finding.line}"
@@ -585,13 +585,13 @@ def _print_text(findings):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="python -m canyonos_core.validate",
-        description="Check a project against the CanyonOS contract.",
+        description="Check a workflow against the CanyonOS contract.",
     )
     parser.add_argument(
         "root",
         nargs="?",
         default=".",
-        help="the project directory holding config/ (default: the cwd)",
+        help="the workflow directory holding config/ (default: the cwd)",
     )
     parser.add_argument("--json", action="store_true", help="emit findings as JSON")
     args = parser.parse_args(argv)

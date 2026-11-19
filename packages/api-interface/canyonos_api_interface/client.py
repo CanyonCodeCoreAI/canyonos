@@ -14,16 +14,16 @@ from pydantic import BaseModel
 
 from canyonos_api_interface.models import (
     DashboardBody,
-    DashboardProject,
-    DeploymentBody,
-    Deployments,
+    DashboardWorkflows,
     Generation,
     Health,
-    Project,
-    Projects,
     ReplicaLogs,
     Status,
     Uploaded,
+    Workflow,
+    WorkflowGroupBody,
+    WorkflowGroups,
+    Workflows,
 )
 
 Answer = TypeVar("Answer", bound=BaseModel)
@@ -63,46 +63,59 @@ class Client:
         with self._open(method, path, data, headers) as response:
             return answer.model_validate_json(response.read())
 
-    def list_deployments(self) -> Deployments:
-        """GET /v1/deployments: the deployments the server holds."""
-        return self._call(Deployments, "GET", "/v1/deployments")
+    def list_workflow_groups(self) -> WorkflowGroups:
+        """GET /v1/workflow-groups: the workflow groups the server holds."""
+        return self._call(WorkflowGroups, "GET", "/v1/workflow-groups")
 
-    def status(self, deployment_id: str) -> Status:
-        """GET /v1/deployments/{deployment_id}: the deployment's status."""
-        return self._call(Status, "GET", f"/v1/deployments/{deployment_id}")
+    def status(self, workflow_group_id: str) -> Status:
+        """GET /v1/workflow-groups/{workflow_group_id}: the workflow group's status."""
+        return self._call(Status, "GET", f"/v1/workflow-groups/{workflow_group_id}")
 
-    def put_deployment(self, deployment_id: str, body: DeploymentBody) -> Uploaded:
-        """PUT /v1/deployments/{deployment_id}: upload deployment.yaml and its .env."""
+    def put_workflow_group(
+        self, workflow_group_id: str, body: WorkflowGroupBody
+    ) -> Uploaded:
+        """PUT /v1/workflow-groups/{workflow_group_id}: upload workflow_group.yaml and
+        its .env."""
         return self._call(
             Uploaded,
             "PUT",
-            f"/v1/deployments/{deployment_id}",
+            f"/v1/workflow-groups/{workflow_group_id}",
             body.model_dump_json().encode(),
             JSON,
         )
 
-    def delete_deployment(self, deployment_id: str) -> Generation:
-        """DELETE /v1/deployments/{deployment_id}: stop the deploy and remove the
-        upload."""
-        return self._call(Generation, "DELETE", f"/v1/deployments/{deployment_id}")
-
-    def list_projects(self, deployment_id: str) -> Projects:
-        """GET /v1/deployments/{deployment_id}/projects: the uploaded projects."""
-        return self._call(Projects, "GET", f"/v1/deployments/{deployment_id}/projects")
-
-    def get_project(self, deployment_id: str, name: str) -> Project:
-        """GET /v1/deployments/{deployment_id}/projects/{name}: one uploaded project."""
+    def delete_workflow_group(self, workflow_group_id: str) -> Generation:
+        """DELETE /v1/workflow-groups/{workflow_group_id}: stop the deploy and remove
+        the upload."""
         return self._call(
-            Project, "GET", f"/v1/deployments/{deployment_id}/projects/{quote(name)}"
+            Generation, "DELETE", f"/v1/workflow-groups/{workflow_group_id}"
         )
 
-    def put_project(self, deployment_id: str, name: str, archive: BinaryIO) -> Uploaded:
-        """PUT /v1/deployments/{deployment_id}/projects/{name}: upload `archive`, an
-        open gzip tar file of the project's folder."""
+    def list_workflows(self, workflow_group_id: str) -> Workflows:
+        """GET /v1/workflow-groups/{workflow_group_id}/workflows: the uploaded
+        workflows."""
+        return self._call(
+            Workflows, "GET", f"/v1/workflow-groups/{workflow_group_id}/workflows"
+        )
+
+    def get_workflow(self, workflow_group_id: str, name: str) -> Workflow:
+        """GET /v1/workflow-groups/{workflow_group_id}/workflows/{name}: one uploaded
+        workflow."""
+        return self._call(
+            Workflow,
+            "GET",
+            f"/v1/workflow-groups/{workflow_group_id}/workflows/{quote(name)}",
+        )
+
+    def put_workflow(
+        self, workflow_group_id: str, name: str, archive: BinaryIO
+    ) -> Uploaded:
+        """PUT /v1/workflow-groups/{workflow_group_id}/workflows/{name}: upload
+        `archive`, an open gzip tar file of the workflow's folder."""
         return self._call(
             Uploaded,
             "PUT",
-            f"/v1/deployments/{deployment_id}/projects/{quote(name)}",
+            f"/v1/workflow-groups/{workflow_group_id}/workflows/{quote(name)}",
             archive,
             # Without a length, urllib sends a file chunked.
             {
@@ -111,51 +124,55 @@ class Client:
             },
         )
 
-    def delete_project(self, deployment_id: str, name: str) -> Generation:
-        """DELETE /v1/deployments/{deployment_id}/projects/{name}: remove a project."""
+    def delete_workflow(self, workflow_group_id: str, name: str) -> Generation:
+        """DELETE /v1/workflow-groups/{workflow_group_id}/workflows/{name}: remove a
+        workflow."""
         return self._call(
             Generation,
             "DELETE",
-            f"/v1/deployments/{deployment_id}/projects/{quote(name)}",
+            f"/v1/workflow-groups/{workflow_group_id}/workflows/{quote(name)}",
         )
 
     def controller_log(
-        self, deployment_id: str, tail: str | int = "all", follow: bool = False
+        self, workflow_group_id: str, tail: str | int = "all", follow: bool = False
     ) -> Iterator[str]:
-        """GET /v1/deployments/{deployment_id}/logs/controller: yield the deploy
+        """GET /v1/workflow-groups/{workflow_group_id}/logs/controller: yield the deploy
         process's last `tail` lines, then with `follow` each new one until it exits."""
         query = urlencode({"tail": tail, "follow": str(follow).lower()})
         with self._open(
-            "GET", f"/v1/deployments/{deployment_id}/logs/controller?{query}"
+            "GET", f"/v1/workflow-groups/{workflow_group_id}/logs/controller?{query}"
         ) as response:
             for line in response:
                 yield line.decode(errors="replace")
 
-    def health(self, deployment_id: str) -> Health:
-        """GET /v1/deployments/{deployment_id}/health: check the running deploy."""
-        return self._call(Health, "GET", f"/v1/deployments/{deployment_id}/health")
+    def health(self, workflow_group_id: str) -> Health:
+        """GET /v1/workflow-groups/{workflow_group_id}/health: check the running
+        deploy."""
+        return self._call(
+            Health, "GET", f"/v1/workflow-groups/{workflow_group_id}/health"
+        )
 
     def agent_logs(
-        self, deployment_id: str, name: str, tail: str | int = "all"
+        self, workflow_group_id: str, name: str, tail: str | int = "all"
     ) -> ReplicaLogs:
-        """GET /v1/deployments/{deployment_id}/logs/agents/{name}: the last `tail`
-        lines of each replica of agent `name`, or of the replica with that ID."""
+        """GET /v1/workflow-groups/{workflow_group_id}/logs/agents/{name}: the last
+        `tail` lines of each replica of agent `name`, or of the replica with that ID."""
         return self._call(
             ReplicaLogs,
             "GET",
-            f"/v1/deployments/{deployment_id}/logs/agents/{quote(name)}"
+            f"/v1/workflow-groups/{workflow_group_id}/logs/agents/{quote(name)}"
             f"?{urlencode({'tail': tail})}",
         )
 
     def put_dashboard(
-        self, deployment_id: str, body: DashboardBody
-    ) -> DashboardProject:
-        """PUT /v1/deployments/{deployment_id}/dashboard: register the deployment's
-        Redis with the dashboard api at `body.url`."""
+        self, workflow_group_id: str, body: DashboardBody
+    ) -> DashboardWorkflows:
+        """PUT /v1/workflow-groups/{workflow_group_id}/dashboard: register the workflow
+        group's Redis with the dashboard api at `body.url`."""
         return self._call(
-            DashboardProject,
+            DashboardWorkflows,
             "PUT",
-            f"/v1/deployments/{deployment_id}/dashboard",
+            f"/v1/workflow-groups/{workflow_group_id}/dashboard",
             body.model_dump_json().encode(),
             JSON,
         )

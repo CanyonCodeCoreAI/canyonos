@@ -1,18 +1,18 @@
 ---
 name: prompt-management
-description: Extract existing LLM prompts from an agent project's source into CanyonOS config/prompts.yaml. Use when setting up prompt management or refreshing its versioned prompts from code.
+description: Extract existing LLM prompts from an agent workflow's source into CanyonOS config/prompts.yaml. Use when setting up prompt management or refreshing its versioned prompts from code.
 ---
 
 # Extract prompts for CanyonOS
 
-Create or update `prompts.yaml` from the project's actual LLM call paths, following
+Create or update `prompts.yaml` from the workflow's actual LLM call paths, following
 [Prompt management](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/PROMPTS.md).
 Preserve prompt content and application behavior; do not invent or improve prompts.
 
 ## 1. Locate the source and config
 
-- Work in the project root: `.canyon` when the project folder has one, otherwise
-  the project folder itself. Find `config/workflow_config.yaml` there and write
+- Work in the workflow root: `.canyon` when the workflow folder has one, otherwise
+  the workflow folder itself. Find `config/workflow_config.yaml` there and write
   `prompts.yaml` beside it. Respect an explicitly chosen destination.
 - Trace the manifest's agent entrypoints, relative to the root, to their LLM calls.
 - Search for message roles, prompt constants, template constructors, formatting
@@ -69,7 +69,7 @@ ISO 8601 timestamp, and `live: true` marks the version agents are sent.
 - Report the destination, extracted names, source locations, placeholder
   bindings, unrepresented call paths, and validation results.
 
-Creating the file makes prompts available to the running project's dashboard
+Creating the file makes prompts available to the running workflow's dashboard
 after controller startup. The gateway sends each function's live version as the
 system prompt of its LLM calls, so the code must stop sending those instructions
 itself; remove them from the code only when requested, and keep the runtime

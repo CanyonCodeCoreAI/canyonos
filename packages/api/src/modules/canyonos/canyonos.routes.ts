@@ -5,28 +5,29 @@ import { Elysia } from 'elysia';
 
 import { config } from '@core/env';
 
-import { register_project_at } from './canyonos.bootstrap';
-import { RegisteredProjectSchema, RegisterProjectBody } from './canyonos.types';
+import { register_workflows_at } from './canyonos.bootstrap';
+import { RegisteredWorkflowsSchema, RegisterWorkflowBody } from './canyonos.types';
 
-// Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
-// with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
+// Temporary: applied now so multi-workflow dashboards work without blocking the flow; revisit
+// with the workflow-key design in CAN-521 (the api should not hold per-workflow Redis addresses).
 // Unauthenticated: the caller is the CLI on the deploy host. The body carries only a port, its
-// password, the client certificate a Docker deployment's Redis takes and, at most, the name of a
-// CanyonOS project's Redis container: the api connects to that or its own configured Redis host,
-// never a host the caller chooses freely, and takes the project id from the identity a controller
+// password, the client certificate a Docker workflow group's Redis takes and, at most, the name of
+// a CanyonOS workflow's Redis container: the api connects to that or its own configured Redis host,
+// never a host the caller chooses freely, and takes the workflow id from the identity a controller
 // wrote there.
 export const canyonosRoutes = new Elysia({ prefix: '/canyonos', name: 'canyonos.routes' }).post(
-  '/projects',
-  ({ body }) =>
-    register_project_at(
+  '/workflows',
+  async ({ body }) => ({
+    workflows: await register_workflows_at(
       body.redis_host ?? config.canyonos.redisHost,
       body.redis_port,
       body.redis_password,
       body.redis_tls
     ),
+  }),
   {
-    body: RegisterProjectBody,
-    response: { 200: RegisteredProjectSchema },
-    detail: { tags: ['CanyonOS'], summary: 'Register the deployment a controller runs' },
+    body: RegisterWorkflowBody,
+    response: { 200: RegisteredWorkflowsSchema },
+    detail: { tags: ['CanyonOS'], summary: 'Register each workflow a controller runs' },
   }
 );

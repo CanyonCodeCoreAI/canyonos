@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 import { authenticate } from './helpers/auth';
-import { stubFleetSpend, stubProjectsList } from './helpers/session';
+import { stubFleetSpend, stubWorkflowsList } from './helpers/session';
 
 const DARK_FAVICON = '/cc-favicon.svg';
 const LIGHT_FAVICON = '/cc-favicon-light.svg';
@@ -13,9 +13,9 @@ const LIGHT_FAVICON = '/cc-favicon-light.svg';
 async function openDashboard(page: Page, colorScheme: 'light' | 'dark'): Promise<void> {
   await page.emulateMedia({ colorScheme });
   await authenticate(page);
-  await stubProjectsList(page, []);
+  await stubWorkflowsList(page, []);
   await stubFleetSpend(page);
-  await page.goto('/projects');
+  await page.goto('/workflows');
   await expect(page.getByTestId('theme-toggle')).toBeVisible();
 }
 

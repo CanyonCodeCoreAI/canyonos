@@ -29,7 +29,7 @@ _SERVER_TLS_FILES = (
 def connection_options(environ=None):
     """Password, username and TLS for a Redis that requires them, from the
     CANYONOS_REDIS_* variables. On Docker the container's own certificate
-    (`internal_tls`) sets them: TLS with the deployment's CA and a client certificate.
+    (`internal_tls`) sets them: TLS with the workflow group's CA and a client certificate.
     The Kubernetes operator or a managed Redis can set them directly; EC2 sets only the
     password. None set means a plain connection. Timeouts and retries stay redis-py's
     defaults unless `RedisClient` is given a `timeout`. The LLM gateway
@@ -56,7 +56,7 @@ def connection_options(environ=None):
 
 
 def password_env_args(local=True):
-    """The `docker run` args that give a container the project's Redis password. A local
+    """The `docker run` args that give a container the workflow group's Redis password. A local
     `docker` copies it from this process's environment, which keeps it off the command
     line; one run over SSH needs the value."""
     password = os.environ.get(PASSWORD_ENV)
@@ -66,12 +66,12 @@ def password_env_args(local=True):
 
 
 def redis_server_command(port, local=True, tls=False):
-    """The command a Redis container runs on `port`, requiring the project's password. A
+    """The command a Redis container runs on `port`, requiring the workflow group's password. A
     local one reads it from the environment `password_env_args` gives the container, and
     goes through the image's entrypoint, which starts Redis as its own user, not root.
 
     With `tls` (local only), Redis serves `port` over TLS alone and takes only clients
-    with a certificate the deployment's CA signed. The container first writes the
+    with a certificate the workflow group's CA signed. The container first writes the
     certificate it was given (`internal_ca.certificate_env_file_args`) to files Redis's
     user reads."""
     password = os.environ.get(PASSWORD_ENV)
@@ -116,7 +116,7 @@ def redis_server_command(port, local=True, tls=False):
 
 
 def hide_password(text):
-    """Return `text` with the project's Redis password masked."""
+    """Return `text` with the workflow group's Redis password masked."""
     password = os.environ.get(PASSWORD_ENV)
     return text.replace(password, "***") if password else text
 

@@ -7,29 +7,29 @@ import { z } from 'zod';
 import { TimeRangeQuerySchema } from '@core/time-range';
 
 import { authPlugin } from '../auth/auth.middleware';
-import { resolveProjectAccess } from '../auth/project-access';
+import { resolveWorkflowAccess } from '../auth/workflow-access';
 import { get_request_trace, list_requests } from './requests.service';
 import { ListRequestsQuerySchema, RequestListSchema, RequestTraceSchema } from './requests.types';
 
 const doc = { tags: ['Requests'], security: [{ bearerAuth: [] }] };
 
-// Prefix-less: composed into projects.routes so both live in one `/projects` tree. Two separate
-// `/projects` plugins would make Eden type `projects[:id]` a union and drop `.get` for clients.
+// Prefix-less: composed into workflows.routes so both live in one `/workflows` tree. Two separate
+// `/workflows` plugins would make Eden type `workflows[:id]` a union and drop `.get` for clients.
 export const requestsRoutes = new Elysia({ name: 'requests.routes' })
   .use(authPlugin)
-  .resolve(resolveProjectAccess)
-  .get('/:project_id/requests', ({ params, query }) => list_requests(params.project_id, query), {
-    params: z.object({ project_id: z.string().uuid() }),
+  .resolve(resolveWorkflowAccess)
+  .get('/:workflow_id/requests', ({ params, query }) => list_requests(params.workflow_id, query), {
+    params: z.object({ workflow_id: z.string().uuid() }),
     query: ListRequestsQuerySchema,
     response: { 200: RequestListSchema },
     detail: { ...doc, summary: 'List OTEL request traces with per-trace rollups' },
   })
   .get(
-    '/:project_id/requests/:request_id',
-    ({ params, query }) => get_request_trace(params.project_id, params.request_id, query),
+    '/:workflow_id/requests/:request_id',
+    ({ params, query }) => get_request_trace(params.workflow_id, params.request_id, query),
     {
       params: z.object({
-        project_id: z.string().uuid(),
+        workflow_id: z.string().uuid(),
         // OTEL trace IDs are opaque; this API accepts up to 255 characters. The otel_spans
         // column itself has no length limit.
         request_id: z.string().min(1).max(255),

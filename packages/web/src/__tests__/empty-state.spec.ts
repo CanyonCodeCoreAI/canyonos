@@ -4,42 +4,47 @@
 import { expect, test } from '@playwright/test';
 
 import { authenticate } from './helpers/auth';
-import { apiBaseUrl, fulfillJson } from './helpers/projects';
-import { PROJECT, stubFleetSpend, stubProjectDashboard, stubProjectsList } from './helpers/session';
+import {
+  stubFleetSpend,
+  stubWorkflowDashboard,
+  stubWorkflowsList,
+  WORKFLOW,
+} from './helpers/session';
+import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 
-test('a pending project read shows the shimmering logo until the project arrives', async ({
+test('a pending workflow read shows the shimmering logo until the workflow arrives', async ({
   page,
 }) => {
   await authenticate(page);
-  await stubProjectsList(page, [PROJECT]);
+  await stubWorkflowsList(page, [WORKFLOW]);
   await stubFleetSpend(page);
-  await stubProjectDashboard(page, PROJECT);
+  await stubWorkflowDashboard(page, WORKFLOW);
 
-  let releaseProject!: () => void;
-  const projectGate = new Promise<void>((resolve) => {
-    releaseProject = resolve;
+  let releaseWorkflow!: () => void;
+  const workflowGate = new Promise<void>((resolve) => {
+    releaseWorkflow = resolve;
   });
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === `/projects/${PROJECT.id}`,
+    (url) => url.origin === apiOrigin && url.pathname === `/workflows/${WORKFLOW.id}`,
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
-      await projectGate;
-      return fulfillJson(route, PROJECT);
+      await workflowGate;
+      return fulfillJson(route, WORKFLOW);
     }
   );
 
-  await page.goto(`/projects/${PROJECT.id}`);
+  await page.goto(`/workflows/${WORKFLOW.id}`);
 
   const empty = page.getByTestId('empty-state');
   try {
-    await expect(empty).toContainText('Loading deployment…');
+    await expect(empty).toContainText('Loading workflow…');
     await expect(empty.getByTestId('empty-state-logo')).toHaveAttribute('data-loading', 'true');
   } finally {
-    releaseProject();
+    releaseWorkflow();
   }
 
-  await expect(page.getByTestId('project-screen')).toBeVisible();
+  await expect(page.getByTestId('workflow-screen')).toBeVisible();
   await expect(empty).toHaveCount(0);
 });

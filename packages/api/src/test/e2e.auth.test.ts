@@ -11,8 +11,8 @@ import { config } from '@core/env';
 
 import { hashApiKey } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
-import { seed_active_agents, seed_running_project } from './redis-test.utils';
+import { seed_active_agents, seed_running_workflow } from './redis-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -32,7 +32,9 @@ const POLICY: ScalingPolicy = {
 
 const PROMPTS = {
   prompts: {
-    greet: [{ version: 'greet-00000001-v1', content: 'Say hello.', updated_at: null, live: true }],
+    'app.greet': [
+      { version: 'greet-00000001-v1', content: 'Say hello.', updated_at: null, live: true },
+    ],
   },
 };
 
@@ -45,12 +47,12 @@ const refusal = (res: Res) => ({
   ...(res.error?.value as { error?: string; message?: string } | undefined),
 });
 
-async function running_project(name: string): Promise<string> {
-  const { project_id } = await create_test_project({ name });
-  await seed_running_project(project_id, PROMPTS);
+async function running_workflow(name: string): Promise<string> {
+  const { workflow_id } = await create_test_workflow({ name });
+  await seed_running_workflow(workflow_id, PROMPTS);
   await seed_active_agents(JSON.stringify(['app.Greeter']));
-  await load_prompts(project_id);
-  return project_id;
+  await load_prompts(workflow_id);
+  return workflow_id;
 }
 
 const fetch_api = (path: string, init?: RequestInit) => fetch(`${config.app.apiUrl}${path}`, init);
@@ -59,21 +61,21 @@ describe('the dashboard API checks the API key', () => {
   test('no Authorization header, or a Basic one, is 401 auth.missing_key', async () => {
     const basic = { authorization: `Basic ${Buffer.from('admin:admin').toString('base64')}` };
 
-    for (const res of [await api.projects.get(), await api.projects.get({ $headers: basic })]) {
+    for (const res of [await api.workflows.get(), await api.workflows.get({ $headers: basic })]) {
       expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.missing_key' });
       expect(refusal(res).message).toBeString();
     }
   });
 
   test('a key that is not the API key is 401 auth.invalid_key', async () => {
-    const res = await api.projects.get({ $headers: bearer(WRONG_KEY) });
+    const res = await api.workflows.get({ $headers: bearer(WRONG_KEY) });
 
     expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
   });
 
   test('a refusal says to send a bearer, and a pass does not', async () => {
-    const refused = await fetch_api('/projects', { headers: bearer(WRONG_KEY) });
-    const passed = await fetch_api('/projects', { headers: bearer(TEST_API_KEY) });
+    const refused = await fetch_api('/workflows', { headers: bearer(WRONG_KEY) });
+    const passed = await fetch_api('/workflows', { headers: bearer(TEST_API_KEY) });
 
     expect(refused.status).toBe(401);
     expect(refused.headers.get('www-authenticate')).toBe('Bearer');
@@ -82,71 +84,71 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('the Bearer scheme is matched in any case and the key is trimmed', async () => {
-    const res = await api.projects.get({
+    const res = await api.workflows.get({
       $headers: { authorization: `bearer   ${TEST_API_KEY}  ` },
     });
 
     expect(res.error).toBeNull();
   });
 
-  test('the API key gets 200 from every GET under a project', async () => {
-    const project_id = await running_project('Key Reads Everything');
+  test('the API key gets 200 from every GET under a workflow', async () => {
+    const workflow_id = await running_workflow('Key Reads Everything');
     const read = { $headers: bearer(TEST_API_KEY) };
-    const project = api.projects[project_id]!;
+    const workflow = api.workflows[workflow_id]!;
 
     const responses = await Promise.all([
-      project.get(read),
-      project.stats.get(read),
-      project.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
-      project.metrics.kpis.get({ ...read, $query: RANGE }),
-      project.monitoring.series.get({ ...read, $query: RANGE }),
-      project.monitoring.logs.get({
+      workflow.get(read),
+      workflow.stats.get(read),
+      workflow.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
+      workflow.metrics.kpis.get({ ...read, $query: RANGE }),
+      workflow.monitoring.series.get({ ...read, $query: RANGE }),
+      workflow.monitoring.logs.get({
         ...read,
         $query: { ...RANGE, limit: 200, errors_only: false },
       }),
-      project.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
-      project.monitoring.resources.get({ ...read, $query: RANGE }),
-      project.monitoring.replicas.get(read),
-      project.monitoring.endpoint.get(read),
-      project.prompts.get(read),
-      project.prompts.greet!.get(read),
-      project.scaling.get(read),
-      project.scaling.agents.get(read),
-      project.governance.get(read),
+      workflow.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
+      workflow.monitoring.resources.get({ ...read, $query: RANGE }),
+      workflow.monitoring.replicas.get(read),
+      workflow.monitoring.endpoint.get(read),
+      workflow.prompts.get(read),
+      workflow.prompts['app.greet']!.get(read),
+      workflow.scaling.get(read),
+      workflow.scaling.agents.get(read),
+      workflow.governance.get(read),
     ]);
 
     for (const res of responses) expect(res.error).toBeNull();
     expect((await api.resources.overview.get({ ...read, $query: RANGE })).error).toBeNull();
   });
 
-  test('the API key changes a project, and a wrong key changes nothing', async () => {
-    const project_id = await running_project('Key Writes');
+  test('the API key changes a workflow, and a wrong key changes nothing', async () => {
+    const workflow_id = await running_workflow('Key Writes');
     const headers = bearer(TEST_API_KEY);
     const wrong = bearer(WRONG_KEY);
-    const project = api.projects[project_id]!;
+    const workflow = api.workflows[workflow_id]!;
 
     const refused = await Promise.all([
-      project.scaling.app!.put(POLICY, { headers: wrong }),
-      project.scaling.app!.delete(undefined, { headers: wrong }),
-      project.delete(undefined, { headers: wrong }),
-      project['sample-data'].post({ workflow: 'helloworld' }, { headers: wrong }),
-      project.prompts.greet!.versions.post({ content: 'Say goodbye.' }, { headers: wrong }),
-      project.prompts.greet!.live.put({ version: 'greet-00000001-v1' }, { headers: wrong }),
-      project.governance.agents.Greeter!.put({ requires: [], spend: null }, { headers: wrong }),
-      project.governance.agents.Greeter!.stopped.put({ stopped: true }, { headers: wrong }),
+      workflow.scaling.put(POLICY, { headers: wrong }),
+      workflow.scaling.delete(undefined, { headers: wrong }),
+      workflow.delete(undefined, { headers: wrong }),
+      workflow['sample-data'].post({ workflow: 'helloworld' }, { headers: wrong }),
+      workflow.prompts['app.greet']!.versions.post({ content: 'Say goodbye.' }, { headers: wrong }),
+      workflow.prompts['app.greet']!.live.put({ version: 'greet-00000001-v1' }, { headers: wrong }),
+      workflow.governance.agents.Greeter!.put({ requires: [], spend: null }, { headers: wrong }),
+      workflow.governance.agents.Greeter!.stopped.put({ stopped: true }, { headers: wrong }),
     ]);
     for (const res of refused) {
       expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
     }
-    expect((await project.scaling.get({ $headers: headers })).data).toEqual({
-      projects: { app: { status: 'none' } },
+    expect((await workflow.scaling.get({ $headers: headers })).data).toEqual({
+      workflows: { app: { status: 'none' } },
     });
 
-    expect((await project.scaling.app!.put(POLICY, { headers })).error).toBeNull();
-    expect((await project.scaling.get({ $headers: headers })).data).toEqual({
-      projects: { app: { status: 'applied', policy: POLICY } },
+    expect((await workflow.scaling.put(POLICY, { headers })).error).toBeNull();
+    expect((await workflow.scaling.get({ $headers: headers })).data).toEqual({
+      workflows: { app: { status: 'applied', policy: POLICY } },
     });
-    expect((await project.scaling.app!.delete(undefined, { headers })).error).toBeNull();
+    expect((await workflow.scaling.delete(undefined, { headers })).error).toBeNull();
   });
 
   test('/auth/check answers ok to the API key and 401 to anything else', async () => {
@@ -185,9 +187,9 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('a CORS preflight needs no key', async () => {
-    const project_id = await running_project('Preflight');
+    const workflow_id = await running_workflow('Preflight');
 
-    const response = await fetch_api(`/projects/${project_id}/scaling/app`, {
+    const response = await fetch_api(`/workflows/${workflow_id}/scaling`, {
       method: 'OPTIONS',
       headers: {
         origin: 'http://localhost:5173',
@@ -204,8 +206,8 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('twenty concurrent requests alternating the key and a wrong one each get their own verdict', async () => {
-    const project_id = await running_project('Concurrent');
-    const replicas = api.projects[project_id]!.monitoring.replicas;
+    const workflow_id = await running_workflow('Concurrent');
+    const replicas = api.workflows[workflow_id]!.monitoring.replicas;
 
     const responses = await Promise.all(
       Array.from({ length: 20 }, (_, i) =>
@@ -219,9 +221,9 @@ describe('the dashboard API checks the API key', () => {
     });
   });
 
-  test('every route under /projects, /resources and /auth/check checks the key', () => {
+  test('every route under /workflows, /resources and /auth/check checks the key', () => {
     const guarded = forgeApi.routes.filter(({ path }) =>
-      ['/projects', '/resources', '/auth/check'].some((prefix) => path.startsWith(prefix))
+      ['/workflows', '/resources', '/auth/check'].some((prefix) => path.startsWith(prefix))
     );
     expect(guarded.length).toBeGreaterThan(30);
 
@@ -290,8 +292,8 @@ describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
     await with_api({ CANYONOS_API_KEY_HASH: hashApiKey(other_key) }, async (url) => {
       const status = await fetch(`${url}/auth/status`);
       expect(await status.json()).toEqual({ api_key_required: true });
-      expect((await fetch(`${url}/projects`, { headers: bearer(other_key) })).status).toBe(200);
-      expect((await fetch(`${url}/projects`, { headers: bearer(TEST_API_KEY) })).status).toBe(401);
+      expect((await fetch(`${url}/workflows`, { headers: bearer(other_key) })).status).toBe(200);
+      expect((await fetch(`${url}/workflows`, { headers: bearer(TEST_API_KEY) })).status).toBe(401);
     });
   }, 40_000);
 
@@ -299,8 +301,8 @@ describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
     await with_api({ CANYONOS_API_KEY_HASH: '' }, async (url) => {
       const status = await fetch(`${url}/auth/status`);
       expect(await status.json()).toEqual({ api_key_required: false });
-      expect((await fetch(`${url}/projects`)).status).toBe(200);
-      expect((await fetch(`${url}/projects`, { headers: bearer(WRONG_KEY) })).status).toBe(200);
+      expect((await fetch(`${url}/workflows`)).status).toBe(200);
+      expect((await fetch(`${url}/workflows`, { headers: bearer(WRONG_KEY) })).status).toBe(200);
       expect((await fetch(`${url}/auth/check`)).status).toBe(200);
     });
   }, 40_000);

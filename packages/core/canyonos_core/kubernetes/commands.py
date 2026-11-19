@@ -137,13 +137,13 @@ def _render_project(
         )
     if namespace:
         spec = dataclasses.replace(spec, namespace=namespace)
-    if not config.get("deployment_id"):
-        raise RuntimeError(f"{workspace}/{DEPLOYMENT_CONFIG} has no deployment_id")
+    if not config.get("workflow_group_id"):
+        raise RuntimeError(f"{workspace}/{DEPLOYMENT_CONFIG} has no workflow_group_id")
     return manifests.render(
         config,
         spec,
         project_name=project_name,
-        project_id=str(config["deployment_id"]),
+        project_id=str(config["workflow_group_id"]),
         config_files=manifests.config_folder(workspace),
         images=images,
         controller_image=controller_image,

@@ -28,8 +28,8 @@ from canyonos_core.schema import (
     CONFIG_PATH,
     check_deployment,
     load_deployment_config,
-    project_names,
     render_violation,
+    workflow_names,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -61,7 +61,7 @@ def _reject(violations, summary):
 
 
 def _validate_or_exit(workspace):
-    """Reject the deployment before anything is generated; return the parsed manifest."""
+    """Reject the workflow group before anything is generated; return the parsed manifest."""
     manifest, violations = check_deployment(workspace)
     if violations:
         _reject(
@@ -117,8 +117,8 @@ def _write_bake_file(bake_targets, bake_file_path, platform, push_to=None):
     return bake_file_path
 
 
-def _ensure_grpc_stubs_importable(project_dir):
-    grpc_stubs_dir = os.path.join(project_dir, "grpc_stubs")
+def _ensure_grpc_stubs_importable(workspace):
+    grpc_stubs_dir = os.path.join(workspace, "grpc_stubs")
     if grpc_stubs_dir not in sys.path:
         sys.path.insert(0, grpc_stubs_dir)
 
@@ -138,9 +138,9 @@ def _ensure_grpc_stubs_importable(project_dir):
 
 
 def _checked_config(workspace):
-    """The parsed manifest and the loaded config, once the schema accepts the deployment
+    """The parsed manifest and the loaded config, once the schema accepts the workflow group
     and every agent's requirements are ones CanyonOS supports; exits otherwise."""
-    # Nothing below runs against a deployment the schema rejects. Validate before
+    # Nothing below runs against a workflow group the schema rejects. Validate before
     # loading so non-YAML files render as violations too, and so an agent with missing
     # code fails here instead of being skipped from a "successful" deploy.
     manifest = _validate_or_exit(workspace)
@@ -175,7 +175,7 @@ def _checked_config(workspace):
 
 def _generate_build_contexts(manifest, config, workspace):
     """Generate stubs, compile gRPC protos and generate a Docker context for every agent
-    with code, from its own project's folder; return their bake targets. Database
+    with code, from its own workflow's folder; return their bake targets. Database
     agents get none: they run a published image as it is."""
     package_dir = _get_package_dir()
 
@@ -206,8 +206,8 @@ def _generate_build_contexts(manifest, config, workspace):
     from canyonos_core.stub_generator import generate_stub, generate_docker
 
     bake_targets = []
-    for project in project_names(workspace):
-        project_dir = os.path.join(workspace, project)
+    for workflow in workflow_names(workspace):
+        workflow_dir = os.path.join(workspace, workflow)
 
         # ---------------------------------------------------------- #
         #  Step 2: Generate Python stubs from the agents' functions   #
@@ -215,7 +215,7 @@ def _generate_build_contexts(manifest, config, workspace):
         code_agent_specs = [
             agent_spec
             for agent_spec in manifest.agents
-            if agent_spec.project == project and agent_spec.type == "agent"
+            if agent_spec.workflow == workflow and agent_spec.type == "agent"
         ]
         # Keyed by the stub's own basename, which is the entrypoint's: the stub is
         # written to `stubs/<entrypoint>` below.
@@ -225,7 +225,9 @@ def _generate_build_contexts(manifest, config, workspace):
         }
         stub_paths = []
         for code_agent_spec in code_agent_specs:
-            output_path = os.path.join(project_dir, "stubs", code_agent_spec.entrypoint)
+            output_path = os.path.join(
+                workflow_dir, "stubs", code_agent_spec.entrypoint
+            )
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             logger.info("Generating stub: %s -> %s", code_agent_spec.name, output_path)
             generate_stub(code_agent_spec, output_path)
@@ -235,14 +237,17 @@ def _generate_build_contexts(manifest, config, workspace):
         #  Step 3: Generate Docker contexts                           #
         # ---------------------------------------------------------- #
         for agent_spec in config.get("agents", []):
-            if agent_spec["project"] != project or agent_spec.get("type") == "database":
+            if (
+                agent_spec["workflow"] != workflow
+                or agent_spec.get("type") == "database"
+            ):
                 continue
             agent_name = agent_spec["name"]
             # Every key read below is one the schema requires and has checked,
             # down to the file being on disk -- an agent that cannot be built
             # fails the deploy rather than dropping quietly out of it.
             agent_files = {
-                hosted["name"]: os.path.join(project_dir, hosted["entrypoint"])
+                hosted["name"]: os.path.join(workflow_dir, hosted["entrypoint"])
                 for hosted in agent_spec.get("agents", [agent_spec])
             }
             docker_context = os.path.join(
@@ -255,7 +260,7 @@ def _generate_build_contexts(manifest, config, workspace):
                 output_dir=docker_context,
                 grpc_stubs_dir=grpc_stubs_dir,
                 stub_files=stub_paths,
-                project_dir=project_dir,
+                workflow_dir=workflow_dir,
                 requirements=_normalize_requirements(agent_spec),
                 stub_entrypoints=stub_entrypoints,
             )
@@ -370,7 +375,7 @@ def _build_images(workspace, bake_targets, platform, database_pulls, processes):
         if pull.returncode:
             raise RuntimeError(
                 f"Could not pull image {image} for database agent {agent_name}: "
-                f"{stderr.strip()}. Check its `image:` in its project's "
+                f"{stderr.strip()}. Check its `image:` in its workflow's "
                 "config/workflow_config.yaml."
             )
         subprocess.run(["docker", "tag", image, target_image], check=True)
@@ -417,8 +422,8 @@ def _cmd_deploy(args):
     # Fail here rather than after a fleet of containers is already up without
     # the API keys they need.
     try:
-        for project in project_names(workspace):
-            resolve_env_file(os.path.join(workspace, project, CONFIG_PATH))
+        for workflow in workflow_names(workspace):
+            resolve_env_file(os.path.join(workspace, workflow, CONFIG_PATH))
     except ValueError as e:
         logger.error("%s", e)
         sys.exit(1)
@@ -507,12 +512,12 @@ def _cmd_clean(args):
     """
     Remove generated stubs, gRPC files, and Docker build contexts.
     """
-    project_dir = os.getcwd()
+    workspace = os.getcwd()
 
     paths_to_clean = [
-        os.path.join(project_dir, "stubs"),
-        os.path.join(project_dir, "grpc_stubs"),
-        os.path.join(project_dir, "docker_container"),
+        os.path.join(workspace, "stubs"),
+        os.path.join(workspace, "grpc_stubs"),
+        os.path.join(workspace, "docker_container"),
     ]
 
     for path in paths_to_clean:
@@ -535,7 +540,7 @@ def _cmd_clean(args):
 
 def main():
     """Run the core command given on the command line. The container's server uses it to
-    build and deploy the project when the CLI asks."""
+    build and deploy the workflow group when the CLI asks."""
     parser = argparse.ArgumentParser(
         prog="canyonos_core",
         description="CanyonOS — Distributed Agent Orchestration Framework",

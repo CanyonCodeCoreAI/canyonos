@@ -4,7 +4,7 @@
 """Request context crosses threads, asyncio and process pools without leaking
 between requests: two rounds of concurrent requests, so the workflow's reused
 pools have to switch requests, and each caller has to see its own request's IDs.
-Runs only for projects with the `context-propagation` trait."""
+Runs only for workflows with the `context-propagation` trait."""
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -24,7 +24,7 @@ def test_each_request_keeps_its_own_context(recorder, deployed, check):
             recorder,
             deployed.endpoint,
             deployed.query,
-            timeout=deployed.project.timeout,
+            timeout=deployed.workflow.timeout,
         )
 
     problems = []

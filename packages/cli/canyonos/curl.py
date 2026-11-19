@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos curl`: POST one JSON body to a workflow of the running deployment,
+Logic for `canyonos curl`: POST one JSON body to a workflow of the running workflow group,
 this folder's or the selected one, with this machine's API key, and print what the
 endpoint answers. It sends that one request and waits for nothing else: the answer to
 a queued request is its `request_id`, whose result `/status/<request_id>` gives.
@@ -27,21 +27,22 @@ REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _route_path(route):
-    """The route as `<project>/<agent>/<method>`."""
-    return f"{route['project']}/{route['agent']}/{route['method']}"
+    """The route as `<workflow>/<agent>/<method>`."""
+    return f"{route['workflow']}/{route['agent']}/{route['method']}"
 
 
 def _named(routes, wanted):
-    """The routes `wanted` names: its URL, `<project>/<agent>/<method>`,
+    """The routes `wanted` names: its URL, `<workflow>/<agent>/<method>`,
     `<agent>/<method>` or `<method>`."""
     if wanted.startswith(("http://", "https://")):
-        wanted = urlsplit(wanted).path
+        path = urlsplit(wanted).path
+        return [r for r in routes if urlsplit(r["url"]).path == path]
     parts = wanted.strip("/").split("/")
     return [r for r in routes if _route_path(r).split("/")[-len(parts) :] == parts]
 
 
 def _listed(routes):
-    """The routes as `<project>/<agent>/<method>`, comma-separated."""
+    """The routes as `<workflow>/<agent>/<method>`, comma-separated."""
     return ", ".join(_route_path(route) for route in routes)
 
 
@@ -60,11 +61,11 @@ def _pick_route(routes, wanted):
     if len(routes) == 1:
         return routes[0]
     if not routes:
-        ui.fail("The running deployment serves no route.")
+        ui.fail("The running workflow group serves no route.")
         return None
     if not is_terminal(sys.stdin):
         ui.fail(
-            "This deployment serves several routes; pick one with --route: "
+            "This workflow group serves several routes; pick one with --route: "
             + _listed(routes)
         )
         return None
@@ -104,7 +105,7 @@ def _show(text):
 
 def run_curl(body_text, route=None, show_command=False):
     """Run `canyonos curl`: POST the JSON `body_text` to a route of the running
-    deployment, by default its only one, and print the answer; with `show_command`,
+    workflow group, by default its only one, and print the answer; with `show_command`,
     print the equivalent `curl` instead, the key left out. Returns the exit code: 0
     when the endpoint answers 2xx."""
     try:
@@ -117,14 +118,14 @@ def run_curl(body_text, route=None, show_command=False):
         return 1
     if not os.path.isfile(deployment_config_path()):
         ui.fail(
-            "No deployment is selected. Run it from a deployment's folder, or see the "
-            "deployments with `canyonos list` and pick one with "
-            "`canyonos select-context <deployment>`."
+            "No workflow group is selected. Run it from a workflow group's folder, or see "
+            "the workflow groups with `canyonos list` and pick one with "
+            "`canyonos select-context <workflow group>`."
         )
         return 1
     state = existing_deploy()
     if state is None:
-        ui.fail("No deploy is running. Start it with `canyonos deploy`.")
+        ui.fail("No workflow group is running. Start it with `canyonos deploy`.")
         return 1
     picked = _pick_route(deployed_endpoint(state)["routes"], route)
     if picked is None:

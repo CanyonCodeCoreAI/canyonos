@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos config`: view or change the deployment's `deployment.yaml`.
+Logic for `canyonos config`: view or change the workflow group's `workflow_group.yaml`.
 
 View merely prints out the config, while change opens up a separate temp screen for easy changes.
 """
@@ -309,7 +309,7 @@ def _run_change_config():
 
     if saves:
         ui.ok(f"Saved {saves} change(s) to {config_path}")
-        ui.hint("Apply them with `canyonos sync <project folder>...`.")
+        ui.hint("Apply them with `canyonos sync <workflow folder>...`.")
         return True
     ui.say("No changes made.")
     return True

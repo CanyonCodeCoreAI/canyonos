@@ -5,7 +5,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 import { authenticate } from './helpers/auth';
-import { PROJECT, stubFleetSpend, stubProjectsList } from './helpers/session';
+import { stubFleetSpend, stubWorkflowsList, WORKFLOW } from './helpers/session';
 
 const SIDEBAR_DEFAULT_WIDTH_REM = 17.625;
 const SIDEBAR_MIN_WIDTH_REM = 12.5;
@@ -13,9 +13,9 @@ const SIDEBAR_MAX_WIDTH_REM = 30;
 
 async function openDashboard(page: Page) {
   await authenticate(page);
-  await stubProjectsList(page, [PROJECT]);
+  await stubWorkflowsList(page, [WORKFLOW]);
   await stubFleetSpend(page);
-  await page.goto('/projects');
+  await page.goto('/workflows');
   await expect(page.getByTestId('app-sidebar')).toBeVisible();
 }
 

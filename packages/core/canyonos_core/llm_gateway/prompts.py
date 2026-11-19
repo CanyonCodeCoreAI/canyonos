@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Sets the system prompt of each LLM call from the project's prompts.yaml."""
+"""Sets the system prompt of each LLM call from the workflow's prompts.yaml."""
 
 from __future__ import annotations
 

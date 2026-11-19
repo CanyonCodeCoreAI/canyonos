@@ -51,7 +51,7 @@ export const RequestTraceBlockSchema = z.object({
   error_message: z.string().nullable(),
 });
 
-// The listing's rollup for one trace, plus what only the detail view needs: the project's medians
+// The listing's rollup for one trace, plus what only the detail view needs: the workflow's medians
 // over the requests that started in the queried range, and the blocks it ran. The trace itself reads
 // whole wherever it started. Every median is null when nothing billed in the range.
 export const RequestTraceSchema = RequestListItemSchema.pick({
@@ -65,7 +65,7 @@ export const RequestTraceSchema = RequestListItemSchema.pick({
   token_count: true,
   total_cost: true,
 }).extend({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   input: z.unknown().nullable(),
   output: z.unknown().nullable(),
   median_cost: z.string().nullable(),
@@ -73,7 +73,7 @@ export const RequestTraceSchema = RequestListItemSchema.pick({
   median_harness_cost: z.string().nullable(),
   median_token_count: z.number().nullable(),
   // How many times the median each figure is, computed over the exact numerics so the dashboard
-  // never divides parsed floats. Null without a median, and also for a zero median: a billed project
+  // never divides parsed floats. Null without a median, and also for a zero median: a billed workflow
   // can spend $0 on harness, which is a real reference that supports no multiple.
   cost_vs_median: z.number().nullable(),
   harness_cost_vs_median: z.number().nullable(),

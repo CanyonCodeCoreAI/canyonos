@@ -1,10 +1,10 @@
 # Endpoint
 
-The endpoint is the HTTP door into a deployment. It queues a call to one of its routes, each an agent method, and answers with a request ID at once, because a workflow can finish long after the HTTP response.
+The endpoint is the HTTP door into a workflow group. It queues a call to one of its routes, each an agent method, and answers with a request ID at once, because a workflow can finish long after the HTTP response.
 
 No agent code runs in it. It serves three routes:
 
-1. `POST /<project>/<agent>/<method>` queues a call to a route named in a project's `endpoint: routes:`.
+1. `POST /<workflow_id>`, or `POST /<name>/<agent>/<method>`, queues a call to the route named in a workflow's `endpoint: routes:`.
 2. `GET /status/<request_id>` reports the result, or the question the workflow is waiting on.
 3. `POST /answer/<request_id>` answers that question.
 
@@ -21,7 +21,7 @@ sequenceDiagram
     participant R as Redis
     participant A as Agent replica
 
-    C->>E: POST /{project}/{agent}/{method}<br/>Authorization: Bearer<br/>{"query": "..."}
+    C->>E: POST /{workflow}/{agent}/{method}<br/>Authorization: Bearer<br/>{"query": "..."}
     E->>R: GET auth:api_key_hash<br/>(every request)
     E->>R: SET request:{id}:context<br/>(when _context is sent)
     E->>R: HSET future:{future_id}<br/>(Future(agent, method, kwargs))
@@ -56,20 +56,20 @@ On Docker and EC2, the Global Controller adds the endpoint to the agent list as 
 - One replica, 2 CPUs, always on the Local provider (the Global Controller's machine).
 - The image is the Global Controller's image, started as `python -m canyonos_core.endpoint`.
 - It is never autoscaled: autoscaling only acts on entries of type `agent`.
-- On Kubernetes, the operator runs the same command as a one-replica StatefulSet from the `canyonos-core` image, with a Service (plus an Ingress or Route when the project asks for one).
+- On Kubernetes, the operator runs the same command as a one-replica StatefulSet from the `canyonos-core` image, with a Service (plus an Ingress or Route when the workflow group asks for one).
 
 ### Inside the container
 
 Two things run, and their lifetimes are tied together:
 
-1. gunicorn serves HTTP on `8080`: 2 workers, 16 threads each. Each worker builds its app from `CANYONOS_ENDPOINT_ROUTES`, which the Reconciler or the operator sets from the projects' `endpoint: routes:`.
+1. gunicorn serves HTTP on `8080`: 2 workers, 16 threads each. Each worker builds its app from `CANYONOS_ENDPOINT_ROUTES`, which the Reconciler or the operator sets from the workflows' `endpoint: routes:`.
 2. A Local Controller with no agent runs on `50051`. It routes calls like any other Local Controller, but loads no agent and starts no LLM Gateway.
 
 So the endpoint is an agentless replica that speaks HTTP. The Flask app only creates a `Future`, and its own Local Controller forwards the call, with the retries described in [Request lifecycle](CONTROLLER.md#request-lifecycle).
 
 If gunicorn exits on its own, the replica is marked `failed`. On SIGTERM, gunicorn stops first and finishes its requests, then the Local Controller drains as any replica does.
 
-Status has a fallback worth knowing. When a request's keys are gone from Redis, `GET /status` looks up its root span in the local dashboard's Postgres, at `canyonos-dashboard-db`. That name only exists where the dashboard database runs on the deployment's Docker network, so on Kubernetes, or with `bun run dashboard:dev`, status falls back to Redis only.
+Status has a fallback worth knowing. When a request's keys are gone from Redis, `GET /status` looks up its root span in the local dashboard's Postgres, at `canyonos-dashboard-db`. That name only exists where the dashboard database runs on the workflow group's Docker network, so on Kubernetes, or with `bun run dashboard:dev`, status falls back to Redis only.
 
 ## API key
 
@@ -102,17 +102,17 @@ The endpoint's Local Controller does not run it. It queues the question on `requ
 The Global Controller writes the Redis hash `endpoint:address` when it applies the config, and deletes it once teardown has removed every replica.
 
 - `public_host` and `api_port`: where the endpoint is published.
-- `routes`: each route's `project`, `agent`, `method`, its argument names from `functions`, and its `url`, `http://<public_host>:<api_port>/<project>/<agent>/<method>`.
+- `routes`: each route's `workflow`, `workflow_id`, `agent`, `method`, its argument names from `functions`, and its `url`, `http://<public_host>:<api_port>/<workflow_id>`.
 
 On Kubernetes the operator sets `CANYONOS_ENDPOINT_URL` to the Route, Ingress or Service, and each `url` is built from it instead.
 
 Three components read this hash:
 
-- The Global Controller's server, as `endpoint` in `GET /v1/deployments/<deployment_id>`. The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
-- The dashboard API, at `GET /projects/:project_id/monitoring/endpoint`.
+- The Global Controller's server, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`. The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
+- The dashboard API, at `GET /workflows/:workflow_id/monitoring/endpoint`.
 - The Reconciler, which reads `api_port` before it launches the endpoint.
 
-Without `endpoint.api_port` in `deployment.yaml`, the endpoint keeps the port it had. On Docker, the Reconciler moves to the next free port when it is taken, and rewrites the hash.
+Without `endpoint.api_port` in `workflow_group.yaml`, the endpoint keeps the port it had. On Docker, the Reconciler moves to the next free port when it is taken, and rewrites the hash.
 
 ## Changing the endpoint
 

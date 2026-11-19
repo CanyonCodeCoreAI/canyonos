@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Read a deploy's output lines into its progress: the phase it is in, the steps it
-finished, and why it failed. The server's `GET /deployment` reports it."""
+finished, and why it failed. The server's
+`GET /v1/workflow-groups/<workflow_group_id>` reports it."""
 
 import re
 import threading
@@ -348,7 +349,8 @@ class DeployProgress:
             self.changed.notify_all()
 
     def report(self):
-        """Return the deploy's fields of `GET /deployment`."""
+        """Return the deploy's fields of
+        `GET /v1/workflow-groups/<workflow_group_id>`."""
         with self.changed:
             now = time.monotonic()
             oldest = self.tracker.oldest_open_step()

@@ -172,7 +172,7 @@ def _patch_openai_agents(run_module):
     """Make `Runner.run` and `Runner.run_sync` settle tool approvals with the person
     and resume, so they return a finished run."""
     runner = getattr(run_module, "Runner", None)
-    # A project's own package can also be named `agents`.
+    # A workflow's own package can also be named `agents`.
     if runner is None or not hasattr(runner, "run_sync"):
         return
     state = getattr(run_module, "RunState", None)

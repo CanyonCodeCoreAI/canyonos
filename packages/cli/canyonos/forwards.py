@@ -115,7 +115,7 @@ def open_forward(
     on `port` or, unless `fixed` (a port the config sets), the next one free and not
     claimed by the rest of CanyonOS here (`ports.claimed`, with the config's
     `dashboard_port`), and return the port. A forward of the same service and port
-    already running is kept; a `shared` one (the dashboard every project here uses)
+    already running is kept; a `shared` one (the dashboard every workflow group here uses)
     is kept on its port whatever port is asked, as Docker keeps a running
     dashboard."""
     wanted = {

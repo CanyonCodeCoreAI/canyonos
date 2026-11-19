@@ -3,11 +3,16 @@
 
 import { sql } from 'drizzle-orm';
 
-import { PROJECT_ID_ATTRIBUTE, STATUS_CODE } from '../modules/metrics/metrics.contract';
-import { RESOURCE_PROJECT_ATTRIBUTE } from '../modules/monitoring/monitoring.signals';
+import {
+  STATUS_CODE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from '../modules/metrics/metrics.contract';
+import { RESOURCE_WORKFLOW_ATTRIBUTE } from '../modules/monitoring/monitoring.signals';
 import { append_metrics } from '../modules/telemetry/telemetry.repo';
+import { workflows_repo } from '../modules/workflows/workflows.repo';
 import { closeDb, db } from './client';
-import { otelLogs, otelSpans, projects } from './schema';
+import { otelLogs, otelSpans, workflows } from './schema';
 import type { MetricRow } from '../modules/telemetry/telemetry.repo';
 
 const HOURS = 24;
@@ -74,22 +79,23 @@ function makeRandom(seed: number): () => number {
   };
 }
 
-async function resolveProjectId(explicit: string | undefined): Promise<string> {
+async function resolveWorkflowId(explicit: string | undefined): Promise<string> {
   if (explicit) return explicit;
   const rows = await db
-    .select({ id: projects.id, name: projects.name })
-    .from(projects)
-    .orderBy(projects.created_at)
+    .select({ id: workflows.id, name: workflows.name })
+    .from(workflows)
+    .orderBy(workflows.created_at)
     .limit(1);
-  const project = rows[0];
-  if (!project) throw new Error('No project exists yet — start the API with SEED_DEV_DATA=true.');
-  console.log(`Seeding into project "${project.name}" (${project.id})`);
-  return project.id;
+  const workflow = rows[0];
+  if (!workflow) throw new Error('No workflow exists yet — start the API with SEED_DEV_DATA=true.');
+  console.log(`Seeding into workflow "${workflow.name}" (${workflow.id})`);
+  return workflow.id;
 }
 
-export async function seedMonitoringDemo(project_id: string): Promise<void> {
+export async function seedMonitoringDemo(workflow_id: string): Promise<void> {
   const random = makeRandom(20_260_923);
   const now = BigInt(Date.now()) * 1_000_000n;
+  const workflow_group_id = await workflows_repo.workflow_group_id(workflow_id);
 
   const span_rows: (typeof otelSpans.$inferInsert)[] = [];
   const log_rows: (typeof otelLogs.$inferInsert)[] = [];
@@ -102,7 +108,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
     const trace_count = 2 + Math.round(busy * 10 + random() * 3);
 
     for (let index = 0; index < trace_count; index += 1) {
-      const trace_id = `mondemo-${project_id}-${hour}-${index}`;
+      const trace_id = `mondemo-${workflow_id}-${hour}-${index}`;
       const offset = BigInt(Math.floor(random() * 3_500)) * SECOND_NANOS;
       const trace_start = hour_start + offset;
       const failed = random() < 0.15;
@@ -132,7 +138,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
           input: model ? PROMPTS[step_index]! : null,
           output: model && !span_failed ? COMPLETIONS[step_index]! : null,
           attributes: {
-            [PROJECT_ID_ATTRIBUTE]: project_id,
+            [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
             'gen_ai.agent.id': replica,
             cpu: Math.min(99, AGENT_CPU_BASE[step_index]! + random() * 20),
             ...(model
@@ -157,7 +163,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
 
         log_rows.push({
           service_name: replica,
-          resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id },
+          resource_attributes: { [RESOURCE_WORKFLOW_ATTRIBUTE]: workflow_id },
           time_unix_nano: log_at,
           observed_time_unix_nano: log_at,
           severity_number: span_failed ? 17 : 9,
@@ -195,7 +201,8 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
               metric_unit: '%',
               service_name: replica,
               resource_attributes: {
-                [RESOURCE_PROJECT_ATTRIBUTE]: project_id,
+                [RESOURCE_WORKFLOW_ATTRIBUTE]: workflow_id,
+                [WORKFLOW_GROUP_ID_ATTRIBUTE]: workflow_group_id,
                 'host.name': replica,
               },
               time_unix_nano: at,
@@ -211,7 +218,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
   const crash_at = now - 2n * HOUR_NANOS;
   log_rows.push({
     service_name: 'report-writer-0',
-    resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id },
+    resource_attributes: { [RESOURCE_WORKFLOW_ATTRIBUTE]: workflow_id },
     time_unix_nano: crash_at,
     observed_time_unix_nano: crash_at,
     severity_number: 21,
@@ -228,15 +235,15 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
   });
 
   await db.transaction(async (tx) => {
-    await tx.execute(sql`delete from otel_spans where trace_id like ${`mondemo-${project_id}-%`}`);
+    await tx.execute(sql`delete from otel_spans where trace_id like ${`mondemo-${workflow_id}-%`}`);
     await tx.execute(
-      sql`delete from otel_logs where resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+      sql`delete from otel_logs where resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE} = ${workflow_id}`
     );
     await tx.execute(
-      sql`delete from otel_metrics where resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+      sql`delete from otel_metrics where resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE} = ${workflow_id}`
     );
     await tx.execute(
-      sql`delete from otel_metric_rollups where resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+      sql`delete from otel_metric_rollups where resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE} = ${workflow_id}`
     );
     await tx.insert(otelSpans).values(span_rows);
     await tx.insert(otelLogs).values(log_rows);
@@ -250,7 +257,7 @@ export async function seedMonitoringDemo(project_id: string): Promise<void> {
 }
 
 if (import.meta.main) {
-  const project_id = await resolveProjectId(process.argv[2]);
-  await seedMonitoringDemo(project_id);
+  const workflow_id = await resolveWorkflowId(process.argv[2]);
+  await seedMonitoringDemo(workflow_id);
   await closeDb();
 }

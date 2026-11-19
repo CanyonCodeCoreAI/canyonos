@@ -19,7 +19,7 @@ from canyonos_core.kubernetes.api import (
     MANAGED_BY_LABEL,
     resource_name,
 )
-from canyonos_core.schema import DEPLOYMENT_CONFIG, project_names
+from canyonos_core.schema import DEPLOYMENT_CONFIG, workflow_names
 from canyonos_core.schema.kubernetes_block import KubernetesDatabase
 from canyonos_core.schema.otel_destinations import LOCAL_DASHBOARD_ENDPOINT
 
@@ -34,12 +34,12 @@ DEFAULT_MEMORY_MB = 512
 
 
 def config_folder(workspace):
-    """The ConfigMap's contents: the deployment's `deployment.yaml`, and every YAML file
+    """The ConfigMap's contents: the deployment's `workflow_group.yaml`, and every YAML file
     in each project's config folder as `<project>.<file>`, which run_gc lays out again
     as the deployment's folder for the global controller."""
     with open(os.path.join(workspace, DEPLOYMENT_CONFIG), encoding="utf-8") as f:
         files = {DEPLOYMENT_CONFIG: f.read()}
-    for project in project_names(workspace):
+    for project in workflow_names(workspace):
         folder = os.path.join(workspace, project, "config")
         for name in sorted(os.listdir(folder)):
             path = os.path.join(folder, name)
@@ -103,7 +103,11 @@ def _project_spec(
         if redis.storage_class:
             redis_spec["storageClassName"] = redis.storage_class
 
-    endpoint = {"routes": endpoint_routes(config)}
+    # The CanyonProject CRD has no `workflow_id` on a route.
+    routes = endpoint_routes(config)
+    for route in routes:
+        del route["workflow_id"]
+    endpoint = {"routes": routes}
     exposure = spec.endpoint
     if exposure.host:
         ingress = {"host": exposure.host}
@@ -190,7 +194,7 @@ def render(
 ):
     """The Kubernetes objects for one deployment, and warnings about settings Kubernetes
     ignores. `spec` is its parsed `kubernetes:` section; `api_key_hash` is the sha256
-    of the API key the deployment's endpoint accepts, "" for none (open). Pure: no
+    of the API key the workflow group's endpoint accepts, "" for none (open). Pure: no
     cluster or Docker access.
     `live_replicas` maps the CanyonAgents the global controller autoscales to their
     live count, which they keep: leaving the count out instead would make the
@@ -243,7 +247,7 @@ def render(
                 "resources": _resources(agent_spec),
                 # Its project's .env, by the name the CLI's kubernetes_target.py gives it.
                 "envSecretRef": spec.env_secret
-                or f"{project}-{resource_name(agent_spec['project'])}-env",
+                or f"{project}-{resource_name(agent_spec['workflow'])}-env",
             }
             if "agents" in agent_spec:
                 agent["hostedAgents"] = [

@@ -8,10 +8,10 @@ derives the name from here, so replica launch and the controller's
 stale-container removal cannot drift apart. The `canyonos` CLI keeps a copy of
 the same scheme in `canyonos/deployment.py`, since it cannot import this package.
 
-The project comes from `CANYONOS_DOCKER_PROJECT`, which the CLI sets on the
+The workflow group comes from `CANYONOS_DOCKER_PROJECT`, which the CLI sets on the
 Global Controller container. It is read on every call, never at import, so a
 process that sets it late still names things right. Without it, every name and
-label falls back to the plain `canyonos-...` form used before projects existed.
+label falls back to the plain `canyonos-...` form used before workflow groups existed.
 """
 
 import os
@@ -33,37 +33,37 @@ PROJECT_LABEL = "com.docker.compose.project"
 
 
 class ForeignContainerError(RuntimeError):
-    """A container with one of this project's names is running but is not this
-    project's to replace or remove; nothing was launched in its place."""
+    """A container with one of this workflow group's names is running but is not this
+    workflow group's to replace or remove; nothing was launched in its place."""
 
 
 def _prefix():
-    project = os.environ.get(DOCKER_PROJECT_ENV, "")
-    return f"canyonos-{project}" if project else "canyonos"
+    workflow_group = os.environ.get(DOCKER_PROJECT_ENV, "")
+    return f"canyonos-{workflow_group}" if workflow_group else "canyonos"
 
 
-def project_group():
-    """Return the Docker Desktop group this project's containers show under,
-    `canyonos-<project>`, or `canyonos` when no project is set."""
+def docker_group():
+    """Return the Docker Desktop group this workflow group's containers show under,
+    `canyonos-<workflow group>`, or `canyonos` when no workflow group is set."""
     return _prefix()
 
 
-def project_label_args():
-    """Return the `docker run` flags that put a container in this project's group,
-    so two projects on one machine show and clean up apart."""
-    return ["--label", f"{PROJECT_LABEL}={project_group()}"]
+def docker_group_label_args():
+    """Return the `docker run` flags that put a container in this workflow group's
+    Docker group, so two workflow groups on one machine show and clean up apart."""
+    return ["--label", f"{PROJECT_LABEL}={docker_group()}"]
 
 
 def docker_name(name):
     """Return an agent name or replica ID as Docker names it: lowercase, and the `.`
-    of `<project>.<agent>` written `--`, since a container name is also a hostname.
-    The manifest refuses two agents of a project that this names the same."""
+    of `<workflow>.<agent>` written `--`, since a container name is also a hostname.
+    The manifest refuses two agents of a workflow that this names the same."""
     return name.lower().replace(".", "--")
 
 
 def container_name(replica_id):
     """Return the Docker container name for one agent replica,
-    `canyonos-<deployment>-<replica ID>` (e.g.
+    `canyonos-<workflow group>-<replica ID>` (e.g.
     `canyonos-prod-portfolio--intentagent-1a2b3c4d`)."""
     return f"{_prefix()}-{docker_name(replica_id)}"
 
@@ -84,12 +84,12 @@ def metrics_container_name(host):
 
 def image_name(agent_name):
     """Return the image tag a deploy builds for an agent and its replicas run, so a
-    project's rebuild never replaces another project's image."""
+    workflow group's rebuild never replaces another workflow group's image."""
     return f"{_prefix()}-{docker_name(agent_name)}"
 
 
 def workspace_volume_name():
-    """Return the Docker volume the deployment's files are synced into, as the CLI names it."""
+    """Return the Docker volume the workflow group's files are synced into, as the CLI names it."""
     return f"{_prefix()}-workspace"
 
 

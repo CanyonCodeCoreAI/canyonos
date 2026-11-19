@@ -6,7 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
 import './env-loader';
 
 import { hashApiKey, TEST_API_KEY } from './src/__tests__/helpers/auth';
-import { noAuthApiBaseUrl } from './src/__tests__/helpers/projects';
+import { noAuthApiBaseUrl } from './src/__tests__/helpers/workflows';
 
 const webBaseUrl = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173';
 const apiBaseUrl = process.env.VITE_API_URL || 'http://localhost:3000';

@@ -190,8 +190,10 @@ def _agent_resource_metrics(row):
         resource_attributes["host.name"] = row["host"]
     if row.get("port"):
         resource_attributes["canyonos.agent.port"] = row["port"]
-    if row.get("project_id"):
-        resource_attributes["canyonos.project.id"] = row["project_id"]
+    if row.get("workflow_group_id"):
+        resource_attributes["canyonos.workflow_group.id"] = row["workflow_group_id"]
+    if row.get("workflow_id"):
+        resource_attributes["canyonos.workflow.id"] = row["workflow_id"]
 
     return ResourceMetrics(
         resource=Resource.create(resource_attributes),
@@ -234,14 +236,14 @@ def _machine_resource_metrics(row):
     if not metrics:
         return None
 
-    # host/project identify the sender (resource, not data point); project_id is canyonos-namespaced since OTel has no standard field for it.
+    # host/workflow group identify the sender (resource, not data point); a machine serves the whole workflow group.
     resource_attributes = {
         "service.name": f"canyonos-machine-{host}" if host else "canyonos-machine"
     }
     if host:
         resource_attributes["host.name"] = host
-    if row.get("project_id"):
-        resource_attributes["canyonos.project.id"] = row["project_id"]
+    if row.get("workflow_group_id"):
+        resource_attributes["canyonos.workflow_group.id"] = row["workflow_group_id"]
 
     return ResourceMetrics(
         resource=Resource.create(resource_attributes),

@@ -53,7 +53,7 @@ export const GovernanceAgentSchema = z.object({
   unmet_requires: z.array(z.string()),
   /**
    * The model ids llms.yaml lets this agent use, the choices for a switch_model action; null when
-   * the project has no llms.yaml, so any model may be named.
+   * the workflow has no llms.yaml, so any model may be named.
    */
   models: z.array(z.string()).nullable(),
   rules: AgentRulesSchema,

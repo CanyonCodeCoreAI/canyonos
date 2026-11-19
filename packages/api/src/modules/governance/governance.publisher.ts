@@ -6,8 +6,8 @@ import type { RedisClient } from 'bun';
 import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
-import { project_running, with_redis } from '../canyonos/canyonos.redis';
-import { registered_projects } from '../canyonos/canyonos.registry';
+import { running_workflows, with_redis } from '../canyonos/canyonos.redis';
+import { registered_workflows } from '../canyonos/canyonos.registry';
 import { canyonos_repo } from '../canyonos/canyonos.repo';
 import { governance_repo } from './governance.repo';
 import type { GovernanceConfig } from './governance.repo';
@@ -20,31 +20,32 @@ function governed_agents(governance: GovernanceConfig): { name: string; since: s
   );
 }
 
-/** Writes the project's governed spend, `{}` when no agent is governed, so no stale figure stays. */
-export async function publish_spend(redis: RedisClient, project_id: string): Promise<void> {
+/** Writes the governed spend of the workflow's group, `{}` when no agent is governed, so
+ * no stale figure stays. */
+export async function publish_spend(redis: RedisClient, workflow_id: string): Promise<void> {
   const agents = governed_agents(await governance_repo.read_config(redis));
-  await governance_repo.write_spend(redis, await governance_repo.spend_since(project_id, agents));
+  await governance_repo.write_spend(redis, await governance_repo.spend_since(workflow_id, agents));
 }
 
-/** A project whose controller is not the one on its Redis is skipped: it is not running. On
- * Kubernetes its Redis is the one the operator lists, with its password, and a project the
- * operator no longer lists is skipped too; on Docker it is the Redis the project registered,
+/** A workflow whose controller is not the one on its Redis is skipped: it is not running. On
+ * Kubernetes its Redis is the one the operator lists, with its password, and a workflow the
+ * operator no longer lists is skipped too; on Docker it is the Redis the workflow registered,
  * with its password too. */
-async function publish_project_spend(project_id: string): Promise<void> {
-  if (config.canyonos.projectsFile && !registered_projects().has(project_id)) return;
-  await with_redis(project_id, async (redis: RedisClient) => {
-    if (!(await project_running(redis, project_id))) return;
-    await publish_spend(redis, project_id);
+async function publish_workflow_spend(workflow_id: string): Promise<void> {
+  if (config.canyonos.workflowsFile && !registered_workflows().has(workflow_id)) return;
+  await with_redis(workflow_id, async (redis: RedisClient) => {
+    if (!(workflow_id in (await running_workflows(redis)))) return;
+    await publish_spend(redis, workflow_id);
   });
 }
 
-/** Writes every running project's governed spend to its controller; one failure skips one project. */
+/** Writes every running workflow's governed spend to its controller; one failure skips one workflow. */
 export async function publish_spend_once(): Promise<void> {
   const registrations = await canyonos_repo.list_registrations();
   await Promise.all(
-    registrations.map(({ project_id }) =>
-      publish_project_spend(project_id).catch((error: unknown) =>
-        publisher_logger.warn('Could not publish governance spend', { project_id, error })
+    registrations.map(({ workflow_id }) =>
+      publish_workflow_spend(workflow_id).catch((error: unknown) =>
+        publisher_logger.warn('Could not publish governance spend', { workflow_id, error })
       )
     )
   );
@@ -62,7 +63,7 @@ export function start_governance_publisher({
     timer = setTimeout(() => {
       publish_spend_once()
         .catch((error: unknown) =>
-          publisher_logger.warn('Could not list projects to publish governance spend', { error })
+          publisher_logger.warn('Could not list workflows to publish governance spend', { error })
         )
         .finally(arm);
     }, interval_ms);

@@ -24,7 +24,7 @@ const SEVERITY_CLASS: Record<string, string> = {
 };
 
 interface LogListProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
   readonly errors_only?: boolean;
   readonly agent?: string;
@@ -35,7 +35,7 @@ interface LogListProps {
 }
 
 export function LogList({
-  project_id,
+  workflow_id,
   range,
   errors_only = false,
   agent,
@@ -45,7 +45,7 @@ export function LogList({
   test_id,
 }: LogListProps) {
   const query = useQuery(
-    logsQueryOptions(project_id, { range, limit: LOG_LIMIT, errors_only, agent, replica })
+    logsQueryOptions(workflow_id, { range, limit: LOG_LIMIT, errors_only, agent, replica })
   );
 
   if (query.error) {

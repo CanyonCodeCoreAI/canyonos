@@ -76,8 +76,8 @@ LOCAL_SKILL_DIR = str(REPO_ROOT / "skills" / "converting-to-canyonos")
 LOCAL_API_IMAGE = "canyonos-api:dev"
 LOCAL_WEB_IMAGE = "canyonos-web:dev"
 
-# Only the CLI's own file, never the current directory: a project the CLI is
-# pointed at may have a `.env` of its own, and that belongs to the project,
+# Only the CLI's own file, never the current directory: a workflow the CLI is
+# pointed at may have a `.env` of its own, and that belongs to the workflow,
 # not to this CLI. `override=False` keeps a shell
 # variable ahead of the file.
 load_dotenv(ENV_PATH, override=False)

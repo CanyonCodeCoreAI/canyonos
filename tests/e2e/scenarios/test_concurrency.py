@@ -21,13 +21,13 @@ from ..harness import (
     docker,
     finished,
     poll,
-    project_dir,
-    project_redis,
+    workflow_dir,
+    workflow_group_redis,
     stage,
-    stop_project,
+    stop_workflow_group,
     submit,
 )
-from ..projects import load_project
+from ..workflows import load_workflow
 
 pytestmark = pytest.mark.steps
 
@@ -75,18 +75,18 @@ def limited(recorder, images, tmp_path_factory):
     """helloworld with a Workflow that holds the memory and time a query asks for."""
     directory = stage(
         recorder,
-        load_project("helloworld"),
+        load_workflow("helloworld"),
         tmp_path_factory.mktemp("concurrency"),
         {},
     )
-    project = project_dir(directory)
-    (project / "agents" / "workflow.py").write_text(WORKFLOW)
+    folder = workflow_dir(directory)
+    (folder / "agents" / "workflow.py").write_text(WORKFLOW)
     try:
         canyonos(
-            recorder, ["deploy", str(project)], cwd=directory, timeout=DEPLOY_TIMEOUT
+            recorder, ["deploy", str(folder)], cwd=directory, timeout=DEPLOY_TIMEOUT
         )
         endpoint = deployed_endpoint(recorder, directory)
-        store = project_redis(recorder, directory)
+        store = workflow_group_redis(recorder, directory)
         replicas = poll(
             lambda: routed_replicas(store, endpoint.agent),
             timeout=60,
@@ -101,7 +101,7 @@ def limited(recorder, images, tmp_path_factory):
             container=replicas[0].container,
         )
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
         assert stop is None or stop.code == 0, stop.output[-2000:]
 
 

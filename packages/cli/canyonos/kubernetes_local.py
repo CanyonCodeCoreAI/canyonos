@@ -397,9 +397,9 @@ def run_cluster_up(workers=None):
     ui.ok(f"Cluster {name} is ready, with CanyonOS {version}; kubectl now points at it")
     ui.say(
         "Deploy to it: set `target: kubernetes` and a `kubernetes:` section in the "
-        "deployment's deployment.yaml, then run canyonos deploy <project folder>..., "
-        "and canyonos serve for the dashboard. canyonos cluster down removes the "
-        "cluster."
+        "workflow group's workflow_group.yaml, then run canyonos deploy <workflow "
+        "folder>..., and canyonos serve for the dashboard. canyonos cluster down removes "
+        "the cluster."
     )
     return True
 

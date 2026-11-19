@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-The deployment a CanyonOS command acts on: the one started from the folder it runs
+The workflow group a CanyonOS command acts on: the one started from the folder it runs
 from.
 
-Every Docker resource a deployment starts (its Global Controller, Redis, agent
-replicas and images, its workspace volume) carries the deployment in its name and
-in the `com.docker.compose.project` label, so two deployments run side by side on
+Every Docker resource a workflow group starts (its Global Controller, Redis, agent
+replicas and images, its workspace volume) carries the workflow group in its name and
+in the `com.docker.compose.project` label, so two workflow groups run side by side on
 one machine and Docker Desktop shows each as its own group. The CLI's own
-records for a deployment live under `~/.canyonos/deployments/<deployment>/`.
+records for a workflow group live under `~/.canyonos/deployments/<workflow group>/`.
 
-Where the deployment runs is its `target`: Docker on this machine, or the Kubernetes
-cluster `kubectl` points at. Its `deployment.yaml` says it once, so every command
+Where the workflow group runs is its `target`: Docker on this machine, or the Kubernetes
+cluster `kubectl` points at. Its `workflow_group.yaml` says it once, so every command
 in its folder goes there.
 
 The container and image names mirror
@@ -23,14 +23,18 @@ two in step.
 
 import os
 import re
+import uuid
 
 import yaml
 
 from canyonos.constants import (
     deployment_config_path,
-    project_config_path,
-    project_folder,
+    load_yaml,
     read_config,
+    round_trip_yaml,
+    workflow_config_path,
+    workflow_folder,
+    write_config,
 )
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 
@@ -46,17 +50,16 @@ DEFAULT_TARGET = TARGETS[0]
 
 MAX_NAME_LENGTH = 24
 DEFAULT_NAME = "default"
-# A deployment named `dashboard` would share the group `canyonos-dashboard` with the
-# dashboard stack, and taking that stack down would take the deployment with it.
+# A workflow group named `dashboard` would share the group `canyonos-dashboard` with the
+# dashboard stack, and taking that stack down would take the workflow group with it.
 RESERVED_NAMES = {"dashboard": "dashboard-deployment"}
-# What the Global Controller writes beside the projects in the deployment's workspace,
-# so no project can take their names.
-BUILD_FOLDERS = ("grpc_stubs", "docker_container")
+# A workflow's name is its folder's, cut to this, then `-` and the start of its
+# workflow_id, so it is at most MAX_NAME_LENGTH long, as Docker names need.
+WORKFLOW_NAME_LENGTH = MAX_NAME_LENGTH - 9
 
 
 def folder_name():
-    """Return the name of the folder the command runs from, as typed; the Global
-    Controller records it as the deployment's name."""
+    """Return the name of the folder the command runs from, as typed."""
     return os.path.basename(os.getcwd())
 
 
@@ -70,56 +73,97 @@ def _docker_safe(name):
 
 
 def normalise(name):
-    """Turn a folder name into a deployment name: Docker-safe, and never one the
+    """Turn a folder name into a workflow group name: Docker-safe, and never one the
     dashboard stack's group takes."""
     deployment = _docker_safe(name)
     return RESERVED_NAMES.get(deployment, deployment)
 
 
 def deployment_name():
-    """Return the deployment for the folder the command runs from: the folder's name and
-    the start of its `deployment_id`, so two folders with the same name never share one."""
+    """Return the workflow group for the folder the command runs from: the folder's name and
+    the start of its `workflow_group_id`, so two folders with the same name never share one."""
     name = normalise(folder_name())
-    deployment_id = read_config(deployment_config_path()).get("deployment_id")
+    deployment_id = read_config(deployment_config_path()).get("workflow_group_id")
     return f"{name}-{deployment_id[:8]}" if deployment_id else name
 
 
-def projects(folders):
-    """Map each project of the deployment, named after its folder as Docker accepts
-    names, to its folder. Raises when the deployment's own folder is a project, so
-    that projects can join and leave it, when a folder holds no
-    `config/workflow_config.yaml`, or when two folders would be the same project."""
-    if os.path.isfile(project_config_path(project_folder())):
-        raise RuntimeError(
-            "This folder is a project. Give the deployment a folder of its own, which "
-            "holds its deployment.yaml: `cd .. && canyonos deploy <project> --folder <deployment>`."
-        )
-    projects = {}
+def workflow_ids(folders, new=True):
+    """Map each folder to its workflow_id: the one the workflow group's `workflows:` keeps
+    for its path, else a new random one when `new` (the deploy saves it, see
+    save_workflows), so redeploying a folder keeps its id and a copy of it gets its
+    own. Without `new`, a folder the workflow group has none for raises."""
+    workflows = read_config(deployment_config_path()).get("workflows") or {}
+    saved = {
+        os.path.abspath(entry["path"]): entry["workflow_id"]
+        for entry in workflows.values()
+    }
+    taken = {workflow_id[:8] for workflow_id in saved.values()}
+    ids = {}
     for folder in folders:
-        name = _docker_safe(os.path.basename(os.path.abspath(folder)))
-        if name in BUILD_FOLDERS:
+        path = os.path.abspath(folder)
+        if path in saved:
+            ids[path] = saved[path]
+        elif not new:
             raise RuntimeError(
-                f"A project can't be named {name!r}: the deployment builds its images "
-                "in a folder of that name. Rename the folder."
+                f"{folder} isn't in this workflow group yet: deploy it with "
+                "`canyonos deploy` first."
             )
-        if not os.path.isfile(project_config_path(project_folder(folder))):
+        else:
+            # Names carry the id's start, so no two may share one.
+            while (workflow_id := str(uuid.uuid4()))[:8] in taken:
+                pass
+            taken.add(workflow_id[:8])
+            ids[path] = workflow_id
+    return ids
+
+
+def workflow_folders(folders, ids):
+    """Map each workflow of the workflow group to its folder, named after the folder as
+    Docker accepts names and the start of its workflow_id in `ids` (see workflow_ids),
+    so two folders of the same name are two workflows. Raises when the workflow group's own
+    folder is a workflow, so that workflows can join and leave it, when a folder holds
+    no `config/workflow_config.yaml`, or when a folder is given twice."""
+    if os.path.isfile(workflow_config_path(workflow_folder())):
+        raise RuntimeError(
+            "This folder is a workflow. Give the workflow group a folder of its own, which "
+            "holds its workflow_group.yaml: `cd .. && canyonos deploy <workflow> --workflow-group <group>`."
+        )
+    named = {}
+    for folder in folders:
+        if not os.path.isfile(workflow_config_path(workflow_folder(folder))):
             raise RuntimeError(
-                f"No {project_config_path(project_folder(folder))}: is {folder} a "
-                "project folder?"
+                f"No {workflow_config_path(workflow_folder(folder))}: is {folder} a "
+                "workflow folder?"
             )
-        if name in projects:
-            raise RuntimeError(
-                f"{folder} and {projects[name]} would both be the project {name!r}; "
-                "rename one of the folders."
-            )
-        projects[name] = folder
-    return projects
+        path = os.path.abspath(folder)
+        if path in map(os.path.abspath, named.values()):
+            raise RuntimeError(f"{folder} is given twice.")
+        base = _docker_safe(os.path.basename(path))[:WORKFLOW_NAME_LENGTH].rstrip("-")
+        named[f"{base}-{ids[path][:8]}"] = folder
+    return named
+
+
+def save_workflows(config_path, folders, ids):
+    """Keep each workflow's workflow_id in the workflow group's `workflows:`, by its name,
+    with its folder's path from the workflow group's own folder."""
+    yaml_rt = round_trip_yaml()
+    data = load_yaml(config_path, yaml_rt.load)
+    if not isinstance(data, dict):
+        return
+    workflows = data.setdefault("workflows", {})
+    for name, folder in folders.items():
+        path = os.path.abspath(folder)
+        workflows[name] = {
+            "path": os.path.relpath(path).replace(os.sep, "/"),
+            "workflow_id": ids[path],
+        }
+    write_config(config_path, data, yaml_rt)
 
 
 def configured_target(config_path=None):
-    """The `target` in this deployment's config, lowercased, or docker without one (or
+    """The `target` in this workflow group's config, lowercased, or docker without one (or
     without a config). Any other value, or a config that is not valid YAML, is
-    refused here, before a command acts on it: a Kubernetes deployment must not pass
+    refused here, before a command acts on it: a Kubernetes workflow group must not pass
     for a Docker one."""
     config_path = config_path or deployment_config_path()
     try:
@@ -140,79 +184,79 @@ def configured_target(config_path=None):
 
 
 def deployment_group(name=None):
-    """Return the Docker group every container of deployment `name`, by default this
+    """Return the Docker group every container of workflow group `name`, by default this
     folder's, is labelled with."""
     return f"canyonos-{name or deployment_name()}"
 
 
 def deployment_label_args():
-    """Return the `docker run` flags that put a container in this deployment's group."""
+    """Return the `docker run` flags that put a container in this workflow group's group."""
     return ["--label", f"{PROJECT_LABEL}={deployment_group()}"]
 
 
 def gc_role_label_args():
     """Return the `docker run` flags that mark a container as a Global Controller, so
-    `canyonos stop` can tell whether another deployment still needs the dashboard."""
+    `canyonos stop` can tell whether another workflow group still needs the dashboard."""
     return ["--label", f"{ROLE_LABEL}={GC_ROLE}"]
 
 
 def network_label_args():
-    """Return the `docker network create` flags that put this deployment's network in
-    its group and mark it as a deployment's network, which the dashboard joins."""
+    """Return the `docker network create` flags that put this workflow group's network in
+    its group and mark it as a workflow group's network, which the dashboard joins."""
     return [*deployment_label_args(), "--label", f"{ROLE_LABEL}={NETWORK_ROLE}"]
 
 
 def redis_container_name():
-    """Return the name of this deployment's Redis container, as the Global Controller
+    """Return the name of this workflow group's Redis container, as the Global Controller
     names it."""
     return f"canyonos-{deployment_name()}-redis-localhost"
 
 
 def gc_container_name():
-    """Return the name of this deployment's Global Controller container."""
+    """Return the name of this workflow group's Global Controller container."""
     return f"canyonos-{deployment_name()}-global-controller"
 
 
 def workspace_volume(name=None):
-    """Return the Docker volume the files of deployment `name`, by default this
+    """Return the Docker volume the files of workflow group `name`, by default this
     folder's, are copied into for a deploy."""
     return f"canyonos-{name or deployment_name()}-workspace"
 
 
 def docker_name(agent):
     """Return an agent name as Docker names it: lowercase, and the `.` of
-    `<project>.<agent>` written `--`."""
+    `<workflow>.<agent>` written `--`."""
     return agent.lower().replace(".", "--")
 
 
 def image_name(agent):
-    """Return the image the Global Controller builds for one of this deployment's
-    agents, named `<project>.<agent>`."""
+    """Return the image the Global Controller builds for one of this workflow group's
+    agents, named `<workflow>.<agent>`."""
     return f"canyonos-{deployment_name()}-{docker_name(agent)}"
 
 
 def deployments_dir():
-    """Return the folder under `~/.canyonos` that holds every deployment's records."""
+    """Return the folder under `~/.canyonos` that holds every workflow group's records."""
     return os.path.join(os.path.expanduser("~/.canyonos"), "deployments")
 
 
 def state_dir(name=None):
-    """Return the folder under `~/.canyonos` that holds the records of deployment
+    """Return the folder under `~/.canyonos` that holds the records of workflow group
     `name`, by default this folder's."""
     return os.path.join(deployments_dir(), name or deployment_name())
 
 
 def state_path(name=None):
     """Return the file that records the Global Controller container and port of
-    deployment `name`, by default this folder's."""
+    workflow group `name`, by default this folder's."""
     return os.path.join(state_dir(name), "state.json")
 
 
 def other_global_controllers_running(own_container_id, env=None):
     """Return True when a Global Controller other than `own_container_id` (any, when
-    None) is running on this Docker engine, from any deployment. Also True when Docker
+    None) is running on this Docker engine, from any workflow group. Also True when Docker
     can't answer, so the shared dashboard is never taken down from under another
-    deployment."""
+    workflow group."""
     try:
         result = run_docker(
             [

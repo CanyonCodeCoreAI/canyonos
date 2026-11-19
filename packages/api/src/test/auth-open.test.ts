@@ -4,11 +4,11 @@
 import { describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
-import { projects } from '@api/db/schema';
+import { workflows } from '@api/db/schema';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer } from './project-test.utils';
-import { seed_active_agents, seed_running_project } from './redis-test.utils';
+import { seed_active_agents, seed_running_workflow } from './redis-test.utils';
+import { bearer } from './workflow-test.utils';
 import type { ScalingPolicy } from '../modules/scaling/scaling.types';
 
 setupE2ETests();
@@ -30,11 +30,11 @@ const POLICY: ScalingPolicy = {
   scale_down_below: 1,
 };
 
-async function open_project(name: string): Promise<string> {
-  const [project] = await db.insert(projects).values({ name }).returning({ id: projects.id });
-  await seed_running_project(project!.id, { prompts: {} });
+async function open_workflow(name: string): Promise<string> {
+  const [workflow] = await db.insert(workflows).values({ name }).returning({ id: workflows.id });
+  await seed_running_workflow(workflow!.id, { prompts: {} });
   await seed_active_agents(JSON.stringify(['app.Alpha']));
-  return project!.id;
+  return workflow!.id;
 }
 
 describe('no CANYONOS_API_KEY_HASH', () => {
@@ -50,55 +50,55 @@ describe('no CANYONOS_API_KEY_HASH', () => {
     expect(check.data).toEqual({ ok: true });
   });
 
-  test('a caller with no key lists projects and changes scaling', async () => {
-    const project_id = await open_project('Keyless Writes');
+  test('a caller with no key lists workflows and changes scaling', async () => {
+    const workflow_id = await open_workflow('Keyless Writes');
 
-    const listed = await api.projects.get();
+    const listed = await api.workflows.get();
     expect(listed.error).toBeNull();
-    expect(listed.data!.map(({ id }) => id)).toContain(project_id);
+    expect(listed.data!.map(({ id }) => id)).toContain(workflow_id);
 
-    const saved = await api.projects[project_id]!.scaling.app!.put(POLICY);
+    const saved = await api.workflows[workflow_id]!.scaling.put(POLICY);
     expect(saved.error).toBeNull();
   });
 
   // A key left in a browser from before the API ran open must not turn into a 401.
   test('a stale bearer is ignored', async () => {
-    const project_id = await open_project('Stale Bearer');
+    const workflow_id = await open_workflow('Stale Bearer');
 
-    const listed = await api.projects.get({ $headers: STALE_BEARER });
+    const listed = await api.workflows.get({ $headers: STALE_BEARER });
     expect(listed.error).toBeNull();
-    expect(listed.data!.map(({ id }) => id)).toContain(project_id);
+    expect(listed.data!.map(({ id }) => id)).toContain(workflow_id);
 
-    const saved = await api.projects[project_id]!.scaling.app!.put(POLICY, {
+    const saved = await api.workflows[workflow_id]!.scaling.put(POLICY, {
       headers: STALE_BEARER,
     });
     expect(saved.error).toBeNull();
   });
 
-  // The check is wired per plugin (projects / requests / metrics / monitoring / prompts / scaling),
+  // The check is wired per plugin (workflows / requests / metrics / monitoring / prompts / scaling),
   // so reaching every sub-resource proves each composed plugin serves a caller with no headers.
-  test('a caller with no headers lists the projects and reaches every sub-resource', async () => {
-    const project_id = await open_project('Open Project');
+  test('a caller with no headers lists the workflows and reaches every sub-resource', async () => {
+    const workflow_id = await open_workflow('Open Workflow');
 
-    const listed = await api.projects.get();
+    const listed = await api.workflows.get();
     expect(listed.error).toBeNull();
-    expect(listed.data!.map(({ id }) => id)).toContain(project_id);
+    expect(listed.data!.map(({ id }) => id)).toContain(workflow_id);
 
     const responses = await Promise.all([
-      api.projects[project_id]!.get(),
-      api.projects[project_id]!.stats.get(),
-      api.projects[project_id]!.requests.get({ $query: { ...RANGE, limit: 20, offset: 0 } }),
-      api.projects[project_id]!.metrics.kpis.get({ $query: RANGE }),
-      api.projects[project_id]!.monitoring.series.get({ $query: RANGE }),
-      api.projects[project_id]!.monitoring.logs.get({
+      api.workflows[workflow_id]!.get(),
+      api.workflows[workflow_id]!.stats.get(),
+      api.workflows[workflow_id]!.requests.get({ $query: { ...RANGE, limit: 20, offset: 0 } }),
+      api.workflows[workflow_id]!.metrics.kpis.get({ $query: RANGE }),
+      api.workflows[workflow_id]!.monitoring.series.get({ $query: RANGE }),
+      api.workflows[workflow_id]!.monitoring.logs.get({
         $query: { ...RANGE, limit: 200, errors_only: false },
       }),
-      api.projects[project_id]!.monitoring.traces.get({ $query: { ...RANGE, limit: 200 } }),
-      api.projects[project_id]!.monitoring.resources.get({ $query: RANGE }),
-      api.projects[project_id]!.monitoring.replicas.get(),
-      api.projects[project_id]!.monitoring.endpoint.get(),
-      api.projects[project_id]!.prompts.get(),
-      api.projects[project_id]!.scaling.get(),
+      api.workflows[workflow_id]!.monitoring.traces.get({ $query: { ...RANGE, limit: 200 } }),
+      api.workflows[workflow_id]!.monitoring.resources.get({ $query: RANGE }),
+      api.workflows[workflow_id]!.monitoring.replicas.get(),
+      api.workflows[workflow_id]!.monitoring.endpoint.get(),
+      api.workflows[workflow_id]!.prompts.get(),
+      api.workflows[workflow_id]!.scaling.get(),
     ]);
 
     for (const res of responses) {
@@ -106,12 +106,12 @@ describe('no CANYONOS_API_KEY_HASH', () => {
     }
   });
 
-  test('a project id that does not exist is 404 projects.not_found', async () => {
+  test('a workflow id that does not exist is 404 workflows.not_found', async () => {
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await api.projects[unknown]!.stats.get();
+    const res = await api.workflows[unknown]!.stats.get();
 
     expect(res.error?.status as number).toBe(404);
-    expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
+    expect((res.error?.value as { error?: string })?.error).toBe('workflows.not_found');
   });
 });

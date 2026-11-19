@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos validate`: check the project root against the CanyonOS contract.
+Logic for `canyonos validate`: check the workflow root against the CanyonOS contract.
 
 The checks themselves live in `canyonos_core.validate`, beside the schema, the
 platform pins and the Dockerfile templates they are about -- this command only
@@ -14,7 +14,7 @@ runs them and renders what comes back. Two ways in, in this order:
   of the root itself
 
 Exit 0 when nothing is found, 1 when something is, and 2 when the check could
-not run at all -- so a caller can tell a broken project from one nobody looked at.
+not run at all -- so a caller can tell a broken workflow from one nobody looked at.
 """
 
 import json
@@ -27,8 +27,8 @@ import uuid
 from canyonos import env, ui
 from canyonos.constants import (
     CANYON_DIR,
-    project_config_path,
-    project_root,
+    workflow_config_path,
+    workflow_root,
 )
 from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
 from canyonos.init import docker_is_local, docker_running
@@ -64,7 +64,7 @@ def _import_validate_root():
 
 def _in_process(root):
     """Findings from the imported validator, or None when it is not there. The
-    validator imports the project's `.env`, which is not this CLI's to keep."""
+    validator imports the workflow's `.env`, which is not this CLI's to keep."""
     validate_root = _import_validate_root()
     if validate_root is None:
         return None
@@ -96,7 +96,7 @@ def _mounts(root):
 def _docker_argv(root, name):
     """The `docker run` that validates `root` inside the core image.
 
-    The root and the project's `.env` are the mounts, so the container sees no
+    The root and the workflow's `.env` are the mounts, so the container sees no
     more of the host than the artifact being checked, and every path in the
     findings is already relative to the root. The image's own entrypoint starts
     the server, so it is replaced. The name is what finds the container again if
@@ -151,7 +151,7 @@ def _in_image(root):
     if not docker_is_local():
         raise RuntimeError(
             "Docker is running on another machine (DOCKER_HOST or the active context "
-            "is tcp:// or ssh://), so the project cannot be bind-mounted into the "
+            "is tcp:// or ssh://), so the workflow cannot be bind-mounted into the "
             "core image."
         )
 
@@ -221,18 +221,18 @@ def _print_findings(findings, root):
 
 
 def run_validate(root=None, as_json=False):
-    """Report every contract the given folder, or the project root, breaks. Returns
-    the exit status: 2 when there is no project here to check."""
+    """Report every contract the given folder, or the workflow root, breaks. Returns
+    the exit status: 2 when there is no workflow here to check."""
     ui.set_quiet(as_json)
-    checks_project = root is None
-    if checks_project:
-        root = project_root()
+    checks_workflow = root is None
+    if checks_workflow:
+        root = workflow_root()
     try:
         try:
-            if checks_project and not os.path.isfile(project_config_path(root)):
+            if checks_workflow and not os.path.isfile(workflow_config_path(root)):
                 raise RuntimeError(
-                    f"No {project_config_path(root)} here. Run `canyonos convert` "
-                    "first, or rerun from your project folder."
+                    f"No {workflow_config_path(root)} here. Run `canyonos convert` "
+                    "first, or rerun from your workflow folder."
                 )
             if not os.path.isdir(root):
                 # Checked before either path: `docker run -v` would create it.

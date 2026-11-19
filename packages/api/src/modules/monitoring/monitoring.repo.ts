@@ -11,10 +11,9 @@ import { otelLogs, otelMetricRollups, otelMetrics } from '@api/db/schema';
 import { timeGrid, withinRange } from '@core/time-range';
 import type { GridQuery, TimeRange } from '@core/time-range';
 
+import { WORKFLOW_GROUP_ID_ATTRIBUTE } from '../metrics/metrics.contract';
 import {
   isModelSpan,
-  projectRequestSpans,
-  projectSpans,
   requestStart,
   spanAgentId,
   spanAgentName,
@@ -27,6 +26,9 @@ import {
   spanModel,
   spanOutputTokens,
   spanStart,
+  workflowGroupId,
+  workflowRequestSpans,
+  workflowSpans,
 } from '../metrics/metrics.sql';
 import { bucket_start_of, ROLLUP_SECONDS } from '../telemetry/telemetry.rollup';
 import {
@@ -37,7 +39,7 @@ import {
   REPLICA_UP_SECONDS,
   REQUESTS_COMPLETED_METRIC,
   REQUESTS_STARTED_METRIC,
-  RESOURCE_PROJECT_ATTRIBUTE,
+  RESOURCE_WORKFLOW_ATTRIBUTE,
   SATURATION_METRIC,
 } from './monitoring.signals';
 import type {
@@ -90,7 +92,8 @@ const JsonRoutes = z
     z
       .array(
         z.object({
-          project: z.string().min(1),
+          workflow: z.string().min(1),
+          workflow_id: z.string().nullish(),
           agent: z.string().min(1),
           method: z.string().min(1),
           arguments: z.array(z.string()),
@@ -131,13 +134,14 @@ const unix_nanos = (at: string): bigint => BigInt(Date.parse(at)) * 1_000_000n;
 type Grid = ReturnType<typeof timeGrid>;
 
 /**
- * The project's readings of `metric_names` in the range as weighted samples
+ * The readings of `metric_names` from the machines of the workflow's group, which its
+ * workflows share, in the range as weighted samples
  * (`key, resource, sum, count, max, last_value, last_time, bucket`), so one aggregate serves raw
  * ticks and rollups alike. Every grid step of five minutes or more holds whole five-minute buckets,
  * so those grids read the rollups, which outlive the raw ticks; finer grids need the raw ticks.
  */
 const metric_samples = (
-  project_id: string,
+  workflow_id: string,
   query: GridQuery,
   grid: Grid,
   metric_names: readonly string[]
@@ -151,7 +155,7 @@ const metric_samples = (
     metric_names.map((metric) => sql`${metric}`),
     sql`, `
   )})
-    and (m.resource_attributes ->> '${sql.raw(RESOURCE_PROJECT_ATTRIBUTE)}') = ${project_id}`;
+    and (m.resource_attributes ->> '${sql.raw(WORKFLOW_GROUP_ID_ATTRIBUTE)}') = ${workflowGroupId(workflow_id)}`;
   if (grid.bucket_seconds < ROLLUP_SECONDS) {
     return sql`
       select ${identity},
@@ -185,11 +189,11 @@ const value_series = (value: string): string => `json_build_object(
   'samples', count(${value})::int
 )`;
 
-export const series_sql = (project_id: string, query: GridQuery): SQL => {
+export const series_sql = (workflow_id: string, query: GridQuery): SQL => {
   const grid = timeGrid(query);
 
   return sql`
-    with scoped as (${projectRequestSpans(project_id, query)}),
+    with scoped as (${workflowRequestSpans(workflow_id, query)}),
     traces as (
       select
         s.trace_id,
@@ -211,7 +215,7 @@ export const series_sql = (project_id: string, query: GridQuery): SQL => {
       from traces t
       group by 1
     ),
-    metric_samples as (${metric_samples(project_id, query, grid, [SATURATION_METRIC])}),
+    metric_samples as (${metric_samples(workflow_id, query, grid, [SATURATION_METRIC])}),
     metrics_bucket as (
       select bucket, (${sql.raw(weighted_average)})::float8 as saturation
       from metric_samples group by bucket
@@ -245,11 +249,11 @@ const LOG_REPLICA = sql.raw(`coalesce(
   'unknown'
 )`);
 
-const log_scope = (project_id: string, range: TimeRange): SQL => sql`
+const log_scope = (workflow_id: string, range: TimeRange): SQL => sql`
   ${withinRange('l.time_unix_nano', range)}
   and (
-    (l.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
-    or l.trace_id in (select trace_id from project_traces)
+    (l.resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE}) = ${workflow_id}
+    or l.trace_id in (select trace_id from workflow_traces)
   )`;
 
 const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
@@ -293,13 +297,13 @@ const entity_rollup = (prefix: 'machine' | 'agent'): SQL =>
     from ${prefix}_series group by key
   )`);
 
-export const resource_utilization_sql = (project_id: string, range: GridQuery): SQL => {
+export const resource_utilization_sql = (workflow_id: string, range: GridQuery): SQL => {
   const grid = timeGrid(range);
   return sql`
-    with scoped as (${projectRequestSpans(project_id, range)}),
+    with scoped as (${workflowRequestSpans(workflow_id, range)}),
     slots as (${grid.slots}),
     machine_samples as (${metric_samples(
-      project_id,
+      workflow_id,
       range,
       grid,
       Object.values(MACHINE_UTILIZATION_METRICS)
@@ -331,7 +335,7 @@ export const resource_utilization_sql = (project_id: string, range: GridQuery): 
   `;
 };
 
-export const replicas_sql = (project_id: string): SQL => sql`
+export const replicas_sql = (workflow_id: string): SQL => sql`
   select l.agent, l.replica,
     ${latest_of(QUEUE_LENGTH_METRIC)}::int as queue_length,
     (${latest_of(REQUESTS_STARTED_METRIC)} - ${latest_of(REQUESTS_COMPLETED_METRIC)})::int
@@ -346,7 +350,7 @@ export const replicas_sql = (project_id: string): SQL => sql`
     from ${otelMetrics} m
     where m.metric_name in (${AGENT_UP_METRIC}, ${QUEUE_LENGTH_METRIC},
         ${REQUESTS_STARTED_METRIC}, ${REQUESTS_COMPLETED_METRIC}, ${AGENT_DRAINING_METRIC})
-      and (m.resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
+      and (m.resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE}) = ${workflow_id}
       and ${sql.raw(REPLICA_ID)} is not null
       and m.time_unix_nano >= (extract(epoch from now()) * 1e9)::bigint
         - ${REPLICA_UP_SECONDS}::bigint * 1000000000
@@ -358,20 +362,20 @@ export const replicas_sql = (project_id: string): SQL => sql`
 `;
 
 export const monitoring_repo = {
-  async series(project_id: string, query: GridQuery): Promise<SeriesRow> {
-    const rows = await db.execute(series_sql(project_id, query));
+  async series(workflow_id: string, query: GridQuery): Promise<SeriesRow> {
+    const rows = await db.execute(series_sql(workflow_id, query));
     return (rows as unknown as [SeriesRow])[0];
   },
 
-  async logs(project_id: string, query: MonitoringLogsQuery): Promise<MonitoringLog[]> {
+  async logs(workflow_id: string, query: MonitoringLogsQuery): Promise<MonitoringLog[]> {
     const { limit, errors_only, agent, replica } = query;
     const range = query;
     const severity_filter = errors_only ? sql`and ${ERROR_SEVERITY}` : sql``;
     const agent_filter = agent === undefined ? sql`` : sql`and ${LOG_AGENT} = ${agent}`;
     const replica_filter = replica === undefined ? sql`` : sql`and ${LOG_REPLICA} = ${replica}`;
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, range)}),
-      project_traces as (select distinct s.trace_id from scoped s)
+      with scoped as (${workflowSpans(workflow_id, range)}),
+      workflow_traces as (select distinct s.trace_id from scoped s)
       select
         to_char(${sql.raw(metricTime('l'))} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SSZ')
           as at,
@@ -384,7 +388,7 @@ export const monitoring_repo = {
         l.span_id,
         l.attributes - 'canyonos.agent.id' - 'canyonos.agent.name' as attributes
       from ${otelLogs} l
-      where ${log_scope(project_id, range)}
+      where ${log_scope(workflow_id, range)}
         ${severity_filter}
         ${agent_filter}
         ${replica_filter}
@@ -394,9 +398,9 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringLog[];
   },
 
-  async llm_calls(project_id: string, query: MonitoringListQuery): Promise<MonitoringLlmCall[]> {
+  async llm_calls(workflow_id: string, query: MonitoringListQuery): Promise<MonitoringLlmCall[]> {
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, query)})
+      with scoped as (${workflowRequestSpans(workflow_id, query)})
       select
         to_char(${sql.raw(spanStart('s'))} at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SSZ') as at,
@@ -423,10 +427,10 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringLlmCall[];
   },
 
-  async traces(project_id: string, query: MonitoringListQuery): Promise<MonitoringTrace[]> {
+  async traces(workflow_id: string, query: MonitoringListQuery): Promise<MonitoringTrace[]> {
     const agent = `nullif(${spanAgentId('s')}, '')`;
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, query)}),
+      with scoped as (${workflowRequestSpans(workflow_id, query)}),
       recent as (
         select distinct s.trace_id, s.request_start_unix_nano as start_nanos
         from scoped s
@@ -476,14 +480,14 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringTrace[];
   },
 
-  async log_sources(project_id: string, range: TimeRange): Promise<MonitoringLogSource[]> {
+  async log_sources(workflow_id: string, range: TimeRange): Promise<MonitoringLogSource[]> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, range)}),
-      project_traces as (select distinct s.trace_id from scoped s),
+      with scoped as (${workflowSpans(workflow_id, range)}),
+      workflow_traces as (select distinct s.trace_id from scoped s),
       sources as (
         select distinct ${LOG_AGENT} as agent, ${LOG_REPLICA} as replica
         from ${otelLogs} l
-        where ${log_scope(project_id, range)}
+        where ${log_scope(workflow_id, range)}
       )
       select agent, json_agg(replica order by replica) as replicas
       from sources group by agent order by agent
@@ -492,15 +496,15 @@ export const monitoring_repo = {
   },
 
   async resource_utilization(
-    project_id: string,
+    workflow_id: string,
     range: GridQuery
   ): Promise<ResourceUtilizationRow> {
-    const rows = await db.execute(resource_utilization_sql(project_id, range));
+    const rows = await db.execute(resource_utilization_sql(workflow_id, range));
     return (rows as unknown as [ResourceUtilizationRow])[0];
   },
 
-  async replicas(project_id: string): Promise<MonitoringReplica[]> {
-    const rows = await db.execute(replicas_sql(project_id));
+  async replicas(workflow_id: string): Promise<MonitoringReplica[]> {
+    const rows = await db.execute(replicas_sql(workflow_id));
     return rows as unknown as MonitoringReplica[];
   },
 
@@ -510,10 +514,10 @@ export const monitoring_repo = {
     return result.success ? result.data : null;
   },
 
-  async error_summary(project_id: string, range: TimeRange): Promise<ErrorSummaryRow> {
+  async error_summary(workflow_id: string, range: TimeRange): Promise<ErrorSummaryRow> {
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, range)}),
-      project_traces as (select distinct s.trace_id from scoped s),
+      with scoped as (${workflowSpans(workflow_id, range)}),
+      workflow_traces as (select distinct s.trace_id from scoped s),
       errors as (
         select
           coalesce(nullif(l.attributes ->> 'exception.type', ''), ${UNTYPED_ERROR}) as error_type,
@@ -524,7 +528,7 @@ export const monitoring_repo = {
             ${UNKNOWN_AGENT}
           ) as agent
         from ${otelLogs} l
-        where ${log_scope(project_id, range)}
+        where ${log_scope(workflow_id, range)}
           and ${ERROR_SEVERITY}
       ),
       by_type as (

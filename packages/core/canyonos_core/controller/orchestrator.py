@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The orchestrator: what starts, replaces and removes a project's replicas, behind
+"""The orchestrator: what starts, replaces and removes a workflow group's replicas, behind
 the one object the Global Controller asks.
 
 The Global Controller decides: config, policies, how many replicas each agent should
@@ -21,7 +21,7 @@ count.
 the reconciler.
 
 The methods are only half of what an orchestrator owes the Global Controller. The
-other half is in the project's Redis, which the Global Controller reads directly
+other half is in the workflow group's Redis, which the Global Controller reads directly
 (`state.get_desired`, `list_replicas`), so every orchestrator must keep these up to
 date in the reconciler's format:
 

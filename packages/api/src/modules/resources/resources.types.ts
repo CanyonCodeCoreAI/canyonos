@@ -26,12 +26,12 @@ export const FleetResourceSchema = z.object({
   available: z.boolean(),
 });
 
-export const FleetProjectResourceUsageSchema = z.object({
+export const FleetWorkflowResourceUsageSchema = z.object({
   resource_id: ResourceIdSchema,
   usage: z.number(),
 });
 
-export const FleetProjectSchema = z.object({
+export const FleetWorkflowSchema = z.object({
   id: z.string(),
   name: z.string(),
   color_index: z.number().int(),
@@ -40,18 +40,18 @@ export const FleetProjectSchema = z.object({
   // A per-block average — named honestly, since the runtime gives no true p95.
   avg_latency_ms: z.number().nonnegative(),
   error_rate_pct: z.number().nonnegative(),
-  resource_usage: z.array(FleetProjectResourceUsageSchema),
+  resource_usage: z.array(FleetWorkflowResourceUsageSchema),
 });
 
 export const FleetOverviewSchema = z.object({
   kpis: z.array(FleetKpiSchema),
   resources: z.array(FleetResourceSchema),
-  projects: z.array(FleetProjectSchema),
+  workflows: z.array(FleetWorkflowSchema),
   ...TIME_RANGE_FIELDS,
 });
 
 export type FleetKpi = z.infer<typeof FleetKpiSchema>;
 export type FleetResource = z.infer<typeof FleetResourceSchema>;
-export type FleetProjectResourceUsage = z.infer<typeof FleetProjectResourceUsageSchema>;
-export type FleetProject = z.infer<typeof FleetProjectSchema>;
+export type FleetWorkflowResourceUsage = z.infer<typeof FleetWorkflowResourceUsageSchema>;
+export type FleetWorkflow = z.infer<typeof FleetWorkflowSchema>;
 export type FleetOverview = z.infer<typeof FleetOverviewSchema>;

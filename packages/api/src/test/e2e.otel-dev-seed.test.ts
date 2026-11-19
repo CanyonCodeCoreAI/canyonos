@@ -8,10 +8,10 @@ import { db } from '@api/db/client';
 import { otelMetricRollups, otelSpans } from '@api/db/schema';
 import { seedMonitoringDemo } from '@api/db/seed-monitoring-demo';
 import { seedDevTelemetry } from '@api/db/seed-telemetry';
-import { RESOURCE_PROJECT_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
+import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -23,7 +23,7 @@ const range = () => {
   };
 };
 
-async function rollup_totals(project_id: string) {
+async function rollup_totals(workflow_id: string) {
   const [totals] = await db
     .select({
       rows: sql<number>`count(*)::int`,
@@ -31,20 +31,20 @@ async function rollup_totals(project_id: string) {
     })
     .from(otelMetricRollups)
     .where(
-      sql`${otelMetricRollups.resource_attributes} ->> ${RESOURCE_PROJECT_ATTRIBUTE} = ${project_id}`
+      sql`${otelMetricRollups.resource_attributes} ->> ${RESOURCE_WORKFLOW_ATTRIBUTE} = ${workflow_id}`
     );
   return totals!;
 }
 
 describe('otel dev seed', () => {
-  test('the seeded project reports its spans through the KPI endpoint', async () => {
+  test('the seeded workflow reports its spans through the KPI endpoint', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
-    const listed = await api.projects.get({ $headers: bearer(token) });
-    expect(listed.data!.map((project) => project.id)).toContain(project_id);
+    const listed = await api.workflows.get({ $headers: bearer(token) });
+    expect(listed.data!.map((workflow) => workflow.id)).toContain(workflow_id);
 
-    const kpis = await api.projects[project_id]!.metrics.kpis.get({
+    const kpis = await api.workflows[workflow_id]!.metrics.kpis.get({
       $query: range(),
       $headers: bearer(token),
     });
@@ -55,21 +55,27 @@ describe('otel dev seed', () => {
     expect(Number(window.total_cost)).toBeGreaterThan(0);
   });
 
-  test('a rerun duplicates neither the project nor the telemetry counts', async () => {
+  test('a rerun duplicates neither the workflow nor the telemetry counts', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
-    const first_projects = await api.projects.get({ $headers: bearer(token) });
+    const first_workflows = await api.workflows.get({ $headers: bearer(token) });
     const before = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+      await api.workflows[workflow_id]!.metrics.kpis.get({
+        $query: range(),
+        $headers: bearer(token),
+      })
     ).data!;
 
-    expect(await seedDevTelemetry()).toBe(project_id);
+    expect(await seedDevTelemetry()).toBe(workflow_id);
 
-    const after_projects = await api.projects.get({ $headers: bearer(token) });
-    expect(after_projects.data).toHaveLength(first_projects.data!.length);
+    const after_workflows = await api.workflows.get({ $headers: bearer(token) });
+    expect(after_workflows.data).toHaveLength(first_workflows.data!.length);
     const after = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+      await api.workflows[workflow_id]!.metrics.kpis.get({
+        $query: range(),
+        $headers: bearer(token),
+      })
     ).data!;
     expect(after.block_count).toBe(before.block_count);
     expect(after.request_count).toBe(before.request_count);
@@ -78,9 +84,9 @@ describe('otel dev seed', () => {
 
   test('the queries listing shows several seeded queries, one of them failed', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
-    const listing = await api.projects[project_id]!.requests.get({
+    const listing = await api.workflows[workflow_id]!.requests.get({
       $headers: bearer(token),
       $query: { limit: 20, offset: 0, ...range() },
     });
@@ -92,15 +98,15 @@ describe('otel dev seed', () => {
 
   test('a seeded query carries its own input and output', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
-    const listing = await api.projects[project_id]!.requests.get({
+    const workflow_id = await seedDevTelemetry();
+    const listing = await api.workflows[workflow_id]!.requests.get({
       $headers: bearer(token),
       $query: { limit: 20, offset: 0, ...range() },
     });
 
     const traces = await Promise.all(
       listing.data!.items.map((item) =>
-        api.projects[project_id]!.requests[item.session_id]!.get({
+        api.workflows[workflow_id]!.requests[item.session_id]!.get({
           $query: range(),
           $headers: bearer(token),
         })
@@ -112,10 +118,13 @@ describe('otel dev seed', () => {
 
   test('the window reports an unpriced block rather than a free one', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
     const window = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+      await api.workflows[workflow_id]!.metrics.kpis.get({
+        $query: range(),
+        $headers: bearer(token),
+      })
     ).data!;
     expect(window.costed_block_count).toBeGreaterThan(0);
     expect(window.costed_block_count).toBeLessThan(window.block_count);
@@ -124,9 +133,9 @@ describe('otel dev seed', () => {
 
   test('the agent drawer reports an agent that answered under more than one id', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
-    const blocks = await api.projects[project_id]!.metrics.blocks.get({
+    const blocks = await api.workflows[workflow_id]!.metrics.blocks.get({
       $headers: bearer(token),
       $query: { ...range() },
     });
@@ -134,7 +143,7 @@ describe('otel dev seed', () => {
 
     const replica_counts = await Promise.all(
       [...new Set(blocks.data!.blocks.map((block) => block.agent_id))].map(async (agent_id) => {
-        const drawer = await api.projects[project_id]!.metrics.agents[agent_id]!.get({
+        const drawer = await api.workflows[workflow_id]!.metrics.agents[agent_id]!.get({
           $query: range(),
           $headers: bearer(token),
         });
@@ -145,13 +154,13 @@ describe('otel dev seed', () => {
     expect(replica_counts.some((count) => count > 1)).toBe(true);
   });
 
-  test('the API key reads the seeded project and its spans', async () => {
-    const project_id = await seedDevTelemetry();
+  test('the API key reads the seeded workflow and its spans', async () => {
+    const workflow_id = await seedDevTelemetry();
 
-    const projects = await api.projects.get({ $headers: bearer(TEST_API_KEY) });
-    expect(projects.data!.map((project) => project.id)).toContain(project_id);
+    const workflows = await api.workflows.get({ $headers: bearer(TEST_API_KEY) });
+    expect(workflows.data!.map((workflow) => workflow.id)).toContain(workflow_id);
 
-    const kpis = await api.projects[project_id]!.metrics.kpis.get({
+    const kpis = await api.workflows[workflow_id]!.metrics.kpis.get({
       $query: range(),
       $headers: bearer(TEST_API_KEY),
     });
@@ -165,18 +174,18 @@ describe('otel dev seed', () => {
         to: new Date().toISOString(),
       },
     });
-    expect(overview.data!.projects.map((project) => project.id)).toContain(project_id);
+    expect(overview.data!.workflows.map((workflow) => workflow.id)).toContain(workflow_id);
   });
 
   test('a rerun refreshes the seed spans and leaves every other span untouched', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
     const stale = 1_600_000_000_000_000_000n;
     await db
       .update(otelSpans)
       .set({ start_time_unix_nano: stale, end_time_unix_nano: stale + 1_000_000n })
-      .where(like(otelSpans.span_id, `seed-${project_id}-%`));
+      .where(like(otelSpans.span_id, `seed-${workflow_id}-%`));
 
     const foreign = {
       span_id: 'foreign-span',
@@ -184,20 +193,26 @@ describe('otel dev seed', () => {
       name: 'Foreign',
       start_time_unix_nano: stale,
       end_time_unix_nano: stale + 1_000_000n,
-      attributes: { 'canyon.project.id': project_id },
+      attributes: { 'canyon.workflow.id': workflow_id },
     };
     await db.insert(otelSpans).values(foreign);
     const [before] = await db.select().from(otelSpans).where(eq(otelSpans.span_id, 'foreign-span'));
 
     const aged = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+      await api.workflows[workflow_id]!.metrics.kpis.get({
+        $query: range(),
+        $headers: bearer(token),
+      })
     ).data!;
     expect(aged.block_count).toBe(0);
 
     await seedDevTelemetry();
 
     const refreshed = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range(), $headers: bearer(token) })
+      await api.workflows[workflow_id]!.metrics.kpis.get({
+        $query: range(),
+        $headers: bearer(token),
+      })
     ).data!;
     expect(refreshed.block_count).toBe(7);
 
@@ -206,8 +221,8 @@ describe('otel dev seed', () => {
   });
 
   test('a rerun restores a seed span field, not only its timestamps', async () => {
-    const project_id = await seedDevTelemetry();
-    const writer = eq(otelSpans.span_id, `seed-${project_id}-writer-a`);
+    const workflow_id = await seedDevTelemetry();
+    const writer = eq(otelSpans.span_id, `seed-${workflow_id}-writer-a`);
     const [original] = await db.select().from(otelSpans).where(writer);
 
     await db.update(otelSpans).set({ name: 'Stale', attributes: {}, output: null }).where(writer);
@@ -219,43 +234,43 @@ describe('otel dev seed', () => {
     expect(restored!.output).toBe(original!.output);
   });
 
-  test('the seed owns a deterministic version 8 project id', async () => {
+  test('the seed owns a deterministic version 8 workflow id', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
-    expect(await seedDevTelemetry()).toBe(project_id);
+    const workflow_id = await seedDevTelemetry();
+    expect(await seedDevTelemetry()).toBe(workflow_id);
 
-    expect(project_id).toMatch(
+    expect(workflow_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
     );
-    const projects = await api.projects.get({ $headers: bearer(token) });
-    expect(projects.data!.filter((project) => project.id === project_id)).toHaveLength(1);
+    const workflows = await api.workflows.get({ $headers: bearer(token) });
+    expect(workflows.data!.filter((workflow) => workflow.id === workflow_id)).toHaveLength(1);
   });
 
-  test('a project the user named after the demo stays separate from the seeded one', async () => {
+  test('a workflow the user named after the demo stays separate from the seeded one', async () => {
     const token = TEST_API_KEY;
-    const { project_id: my_project_id } = await create_test_project({
+    const { workflow_id: my_workflow_id } = await create_test_workflow({
       name: 'Canyon Code Demo Flow',
     });
 
     const seeded_id = await seedDevTelemetry();
-    expect(seeded_id).not.toBe(my_project_id);
+    expect(seeded_id).not.toBe(my_workflow_id);
 
-    const mine_kpis = await api.projects[my_project_id]!.metrics.kpis.get({
+    const mine_kpis = await api.workflows[my_workflow_id]!.metrics.kpis.get({
       $query: range(),
       $headers: bearer(token),
     });
     expect(mine_kpis.data!.block_count).toBe(0);
 
-    const seeded_kpis = await api.projects[seeded_id]!.metrics.kpis.get({
+    const seeded_kpis = await api.workflows[seeded_id]!.metrics.kpis.get({
       $query: range(),
       $headers: bearer(token),
     });
     expect(seeded_kpis.data!.block_count).toBe(7);
   });
 
-  test('the fleet overview counts the seeded project', async () => {
+  test('the fleet overview counts the seeded workflow', async () => {
     const token = TEST_API_KEY;
-    const project_id = await seedDevTelemetry();
+    const workflow_id = await seedDevTelemetry();
 
     const overview = await api.resources.overview.get({
       $headers: bearer(token),
@@ -265,7 +280,7 @@ describe('otel dev seed', () => {
       },
     });
     expect(overview.error).toBeNull();
-    const seeded = overview.data!.projects.find((row) => row.id === project_id);
+    const seeded = overview.data!.workflows.find((row) => row.id === workflow_id);
     expect(seeded).toBeDefined();
     expect(seeded!.cost).toBeGreaterThan(0);
     expect(seeded!.error_rate_pct).toBeGreaterThan(0);
@@ -275,11 +290,11 @@ describe('otel dev seed', () => {
   // Two day-long demo seeds can outlast the default five-second timeout on a loaded machine.
   test('the monitoring demo seed fills the rollups the dashboard reads, and a rerun replaces them', async () => {
     const token = TEST_API_KEY;
-    const { project_id } = await create_test_project({ name: 'Monitoring Demo' });
-    await seedMonitoringDemo(project_id);
+    const { workflow_id } = await create_test_workflow({ name: 'Monitoring Demo' });
+    await seedMonitoringDemo(workflow_id);
 
     const to = new Date();
-    const resources = await api.projects[project_id]!.monitoring.resources.get({
+    const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
       $headers: bearer(token),
       $query: {
         from: new Date(to.getTime() - 86_400_000).toISOString(),
@@ -289,10 +304,10 @@ describe('otel dev seed', () => {
     expect(resources.error).toBeNull();
     expect(resources.data!.machines.length).toBeGreaterThan(0);
 
-    const first = await rollup_totals(project_id);
+    const first = await rollup_totals(workflow_id);
     expect(first.rows).toBeGreaterThan(0);
 
-    await seedMonitoringDemo(project_id);
-    expect(await rollup_totals(project_id)).toEqual(first);
+    await seedMonitoringDemo(workflow_id);
+    expect(await rollup_totals(workflow_id)).toEqual(first);
   }, 30_000);
 });

@@ -269,7 +269,7 @@ def pod_machine_rows(pods, usages, project_id=None):
             {
                 "kind": "machine",
                 "host": name,
-                "project_id": project_id,
+                "workflow_group_id": project_id,
                 "metrics": metrics,
             }
         )

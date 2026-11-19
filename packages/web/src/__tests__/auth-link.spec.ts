@@ -7,10 +7,10 @@ import type { Page } from '@playwright/test';
 import { readStoredApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
 import {
   expectPath,
-  PROJECT,
   stubFleetSpend,
-  stubProjectDashboard,
-  stubProjectsList,
+  stubWorkflowDashboard,
+  stubWorkflowsList,
+  WORKFLOW,
 } from './helpers/session';
 
 const INVALID_KEY = 'This API key is not the one this API was started with';
@@ -36,23 +36,23 @@ test('@smoke a dashboard link signs in with its key, stores it and strips it fro
 
   await page.goto(signInLink(TEST_API_KEY));
 
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
   expect(new URL(page.url()).hash).toBe('');
   expect(urls.filter((url) => url.includes(encodeURIComponent(TEST_API_KEY)))).toEqual([]);
 });
 
 test('a dashboard link goes on to where the visitor was going', async ({ page }) => {
-  const project = `/projects/${PROJECT.id}`;
-  await stubProjectsList(page, [PROJECT]);
-  await stubProjectDashboard(page, PROJECT);
+  const workflow = `/workflows/${WORKFLOW.id}`;
+  await stubWorkflowsList(page, [WORKFLOW]);
+  await stubWorkflowDashboard(page, WORKFLOW);
   await stubFleetSpend(page);
 
-  await page.goto(signInLink(TEST_API_KEY, `/login?redirect=${project}`));
+  await page.goto(signInLink(TEST_API_KEY, `/login?redirect=${workflow}`));
 
-  await expectPath(page, project);
-  await expect(page.getByTestId('project-screen')).toBeVisible();
+  await expectPath(page, workflow);
+  await expect(page.getByTestId('workflow-screen')).toBeVisible();
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
 });
 

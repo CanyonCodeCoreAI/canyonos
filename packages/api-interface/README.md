@@ -2,7 +2,7 @@
 
 Typed clients for the CanyonOS REST API (`/v1`), for TypeScript and Python.
 
-A deploy's address and headers are in `~/.canyonos/deployments/<deployment>/state.json`: the API is on `http://127.0.0.1:<port>`, and every request sends its `headers`.
+A deploy's address and headers are in `~/.canyonos/deployments/<workflow group>/state.json`: the API is on `http://127.0.0.1:<port>`, and every request sends its `headers`.
 
 ## TypeScript
 
@@ -14,8 +14,8 @@ npm install @canyoncode/canyonos-api-interface
 import { createClient } from '@canyoncode/canyonos-api-interface';
 
 const api = createClient('http://127.0.0.1:8000', { Authorization: 'Bearer <secret>' });
-const { data, error } = await api.GET('/v1/deployments/{deployment_id}', {
-  params: { path: { deployment_id: '<deployment_id>' } },
+const { data, error } = await api.GET('/v1/workflow-groups/{workflow_group_id}', {
+  params: { path: { workflow_group_id: '<workflow_group_id>' } },
 });
 ```
 
@@ -29,7 +29,7 @@ pip install canyonos-api-interface
 from canyonos_api_interface.client import Client
 
 api = Client("http://127.0.0.1:8000", {"Authorization": "Bearer <secret>"})
-status = api.status("<deployment_id>")
+status = api.status("<workflow_group_id>")
 print(status.phase)
 ```
 

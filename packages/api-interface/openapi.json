@@ -5,12 +5,12 @@
     "version": "1"
   },
   "paths": {
-    "/v1/deployments": {
+    "/v1/workflow-groups": {
       "get": {
         "tags": ["default"],
-        "summary": "List the deployments",
-        "description": "Return the one deployment this server holds, with the name its last `PUT`<br/>gave it.",
-        "operationId": "list_deployments_v1_deployments_get",
+        "summary": "List the workflow groups",
+        "description": "Return the one workflow group this server holds, with the name its last `PUT`<br/>gave it.",
+        "operationId": "list_workflow_groups_v1_workflow_groups_get",
         "responses": {
           "404": {
             "description": "Not Found",
@@ -27,7 +27,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Deployments"
+                  "$ref": "#/components/schemas/WorkflowGroups"
                 }
               }
             }
@@ -48,19 +48,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}": {
+    "/v1/workflow-groups/{workflow_group_id}": {
       "get": {
         "tags": ["default"],
-        "summary": "Read the deployment's status",
-        "description": "Report the deployment's name and `deployment.yaml` as last uploaded, how far the<br/>apply loop got, the deploy's phase, progress and verdict, and while it runs, its<br/>endpoint, agents and machine errors read from Redis; a part that could not be read<br/>is left null and named under `errors`.",
-        "operationId": "status_v1_deployments__deployment_id__get",
+        "summary": "Read the workflow group's status",
+        "description": "Report the workflow group's name and `workflow_group.yaml` as last uploaded, how<br/>far the apply loop got, the deploy's phase, progress and verdict, and while it runs,<br/>its endpoint, agents and machine errors read from Redis; a part that could not be<br/>read is left null and named under `errors`.",
+        "operationId": "status_v1_workflow_groups__workflow_group_id__get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -103,16 +103,16 @@
       },
       "put": {
         "tags": ["default"],
-        "summary": "Upload deployment.yaml and its .env",
-        "description": "Write `deployment.yaml` and the `.env` beside it into `/workspace`, removing that<br/>`.env` when `env` is null, and keep `name` as the deployment's name. With<br/>`projects`, remove the uploaded projects it leaves out; with `api_key_hash`, keep<br/>it as the deployment's API key, none when it is empty.",
-        "operationId": "put_deployment_v1_deployments__deployment_id__put",
+        "summary": "Upload workflow_group.yaml and its .env",
+        "description": "Write `workflow_group.yaml` and the `.env` beside it into `/workspace`, removing<br/>that `.env` when `env` is null, and keep `name` as the workflow group's name. With<br/>`workflows`, remove the uploaded workflows it leaves out; with `api_key_hash`, keep<br/>it as the workflow group's API key, none when it is empty.",
+        "operationId": "put_workflow_group_v1_workflow_groups__workflow_group_id__put",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -121,7 +121,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DeploymentBody"
+                "$ref": "#/components/schemas/WorkflowGroupBody"
               }
             }
           },
@@ -164,14 +164,14 @@
         "tags": ["default"],
         "summary": "Stop the deploy and remove the upload",
         "description": "Remove everything uploaded to `/workspace`, then wait for the apply loop to stop<br/>the deploy; 504 if it did not stop in time, 500 if stopping it failed.",
-        "operationId": "delete_deployment_v1_deployments__deployment_id__delete",
+        "operationId": "delete_workflow_group_v1_workflow_groups__workflow_group_id__delete",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -233,19 +233,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/projects/{name}": {
+    "/v1/workflow-groups/{workflow_group_id}/workflows/{name}": {
       "get": {
         "tags": ["default"],
-        "summary": "Read a project",
-        "description": "Return uploaded project `name`; 404 if it was never uploaded.",
-        "operationId": "get_project_v1_deployments__deployment_id__projects__name__get",
+        "summary": "Read a workflow",
+        "description": "Return uploaded workflow `name`; 404 if it was never uploaded.",
+        "operationId": "get_workflow_v1_workflow_groups__workflow_group_id__workflows__name__get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           },
@@ -276,7 +276,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Project"
+                  "$ref": "#/components/schemas/Workflow"
                 }
               }
             }
@@ -295,16 +295,16 @@
       },
       "put": {
         "tags": ["default"],
-        "summary": "Upload a project",
-        "description": "Check the uploaded gzip tar of project `name` as `canyonos validate` does, then<br/>unpack it into `/workspace/<name>`, removing what its last upload had and this one<br/>lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.",
-        "operationId": "put_project_v1_deployments__deployment_id__projects__name__put",
+        "summary": "Upload a workflow",
+        "description": "Check the uploaded gzip tar of workflow `name` as `canyonos validate` does, then<br/>unpack it into `/workspace/<name>`, removing what its last upload had and this one<br/>lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.",
+        "operationId": "put_workflow_v1_workflow_groups__workflow_group_id__workflows__name__put",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           },
@@ -363,16 +363,16 @@
       },
       "delete": {
         "tags": ["default"],
-        "summary": "Remove a project",
-        "description": "Remove from `/workspace` what project `name`'s last upload put there; 404 if it<br/>was never uploaded.",
-        "operationId": "delete_project_v1_deployments__deployment_id__projects__name__delete",
+        "summary": "Remove a workflow",
+        "description": "Remove from `/workspace` what workflow `name`'s last upload put there; 404 if it<br/>was never uploaded.",
+        "operationId": "delete_workflow_v1_workflow_groups__workflow_group_id__workflows__name__delete",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           },
@@ -421,19 +421,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/logs/controller": {
+    "/v1/workflow-groups/{workflow_group_id}/logs/controller": {
       "get": {
         "tags": ["default"],
         "summary": "Read the controller log",
         "description": "Return the deploy process's kept output, the last `tail` lines of it, as text;<br/>with `follow=true`, keep streaming new lines until the process has exited and every<br/>line was sent. Empty when nothing was deployed yet.",
-        "operationId": "controller_log_v1_deployments__deployment_id__logs_controller_get",
+        "operationId": "controller_log_v1_workflow_groups__workflow_group_id__logs_controller_get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           },
@@ -493,19 +493,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/health": {
+    "/v1/workflow-groups/{workflow_group_id}/health": {
       "get": {
         "tags": ["default"],
         "summary": "Check the running deploy",
         "description": "Check the running deploy's Global Controller, Redis, each agent's replica count<br/>and its endpoint, each with how to fix it when it fails; 409 if no deploy is<br/>running.",
-        "operationId": "health_v1_deployments__deployment_id__health_get",
+        "operationId": "health_v1_workflow_groups__workflow_group_id__health_get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -557,19 +557,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/projects": {
+    "/v1/workflow-groups/{workflow_group_id}/workflows": {
       "get": {
         "tags": ["default"],
-        "summary": "List the uploaded projects",
-        "description": "Return every uploaded project, by name.",
-        "operationId": "list_projects_v1_deployments__deployment_id__projects_get",
+        "summary": "List the uploaded workflows",
+        "description": "Return every uploaded workflow, by name.",
+        "operationId": "list_workflows_v1_workflow_groups__workflow_group_id__workflows_get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -590,7 +590,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Projects"
+                  "$ref": "#/components/schemas/Workflows"
                 }
               }
             }
@@ -611,19 +611,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/logs/agents/{name}": {
+    "/v1/workflow-groups/{workflow_group_id}/logs/agents/{name}": {
       "get": {
         "tags": ["default"],
         "summary": "Read an agent's replica logs",
         "description": "Return the last `tail` lines of each running replica of agent `name`, or of the<br/>one replica whose ID is `name`, read on its machine; 409 if no deploy is running,<br/>404 naming the agents when `name` is neither, 503 when Redis cannot be read.",
-        "operationId": "logs_v1_deployments__deployment_id__logs_agents__name__get",
+        "operationId": "logs_v1_workflow_groups__workflow_group_id__logs_agents__name__get",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           },
@@ -702,19 +702,19 @@
         }
       }
     },
-    "/v1/deployments/{deployment_id}/dashboard": {
+    "/v1/workflow-groups/{workflow_group_id}/dashboard": {
       "put": {
         "tags": ["default"],
-        "summary": "Register the deployment's Redis with the dashboard",
-        "description": "Send this deployment's Redis host, port and password, plus a client certificate<br/>its CA signs when its Redis takes only TLS, to the dashboard api at `url` and<br/>return the project it registered. Connection failures and 5xx answers are retried<br/>for a minute; 502 when the api refuses it or never answers.",
-        "operationId": "put_dashboard_v1_deployments__deployment_id__dashboard_put",
+        "summary": "Register the workflow group's Redis with the dashboard",
+        "description": "Send this workflow group's Redis host, port and password, plus a client<br/>certificate its CA signs when its Redis takes only TLS, to the dashboard api at<br/>`url` and return the workflows it registered. Connection failures and 5xx answers<br/>are retried for a minute; 502 when the api refuses it or never answers.",
+        "operationId": "put_dashboard_v1_workflow_groups__workflow_group_id__dashboard_put",
         "parameters": [
           {
-            "name": "deployment_id",
+            "name": "workflow_group_id",
             "in": "path",
             "required": true,
             "schema": {
-              "title": "Deployment Id",
+              "title": "Workflow Group Id",
               "type": "string"
             }
           }
@@ -745,7 +745,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DashboardProject"
+                  "$ref": "#/components/schemas/DashboardWorkflows"
                 }
               }
             }
@@ -820,29 +820,29 @@
             "default": null
           }
         },
-        "description": "Every error answer; `findings` and `warnings` only come with `project_invalid`."
+        "description": "Every error answer; `findings` and `warnings` only come with\n`workflow_invalid`."
       },
-      "Deployments": {
-        "title": "Deployments",
-        "required": ["deployments"],
+      "WorkflowGroups": {
+        "title": "WorkflowGroups",
+        "required": ["workflow_groups"],
         "type": "object",
         "properties": {
-          "deployments": {
-            "title": "Deployments",
+          "workflow_groups": {
+            "title": "Workflow Groups",
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Deployment"
+              "$ref": "#/components/schemas/WorkflowGroup"
             }
           }
         }
       },
-      "Deployment": {
-        "title": "Deployment",
-        "required": ["deployment_id", "name"],
+      "WorkflowGroup": {
+        "title": "WorkflowGroup",
+        "required": ["workflow_group_id", "name"],
         "type": "object",
         "properties": {
-          "deployment_id": {
-            "title": "Deployment Id",
+          "workflow_group_id": {
+            "title": "Workflow Group Id",
             "type": "string"
           },
           "name": {
@@ -850,7 +850,7 @@
             "type": "string"
           }
         },
-        "description": "`name` is what the deployment's `PUT` last sent, empty before one."
+        "description": "`name` is what the workflow group's `PUT` last sent, empty before one."
       },
       "Uploaded": {
         "title": "Uploaded",
@@ -871,8 +871,8 @@
         },
         "description": "`warnings` name problems in the upload that don't stop the deploy."
       },
-      "DeploymentBody": {
-        "title": "DeploymentBody",
+      "WorkflowGroupBody": {
+        "title": "WorkflowGroupBody",
         "required": ["name", "config", "env"],
         "type": "object",
         "properties": {
@@ -895,8 +895,8 @@
               }
             ]
           },
-          "projects": {
-            "title": "Projects",
+          "workflows": {
+            "title": "Workflows",
             "anyOf": [
               {
                 "type": "array",
@@ -923,7 +923,7 @@
             "default": null
           }
         },
-        "description": "`config` is `deployment.yaml`'s text and `env` the `.env` beside it, null for\nnone. `projects`, when given, is every project the deployment has; the uploaded\nprojects it leaves out are removed. `api_key_hash`, when given, is the SHA-256 of the\ndeploy's API key, \"\" for none, used only on Kubernetes, where a change restarts the\ndeploy."
+        "description": "`config` is `workflow_group.yaml`'s text and `env` the `.env` beside it, null for\nnone. `workflows`, when given, is every workflow the workflow group has; the\nuploaded workflows it leaves out are removed. `api_key_hash`, when given, is the\nSHA-256 of the deploy's API key, \"\" for none, used only on Kubernetes, where a\nchange restarts the deploy."
       },
       "Generation": {
         "title": "Generation",
@@ -1152,7 +1152,7 @@
             }
           }
         },
-        "description": "`name` and `config` are what the deployment's `PUT` last sent, without the `.env`;\n`running` is whether the deploy process is alive, so a failed deploy can still be\nrunning while it stops itself."
+        "description": "`name` and `config` are what the workflow group's `PUT` last sent, without the\n`.env`; `running` is whether the deploy process is alive, so a failed deploy can\nstill be running while it stops itself."
       },
       "Agent": {
         "title": "Agent",
@@ -1254,12 +1254,23 @@
       },
       "Route": {
         "title": "Route",
-        "required": ["project", "agent", "method", "arguments", "url"],
+        "required": ["workflow", "workflow_id", "agent", "method", "arguments", "url"],
         "type": "object",
         "properties": {
-          "project": {
-            "title": "Project",
+          "workflow": {
+            "title": "Workflow",
             "type": "string"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "agent": {
             "title": "Agent",
@@ -1345,16 +1356,16 @@
           }
         }
       },
-      "Projects": {
-        "title": "Projects",
-        "required": ["projects"],
+      "Workflows": {
+        "title": "Workflows",
+        "required": ["workflows"],
         "type": "object",
         "properties": {
-          "projects": {
-            "title": "Projects",
+          "workflows": {
+            "title": "Workflows",
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Project"
+              "$ref": "#/components/schemas/Workflow"
             }
           }
         }
@@ -1373,10 +1384,10 @@
             "type": "string"
           }
         },
-        "description": "Digests over a project's uploaded files: `config` over its `config/` files and\n`.env`, which a reload applies, and `code` over the rest."
+        "description": "Digests over a workflow's uploaded files: `config` over its `config/` files and\n`.env`, which a reload applies, and `code` over the rest."
       },
-      "Project": {
-        "title": "Project",
+      "Workflow": {
+        "title": "Workflow",
         "required": ["name", "fingerprints", "test_query"],
         "type": "object",
         "properties": {
@@ -1418,13 +1429,27 @@
           }
         }
       },
-      "DashboardProject": {
-        "title": "DashboardProject",
-        "required": ["project_id", "name"],
+      "DashboardWorkflows": {
+        "title": "DashboardWorkflows",
+        "required": ["workflows"],
         "type": "object",
         "properties": {
-          "project_id": {
-            "title": "Project Id",
+          "workflows": {
+            "title": "Workflows",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DashboardWorkflow"
+            }
+          }
+        }
+      },
+      "DashboardWorkflow": {
+        "title": "DashboardWorkflow",
+        "required": ["workflow_id", "name"],
+        "type": "object",
+        "properties": {
+          "workflow_id": {
+            "title": "Workflow Id",
             "type": "string"
           },
           "name": {

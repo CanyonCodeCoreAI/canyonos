@@ -27,7 +27,7 @@ It is a container that looks at the host, not at itself. Docker and EC2 deploys 
 
 The poller sees the host because it shares the host's PID and network namespaces and mounts the host root read-only. Without that it would measure its own container.
 
-- It samples every `poll_interval` seconds from `deployment.yaml` (default 5).
+- It samples every `poll_interval` seconds from `workflow_group.yaml` (default 5).
 - If one source fails (no GPU, no `/proc/pressure`), it logs the failure and still writes the rest of the sample.
 - Each sample overwrites one hash in the machine's Redis. The Global Controller reads it on its poll tick and queues it for the [OTLP exporter](OTLP_EXPORTER.md).
 

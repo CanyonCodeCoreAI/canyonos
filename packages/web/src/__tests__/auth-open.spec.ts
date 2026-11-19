@@ -6,11 +6,11 @@ import { expect, test } from '@playwright/test';
 import type { AuthStatus } from '@canyonos/api/auth';
 
 import { readStoredApiKey, setApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
-import { apiBaseUrl, fulfillJson, noAuthApiBaseUrl } from './helpers/projects';
 import { expectPath } from './helpers/session';
+import { apiBaseUrl, fulfillJson, noAuthApiBaseUrl } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const SEEDED_PROJECT_NAME = 'Canyon Code Demo Flow';
+const SEEDED_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
 /** The dashboard is built against the API that needs a key; send its calls to the keyless one. */
 test.beforeEach(async ({ page }) => {
@@ -26,22 +26,22 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
-test('home opens the projects overview with no sign-in screen', async ({ page }) => {
+test('home opens the workflows overview with no sign-in screen', async ({ page }) => {
   await page.goto('/');
 
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toContainText(SEEDED_PROJECT_NAME);
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toContainText(SEEDED_WORKFLOW_NAME);
 });
 
-test('the sign-in screen and the old sign-up page send visitors to the projects overview', async ({
+test('the sign-in screen and the old sign-up page send visitors to the workflows overview', async ({
   page,
 }) => {
   await page.goto('/login');
-  await expectPath(page, '/projects');
+  await expectPath(page, '/workflows');
 
   await page.goto('/register');
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
 });
 
 test('a key stored by an earlier visit is dropped and no request carries it', async ({ page }) => {
@@ -52,9 +52,9 @@ test('a key stored by an earlier visit is dropped and no request carries it', as
   });
   await setApiKey(page, TEST_API_KEY);
 
-  await page.goto('/projects');
+  await page.goto('/workflows');
 
-  await expect(page.getByTestId('projects-overview')).toContainText(SEEDED_PROJECT_NAME);
+  await expect(page.getByTestId('workflows-overview')).toContainText(SEEDED_WORKFLOW_NAME);
   await expect(page.getByTestId('app-sidebar')).toBeVisible();
   await expect(page.getByTestId('sidebar-user-menu')).toHaveCount(0);
   await expect.poll(() => readStoredApiKey(page)).toEqual(storedApiKey(null));

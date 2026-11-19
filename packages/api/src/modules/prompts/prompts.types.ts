@@ -36,7 +36,7 @@ export type SystemPromptCreate = z.infer<typeof SystemPromptCreateSchema>;
 export type PromptLive = z.infer<typeof PromptLiveSchema>;
 
 /**
- * Splits `<project>.<agent>.<function>`, the agent named `<project>.<agent>` as the deployment
+ * Splits `<workflow>.<agent>.<function>`, the agent named `<workflow>.<agent>` as the workflow group
  * names it; a name without a function is all agent.
  */
 export function prompt_name_parts(name: string): {

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Setup for the E2E check. `cases/` run against one project named by
-`--project`: it is staged, the images are built from this checkout, it is deployed
+"""Setup for the E2E check. `cases/` run against one workflow named by
+`--workflow`: it is staged, the images are built from this checkout, it is deployed
 once and sent its test query, and cases only assert. `scenarios/` need no
-`--project`: each stages and deploys what it needs. A failing case gets its calls,
+`--workflow`: each stages and deploys what it needs. A failing case gets its calls,
 the doctor output and container logs written under the artifacts directory."""
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import yaml
 from dotenv import dotenv_values
 
 from .harness import (
@@ -32,19 +33,20 @@ from .harness import (
     collect_container_logs,
     dashboard_key,
     deployed_endpoint,
-    deployed_project_id,
+    deployed_workflow_id,
     deployment_group,
     manifest,
-    project_dir,
+    workflow_dir,
     qualified,
     query_for,
     result_of,
     stage,
-    stop_project,
+    stop_workflow_group,
+    workflow_name,
 )
-from .projects import Project, list_projects, load_check, load_project
+from .workflows import Workflow, list_workflows, load_check, load_workflow
 
-PROJECT_KEY = pytest.StashKey[Project]()
+WORKFLOW_KEY = pytest.StashKey[Workflow]()
 CALL_START_KEY = pytest.StashKey[int]()
 COLLECTED_FILE = "collected.json"
 CASES_DIR = (Path(__file__).parent / "cases").resolve()
@@ -52,23 +54,23 @@ DEPLOY_TIMEOUT = 1800
 
 
 def pytest_addoption(parser):
-    parser.addoption("--project", help="name of a directory under tests/e2e/projects")
+    parser.addoption("--workflow", help="name of a directory under tests/e2e/workflows")
     parser.addoption("--artifacts-dir", help="where junit.xml and traces/ are written")
 
 
 def pytest_configure(config):
     """Register the `trait` marker, read tests/e2e/.env for local runs, and load
-    the project named by `--project`."""
+    the workflow named by `--workflow`."""
     config.addinivalue_line(
         "markers",
-        "trait(*names): run only for projects whose project.yaml lists every name",
+        "trait(*names): run only for workflows whose workflow.yaml lists every name",
     )
     load_dotenv(Path(__file__).parent / ".env")
-    name = config.getoption("--project")
+    name = config.getoption("--workflow")
     if name is None:
         return
     try:
-        config.stash[PROJECT_KEY] = load_project(name)
+        config.stash[WORKFLOW_KEY] = load_workflow(name)
     except FileNotFoundError as error:
         raise pytest.UsageError(str(error)) from error
 
@@ -89,10 +91,10 @@ def _traits_of(item) -> set[str]:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Stop with a usage error when cases are collected without `--project` or a
-    trait marker names a trait no project.yaml lists, and deselect the cases whose
-    traits the project does not all list."""
-    known = {trait for name in list_projects() for trait in load_project(name).traits}
+    """Stop with a usage error when cases are collected without `--workflow` or a
+    trait marker names a trait no workflow.yaml lists, and deselect the cases whose
+    traits the workflow does not all list."""
+    known = {trait for name in list_workflows() for trait in load_workflow(name).traits}
     unknown = {
         f"{item.nodeid}: {trait}"
         for item in items
@@ -100,16 +102,16 @@ def pytest_collection_modifyitems(config, items):
     }
     if unknown:
         raise pytest.UsageError(
-            f"unknown trait, listed by no project.yaml: {', '.join(sorted(unknown))}"
+            f"unknown trait, listed by no workflow.yaml: {', '.join(sorted(unknown))}"
         )
     is_case = [Path(item.path).resolve().is_relative_to(CASES_DIR) for item in items]
-    if PROJECT_KEY not in config.stash:
+    if WORKFLOW_KEY not in config.stash:
         if any(is_case):
             raise pytest.UsageError(
-                "--project is required: one of tests/e2e/projects/*"
+                "--workflow is required: one of tests/e2e/workflows/*"
             )
         return
-    traits = set(config.stash[PROJECT_KEY].traits)
+    traits = set(config.stash[WORKFLOW_KEY].traits)
     keep, drop = [], []
     for item in items:
         (keep if _traits_of(item) <= traits else drop).append(item)
@@ -141,9 +143,9 @@ def _junit_name(nodeid: str) -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def project(request) -> Project:
-    """The project named by `--project`."""
-    return request.config.stash[PROJECT_KEY]
+def workflow(request) -> Workflow:
+    """The workflow named by `--workflow`."""
+    return request.config.stash[WORKFLOW_KEY]
 
 
 def session_recorder(session) -> Recorder:
@@ -171,20 +173,20 @@ def artifacts_dir(request, tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def check(project):
-    """The project's check.py, which says what is wrong with a workflow result."""
-    return load_check(project)
+def check(workflow):
+    """The workflow's check.py, which says what is wrong with a workflow result."""
+    return load_check(workflow)
 
 
-def secrets_of(project: Project) -> dict[str, str]:
-    """The values of the secrets the project declares, from the environment."""
-    missing = [name for name in project.secrets if not os.environ.get(name)]
+def secrets_of(workflow: Workflow) -> dict[str, str]:
+    """The values of the secrets the workflow declares, from the environment."""
+    missing = [name for name in workflow.secrets if not os.environ.get(name)]
     if missing:
         raise pytest.UsageError(
-            f"{project.name} needs {', '.join(missing)} in the environment "
+            f"{workflow.name} needs {', '.join(missing)} in the environment "
             "(or tests/e2e/.env)"
         )
-    return {name: os.environ[name] for name in project.secrets}
+    return {name: os.environ[name] for name in workflow.secrets}
 
 
 @pytest.fixture(scope="session")
@@ -194,10 +196,10 @@ def images(recorder) -> None:
 
 
 @pytest.fixture(scope="session")
-def workspace(request, project, recorder, tmp_path_factory) -> Path:
-    """The deployment folder the project is staged in, both named after it."""
+def workspace(request, workflow, recorder, tmp_path_factory) -> Path:
+    """The workflow group folder the workflow is staged in, both named after it."""
     staged = stage(
-        recorder, project, tmp_path_factory.mktemp("workspace"), secrets_of(project)
+        recorder, workflow, tmp_path_factory.mktemp("workspace"), secrets_of(workflow)
     )
     request.session.e2e_workspace = staged
     return staged
@@ -205,19 +207,20 @@ def workspace(request, project, recorder, tmp_path_factory) -> Path:
 
 @dataclass(frozen=True)
 class Deployed:
-    """A project that `canyonos deploy` brought up, with the handles cases need.
-    `dir` is the deployment folder every command runs from and `project_dir` the
-    project folder in it. `agents` names every agent in the manifest as the
-    deployment does, `<project>.<agent>`; a `type: database` agent runs replicas
+    """A workflow that `canyonos deploy` brought up, with the handles cases need.
+    `dir` is the workflow group folder every command runs from and `workflow_dir` the
+    workflow folder in it. `agents` names every agent in the manifest as the
+    workflow group does, `<workflow>.<agent>`; a `type: database` agent runs replicas
     named the same way, from its stock image."""
 
-    project: Project
+    workflow: Workflow
     dir: Path
-    project_dir: Path
+    workflow_dir: Path
     group: str
     endpoint: Endpoint
     api: Api
-    project_id: str
+    workflow_group_id: str
+    workflow_id: str
     agents: list[str]
     query: object
     deploy_output: str
@@ -225,15 +228,17 @@ class Deployed:
 
 @dataclass(frozen=True)
 class QueryResult:
-    """The project's test query after it finished: its request id and its result."""
+    """The workflow's test query after it finished: its request id and its result."""
 
     request_id: str
     result: object
 
 
 @pytest.fixture(scope="session")
-def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[Deployed]:
-    """Deploy the staged project with `canyonos deploy` and the session's API key, and
+def deployed(
+    workflow, recorder, workspace, images, artifacts_dir
+) -> Iterator[Deployed]:
+    """Deploy the staged workflow with `canyonos deploy` and the session's API key, and
     hand cases the endpoint and the dashboard API, both called with that key.
     `canyonos serve` runs first: the dashboard API reads the key's hash only when it
     starts, and a deploy leaves a running dashboard as it is. Afterwards, and also when any of that fails, save
@@ -241,33 +246,36 @@ def deployed(project, recorder, workspace, images, artifacts_dir) -> Iterator[De
     fails the run, unless the deploy had already failed: that failure is the one
     reported."""
     succeeded = False
-    folder = project_dir(workspace)
+    folder = workflow_dir(workspace)
     try:
         canyonos(recorder, ["serve"], cwd=workspace)
-        # From the project folder, naming the deployment's folder, as a user would.
+        # From the workflow folder, naming the workflow group's folder, as a user would.
         deploy = canyonos(
             recorder,
-            ["deploy", ".", "--folder", str(workspace)],
+            ["deploy", ".", "--workflow-group", str(workspace)],
             cwd=folder,
             timeout=DEPLOY_TIMEOUT,
         )
-        assert f"Registered {project.name} with the dashboard" in deploy.output, (
-            deploy.output[-3000:]
-        )
+        assert (
+            f"Registered {workflow_name(folder)} with the dashboard" in deploy.output
+        ), deploy.output[-3000:]
         api = Api(recorder, API_URL, dashboard_key(recorder))
         yield Deployed(
-            project=project,
+            workflow=workflow,
             dir=workspace,
-            project_dir=folder,
+            workflow_dir=folder,
             group=deployment_group(recorder, workspace),
             endpoint=deployed_endpoint(recorder, workspace),
             api=api,
-            project_id=deployed_project_id(recorder, api, workspace, project.name),
+            workflow_group_id=yaml.safe_load(
+                (workspace / "workflow_group.yaml").read_text()
+            )["workflow_group_id"],
+            workflow_id=deployed_workflow_id(api, workspace),
             agents=[
                 qualified(folder, agent["name"])
                 for agent in manifest(folder).get("agents", [])
             ],
-            query=query_for(project, folder),
+            query=query_for(workflow, folder),
             deploy_output=deploy.output,
         )
         succeeded = True
@@ -282,16 +290,16 @@ def _tear_down(recorder, workspace: Path, artifacts_dir: Path, *, raise_on_failu
         collect_container_logs(recorder, artifacts_dir / "containers")
     except Exception:
         (artifacts_dir / "containers_error.txt").write_text(traceback.format_exc())
-    stop = stop_project(recorder, workspace)
+    stop = stop_workflow_group(recorder, workspace)
     if raise_on_failure and stop is not None and stop.code != 0:
         raise CallFailed(stop)
 
 
 @pytest.fixture(scope="session")
 def query_result(deployed, recorder) -> QueryResult:
-    """The project's test query sent once to the endpoint and polled to its result."""
+    """The workflow's test query sent once to the endpoint and polled to its result."""
     request_id, result = result_of(
-        recorder, deployed.endpoint, deployed.query, timeout=deployed.project.timeout
+        recorder, deployed.endpoint, deployed.query, timeout=deployed.workflow.timeout
     )
     return QueryResult(request_id=request_id, result=result)
 
@@ -303,10 +311,10 @@ def pytest_runtest_setup(item):
     item.stash[CALL_START_KEY] = len(session_recorder(item.session).calls)
 
 
-def _projects_of(item, start: int) -> list[Path]:
-    """The deployment folders a failing case's doctor runs in: those staged since
-    its calls started, else the session's staged project (cases only). A scenario
-    whose project an earlier scenario's fixture staged gets none."""
+def _workspaces_of(item, start: int) -> list[Path]:
+    """The workflow group folders a failing case's doctor runs in: those staged since
+    its calls started, else the session's staged workflow (cases only). A scenario
+    whose workflow an earlier scenario's fixture staged gets none."""
     staged = session_recorder(item.session).staged_since(start)
     workspace = getattr(item.session, "e2e_workspace", None)
     return staged or ([workspace] if workspace is not None else [])
@@ -314,7 +322,7 @@ def _projects_of(item, start: int) -> list[Path]:
 
 def _write_trace(item, report, slug: str, start: int) -> None:
     """Write the calls from `start` on, the failure, `canyonos doctor` output from
-    each deployment folder `_projects_of` names and container logs under
+    each workflow group folder `_workspaces_of` names and container logs under
     traces/<slug>; leave an existing trace as it is. A failing doctor or log step
     goes to trace_error.txt so the case's own failure still shows."""
     recorder = session_recorder(item.session)
@@ -327,7 +335,7 @@ def _write_trace(item, report, slug: str, start: int) -> None:
     (directory / "longrepr.txt").write_text(report.longreprtext)
     try:
         doctors = []
-        for workspace in _projects_of(item, start):
+        for workspace in _workspaces_of(item, start):
             if workspace.is_dir():
                 doctor = canyonos(
                     recorder, ["doctor"], cwd=workspace, check=False, timeout=120

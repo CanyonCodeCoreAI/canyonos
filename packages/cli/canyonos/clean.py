@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Logic for canyonos clean: stop each deployment it is given or picks (see
+"""Logic for canyonos clean: stop each workflow group it is given or picks (see
 selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills, records
 under `~/.canyonos/deployments/` and agent images; with --all, everything CanyonOS put
 on this machine."""
@@ -20,7 +20,7 @@ from canyonos.stop import (
     stopper,
 )
 
-# What `canyonos clean` removes from a project's folder: its port and the skill
+# What `canyonos clean` removes from a workflow's folder: its port and the skill
 # `canyonos convert` installs there for each coding agent, leaving global installs.
 _LOCAL_FILES = (
     CANYON_DIR,
@@ -44,7 +44,7 @@ def _remove_emptied_parents(path, root):
 
 
 def _remove_local_files(folder):
-    """Remove the local files of the project in `folder`; False when one stayed."""
+    """Remove the local files of the workflow in `folder`; False when one stayed."""
     removed_all = True
     for path in _local_files(folder):
         try:
@@ -62,7 +62,7 @@ def _remove_local_files(folder):
 
 
 def _remove_records(name):
-    """Delete the folder under `~/.canyonos/deployments/` that holds deployment `name`'s
+    """Delete the folder under `~/.canyonos/deployments/` that holds workflow group `name`'s
     records, its Redis password among them; False when it stayed."""
     records = deployment.state_dir(name)
     try:
@@ -99,7 +99,7 @@ def _clean_deployment(target, stop):
 
 
 def _candidates():
-    """Every recorded deployment, and the current folder's when it holds something to
+    """Every recorded workflow group, and the current folder's when it holds something to
     clean and isn't deployed."""
     deployed = selection.recorded_deployments()
     here = selection.current_deployment()
@@ -110,22 +110,22 @@ def _candidates():
 
 
 def run_clean(all_deployments=False, yes=False, refs=()):
-    """Run `canyonos clean` on the deployments `refs` name or `selection.choose` picks:
+    """Run `canyonos clean` on the workflow groups `refs` name or `selection.choose` picks:
     stop each that is deployed, then remove its `.canyon`, CanyonOS skills, records
     and agents' images. With `all_deployments`, `stop_all(remove_everything=True)`,
-    asked first unless `yes`. Returns False if a deployment wasn't found or any could
+    asked first unless `yes`. Returns False if a workflow group wasn't found or any could
     not be removed."""
     if all_deployments:
         if not yes and not confirm_clean_all():
             return False
         return stop_all(remove_everything=True)
     choice = selection.choose("clean", refs, _candidates())
-    ui.json_result["deployments"] = [target.name for target in choice.deployments]
+    ui.json_result["workflow_groups"] = [target.name for target in choice.deployments]
     if not choice.deployments:
         if choice.ok:
             ui.say(
-                "Nothing to clean: there is no deployment, and this folder holds no "
-                "CanyonOS project."
+                "Nothing to clean: there is no workflow group, and this folder holds no "
+                "CanyonOS workflow."
             )
         return choice.ok
     stop = stopper(choice)

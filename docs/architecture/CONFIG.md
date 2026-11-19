@@ -1,6 +1,6 @@
 # Configuration
 
-How a deployment's config gets from the files a user edits to the running system, and how
+How a workflow group's config gets from the files a user edits to the running system, and how
 to add a setting. For what each setting means, see
 [Workflow config](../guides/WORKFLOW_CONFIG.md).
 
@@ -17,32 +17,32 @@ CLI paths below are under `packages/cli/canyonos/`, and Core paths under
 
 ## Where the files are
 
-The CLI reads `deployment.yaml` in the deployment folder, the folder it runs from
+The CLI reads `workflow_group.yaml` in the workflow group folder, the folder it runs from
 (`deployment_config_path` in `constants.py`), and `config/workflow_config.yaml` in each
-project folder it is given: in its `.canyon/` when it has one, else in the folder
-itself (`project_folder` and `project_config_path`).
+workflow folder it is given: in its `.canyon/` when it has one, else in the folder
+itself (`workflow_folder` and `workflow_config_path`).
 
-On Docker, `canyonos deploy` uploads `deployment.yaml` and the `.env` beside it to the
-Global Controller container's `/workspace` (`PUT /v1/deployments/<deployment_id>`), and each project, with
-its `.env`, to `/workspace/<project>/` as a gzip tar (`PUT /v1/deployments/<deployment_id>/projects/<name>`:
-`run_sync` in `sync.py`, `put_project` in `canyonos_api_interface/api_interface.py`). The container reads only that copy, so a host-side edit
+On Docker, `canyonos deploy` uploads `workflow_group.yaml` and the `.env` beside it to the
+Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, with
+its `.env`, to `/workspace/<workflow>/` as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<name>`:
+`run_sync` in `sync.py`, `put_workflow` in `canyonos_api_interface/api_interface.py`). The container reads only that copy, so a host-side edit
 reaches it only through `canyonos sync`, `canyonos config` or the next deploy.
 
-On Kubernetes, `canyonos deploy` uploads the project to the cluster instead. The
+On Kubernetes, `canyonos deploy` uploads the workflow to the cluster instead. The
 in-cluster build renders the config folder as a ConfigMap, plus a CanyonProject and one
 CanyonAgent per agent (`kubernetes/manifests.py`). See
-[Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder deployments yet.
+[Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ## Loading
 
 Every reader goes through `load_deployment_config` in `schema/manifest.py`:
 
-1. Parse `deployment.yaml` and each project's `config/workflow_config.yaml`.
+1. Parse `workflow_group.yaml` and each workflow's `config/workflow_config.yaml`.
 2. Replace every `${VAR}` with the variable's text, from the process environment, else
-   from the `.env` beside the file: the deployment folder's for `deployment.yaml`, the
-   project's for its config. Unset references stay as written.
-3. Name each agent `<project>.<agent>`, give each route its project, and put every
-   project's agents and routes in one config.
+   from the `.env` beside the file: the workflow group folder's for `workflow_group.yaml`, the
+   workflow's for its config. Unset references stay as written.
+3. Name each agent `<workflow>.<agent>`, give each route its workflow, and put every
+   workflow's agents and routes in one config.
 
 On Kubernetes, the reader is `load_config` in `controller/utils/config_env.py`.
 
@@ -51,7 +51,7 @@ allows `${VAR}` only in string fields: a `replicas` of `"3"` would start one rep
 
 ## Validation
 
-`schema/` checks a deployment before any stub is generated. `check_deployment` in
+`schema/` checks a workflow group before any stub is generated. `check_deployment` in
 `schema/__init__.py` returns the parsed manifest and every violation of every file, and
 never raises. It runs in two places:
 
@@ -59,31 +59,31 @@ never raises. It runs in two places:
 - a reload, before anything changes (`reload` in `canyonos_api_interface/docker.py`, then
   `reload_config`).
 
-`check_project` checks one project's files the same way. `canyonos validate` (Core
+`check_workflow` checks one workflow's files the same way. `canyonos validate` (Core
 `validate.py`) runs it and adds the checks the schema cannot make. The in-cluster build
 on Kubernetes checks its config with `_validate_or_exit` (`kubernetes/commands.py`).
 
 | Module                 | What it holds                                                                    |
 | ---------------------- | -------------------------------------------------------------------------------- |
-| `manifest.py`          | The schema of both files, `load_project` and `load_deployment`                   |
+| `manifest.py`          | The schema of both files, `load_workflow` and `load_deployment`                  |
 | `functions.py`         | An agent's `functions`                                                           |
 | `kubernetes_block.py`  | The `kubernetes:` section, read only by a Kubernetes deploy                      |
 | `otel_destinations.py` | `otel.destinations`, shared with the exporter at runtime                         |
 | `_checks.py`           | The field readers every module uses, including the `${VAR}` rule                 |
 | `yaml_lines.py`        | A YAML loader that keeps line numbers, so each violation names its line          |
 | `errors.py`            | `SchemaViolation` and `SchemaError`; each violation renders as one line          |
-| `__init__.py`          | `check_project` and `check_deployment`, which also check every `entrypoint`      |
+| `__init__.py`          | `check_workflow` and `check_deployment`, which also check every `entrypoint`     |
 
-`load_deployment` parses `deployment.yaml` and every project's config into frozen
+`load_deployment` parses `workflow_group.yaml` and every workflow's config into frozen
 dataclasses (`Manifest`, `CodeAgent`, `DatabaseAgent`, `Resources`, `RedisSpec`,
 `OtelSpec`, `EndpointSpec`, `RouteSpec`) and collects every violation before raising one
 `SchemaError`. Function names become Python source in the stub, so argument types are
 limited to builtins.
 
-The allowed keys are declared once, at the top of `manifest.py`: a project's top-level
-keys in `_PROJECT_KEYS`, `deployment.yaml`'s in `_DEPLOYMENT_KEYS`, and entry keys per
-type in `_AGENT_KEYS_BY_TYPE`. Anything else is rejected, and a deployment key in a
-project's config is refused with a message that sends it to `deployment.yaml`. A key
+The allowed keys are declared once, at the top of `manifest.py`: a workflow's top-level
+keys in `_WORKFLOW_KEYS`, `workflow_group.yaml`'s in `_DEPLOYMENT_KEYS`, and entry keys per
+type in `_AGENT_KEYS_BY_TYPE`. Anything else is rejected, and a workflow group key in a
+workflow's config is refused with a message that sends it to `workflow_group.yaml`. A key
 that no longer does anything goes in `_RETIRED_KEYS`, with the message to show. A
 provider's own section (`ec2-pool:`, `ec2-assign:`) is declared in its schema module
 instead; see `packages/core/canyonos_core/reconciler/providers/README.md`.
@@ -93,17 +93,17 @@ Cross-field rules live in `_agent`, `_agents`, `_routes` and
 
 - A database always has one replica.
 - Two agent names that Docker writes the same way collide, since image and container
-  names are lowercased and the `.` of `<project>.<agent>` is written `--`.
-- Each of a project's `endpoint.routes` names an agent of type `agent` in that project
+  names are lowercased and the `.` of `<workflow>.<agent>` is written `--`.
+- Each of a workflow's `endpoint.routes` names an agent of type `agent` in that workflow
   and one of its `functions`.
-- The section of the deployment's `provider` must set its required keys:
+- The section of the workflow group's `provider` must set its required keys:
   `machine_type` for both EC2 providers. In `ec2-pool:` it maps each machine type to a
   count; in `ec2-assign:` it maps each agent to a machine type.
 
 ## Applying it
 
 `ControllerContext._load_config` (`controller/controller_context.py`) fails when
-`deployment.yaml` has no `deployment_id`. `canyonos deploy` adds one on the first
+`workflow_group.yaml` has no `workflow_group_id`. `canyonos deploy` adds one on the first
 deploy, so it stays the same across reloads and redeploys.
 `GlobalController._apply_config` then publishes the config to Redis:
 
@@ -112,9 +112,9 @@ deploy, so it stays the same across reloads and redeploys.
 | Each agent's spec, and the list of agents                                    | `agent:{name}:spec`, `agents:active` | `write_config_specs`         |
 | Desired replicas                                                             | `agent:{name}:desired_replicas`      | `_apply_configured_replicas` |
 | Policy rules, most specific first, on every machine's Redis                  | `policy:rules`                       | `_write_policies`            |
-| Every other YAML file in each project's `config/`, on every machine's Redis  | `<file>:config`, `prompts:yaml`      | `_write_policies`            |
+| Every other YAML file in each workflow's `config/`, on every machine's Redis  | `<file>:config`, `prompts:yaml`      | `_write_policies`            |
 | Governance rules from `governance.yaml`, for agents the dashboard hasn't set | `governance:config`                  | `_seed_governance`           |
-| The deployment's identity                                                    | `controller:identity`                | `_write_identity`            |
+| The workflow group's id, and each workflow's name by its id                  | `controller:identity`                | `_write_identity`            |
 | Where callers reach the endpoint                                             | `endpoint:address`                   | `_apply_config`              |
 | OTel destinations, at startup and on reload                                  | `otel:destinations`                  | `_write_otel_destinations`   |
 
@@ -129,11 +129,11 @@ counts alone: each CanyonAgent already carries its configured count.
 
 ## Reloading
 
-On Docker, `canyonos sync` and `canyonos config` apply a change to the running deploy.
+On Docker, `canyonos sync` and `canyonos config` apply a change to the running workflow group.
 `canyonos config` saves the file, then does what `canyonos sync` does
 (`run_sync_and_reload` in `sync.py`):
 
-1. Copy the projects named and `deployment.yaml` into the container, as a deploy does.
+1. Copy the workflows named and `workflow_group.yaml` into the container, as a deploy does.
 2. The container's server (`canyonos_api_interface/api_interface.py`) sees that only config changed. It checks the
    config against the schema and reports every violation in `last_apply`, changing
    nothing, if it finds one. Otherwise it sends `SIGHUP` to the Global Controller.
@@ -142,7 +142,7 @@ On Docker, `canyonos sync` and `canyonos config` apply a change to the running d
    of any agent that was removed and wakes the Reconciler, without restarting the
    agents that remain.
 
-A reload applies the config only: a sync that changes code restarts the deploy instead. With no deploy running, both commands say so, and the change applies
+A reload applies the config only: a sync that changes code restarts the deploy instead. With no workflow group running, both commands say so, and the change applies
 on the next deploy. A `SIGHUP` that arrives while the deploy is still starting is
 ignored.
 

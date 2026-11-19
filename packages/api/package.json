@@ -25,9 +25,9 @@
       "types": "./dist/resources.d.ts",
       "import": "./dist/resources.js"
     },
-    "./projects": {
-      "types": "./dist/projects.d.ts",
-      "import": "./dist/projects.js"
+    "./workflows": {
+      "types": "./dist/workflows.d.ts",
+      "import": "./dist/workflows.js"
     },
     "./requests": {
       "types": "./dist/requests.d.ts",
@@ -86,8 +86,6 @@
     "pino": "^10.1.1",
     "postgres": "^3.4.9",
     "protobufjs": "^8.8.0",
-    "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "0.20.8",
     "zod": "^3.25.3",
     "zod-to-json-schema": "^3.24.1"
   },

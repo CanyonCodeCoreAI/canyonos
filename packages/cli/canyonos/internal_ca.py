@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The certificate authority of a deployment on Docker, which secures its internal
+"""The certificate authority of a workflow group on Docker, which secures its internal
 traffic with mutual TLS.
 
-The first deploy makes it under `~/.canyonos/deployments/<deployment>/ca/`, readable
+The first deploy makes it under `~/.canyonos/deployments/<workflow group>/ca/`, readable
 only by you, and every later deploy reuses it. The deploy hands it to the Global
 Controller container, which signs a certificate for every container it starts:
 Redis takes only TLS clients whose certificate this CA signed, and the controllers'
-gRPC calls work the same way. Only a deployment whose `provider` is `local` gets one;
+gRPC calls work the same way. Only a workflow group whose `provider` is `local` gets one;
 EC2 and Kubernetes keep their plaintext, password-protected Redis for now.
 
 `packages/core/canyonos_core/controller/utils/internal_ca.py` signs the containers'
@@ -42,7 +42,7 @@ TLS_PROVIDER = "local"
 
 
 def ca_dir(name=None):
-    """Return the folder that holds the CA of deployment `name`, by default this
+    """Return the folder that holds the CA of workflow group `name`, by default this
     folder's."""
     return os.path.join(deployment.state_dir(name), "ca")
 
@@ -54,8 +54,8 @@ def ca_paths(name=None):
 
 
 def uses_internal_tls(config_path=None):
-    """True when this folder's deployment runs on Docker with every agent on this
-    machine, the only deployments whose internal traffic is TLS for now."""
+    """True when this folder's workflow group runs on Docker with every agent on this
+    machine, the only workflow groups whose internal traffic is TLS for now."""
     config = read_config(config_path or deployment_config_path())
     provider = config.get("provider") if isinstance(config, dict) else None
     return (
@@ -65,7 +65,7 @@ def uses_internal_tls(config_path=None):
 
 
 def refuse_redis_that_outlived_its_ca():
-    """Raise when this deployment's Redis container still runs on the active Docker
+    """Raise when this workflow group's Redis container still runs on the active Docker
     engine but its CA is gone: Redis would refuse every certificate a new CA signs."""
     if not uses_internal_tls() or all(map(os.path.isfile, ca_paths())):
         return
@@ -78,7 +78,7 @@ def refuse_redis_that_outlived_its_ca():
             deployment.redis_container_name(),
         ],
         timeout=DOCKER_QUICK_TIMEOUT,
-        action="Looking for this deployment's Redis container",
+        action="Looking for this workflow group's Redis container",
     )
     if inspect.returncode != 0 or inspect.stdout.strip() != "true":
         return
@@ -134,7 +134,7 @@ def _new_ca(name):
 
 
 def ensure_ca(name=None):
-    """Return the CA certificate and key of deployment `name`, by default this
+    """Return the CA certificate and key of workflow group `name`, by default this
     folder's, as PEM bytes, made on its first use and kept after."""
     cert_path, key_path = ca_paths(name)
     if not (os.path.isfile(cert_path) and os.path.isfile(key_path)):
@@ -147,7 +147,7 @@ def ensure_ca(name=None):
 
 
 def gc_env():
-    """The variables that hand the Global Controller container this deployment's CA,
+    """The variables that hand the Global Controller container this workflow group's CA,
     made on the first deploy, and its own client certificate, for its Redis clients;
     none when its internal traffic is not TLS. The docker command copies them from its
     environment, so they stay off the command line."""
@@ -164,9 +164,9 @@ def gc_env():
 
 
 def client_certificate(common_name, name=None):
-    """A client certificate the CA of deployment `name` signs, for a process outside
-    the deployment that reads its Redis, such as the dashboard: `{ca, cert, key}` as
-    PEM text, or None when the deployment's internal traffic is not TLS or it has no
+    """A client certificate the CA of workflow group `name` signs, for a process outside
+    the workflow group that reads its Redis, such as the dashboard: `{ca, cert, key}` as
+    PEM text, or None when the workflow group's internal traffic is not TLS or it has no
     CA yet. It also names 127.0.0.1 and localhost, the Redis a host process reaches."""
     cert_path, key_path = ca_paths(name)
     if not (uses_internal_tls() and os.path.isfile(cert_path)):

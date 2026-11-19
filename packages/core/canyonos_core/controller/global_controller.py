@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The Global Controller: deploys a project's agents, runs the reconciler and OTel
+"""The Global Controller: deploys a workflow group's agents, runs the reconciler and OTel
 exporter beside it, and tracks controller health in Redis."""
 # Global Controller
 # Daemon process that maintains a routing table in Redis for multiple local controllers.
@@ -44,9 +44,9 @@ from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
     CONTROLLER_IMAGE,
     DOCKER_PROJECT_ENV,
+    docker_group,
+    docker_group_label_args,
     metrics_container_name,
-    project_group,
-    project_label_args,
     redis_container_name,
 )
 from canyonos_core.llm_gateway import llms, pricing
@@ -77,8 +77,8 @@ from canyonos_core.schema import (
     SchemaError,
     check_deployment,
     load_deployment,
-    project_names,
     qualified_name,
+    workflow_names,
 )
 from canyonos_core.schema.otel_destinations import (
     LOCAL_DASHBOARD_DESTINATION,
@@ -147,8 +147,8 @@ def _live_prompts(document, path):
 
 
 def _read_config_file(config_dir, name):
-    """`(document, path)` for the project config file `<name>.yaml` in `config_dir`,
-    or `(None, path)` when the project has none. Raises RuntimeError naming the file
+    """`(document, path)` for the workflow config file `<name>.yaml` in `config_dir`,
+    or `(None, path)` when the workflow has none. Raises RuntimeError naming the file
     when it is not UTF-8, not valid YAML, or not a mapping."""
     path = os.path.relpath(os.path.join(config_dir, f"{name}.yaml"))
     if not os.path.isfile(path):
@@ -167,7 +167,7 @@ def _read_config_file(config_dir, name):
 
 
 def _policy_rules(document, path, qualify):
-    """A project's policy.yaml rules, most specific first so the first that matches a
+    """A workflow's policy.yaml rules, most specific first so the first that matches a
     request decides, with each `access` list naming agents as `qualify` does."""
     rules = document.get("rules", []) if isinstance(document, dict) else None
     if not isinstance(rules, list) or not all(isinstance(rule, dict) for rule in rules):
@@ -181,16 +181,16 @@ def _policy_rules(document, path, qualify):
     return rules
 
 
-def _merge_llm_entry(entries, name, entry, qualify, path, project_agents):
-    """Add a project's llms.yaml `entry` to `entries`, its agents named as `qualify`
-    does. Without `agents:`, every one of `project_agents` may call the model,
-    uncapped. Two projects may share an entry only when they set it the same way,
+def _merge_llm_entry(entries, name, entry, qualify, path, workflow_agents):
+    """Add a workflow's llms.yaml `entry` to `entries`, its agents named as `qualify`
+    does. Without `agents:`, every one of `workflow_agents` may call the model,
+    uncapped. Two workflows may share an entry only when they set it the same way,
     since the gateway prices and caps every call by the one entry."""
     if not isinstance(entry, dict):
         raise RuntimeError(f"{path}: entry {name} must be a mapping.")
     agents = entry.get("agents")
     if agents is None:
-        agents = dict.fromkeys(project_agents)
+        agents = dict.fromkeys(workflow_agents)
     if not isinstance(agents, dict):
         raise RuntimeError(
             f"{path}: entry {name}: agents must map each agent name to its cap, "
@@ -200,7 +200,7 @@ def _merge_llm_entry(entries, name, entry, qualify, path, project_agents):
     merged = entries.setdefault(name, {**settings, "agents": {}})
     if {key: value for key, value in merged.items() if key != "agents"} != settings:
         raise RuntimeError(
-            f"{path}: entry {name} is set differently by another project; give one "
+            f"{path}: entry {name} is set differently by another workflow; give one "
             "of them another name."
         )
     merged["agents"].update({qualify(agent): cap for agent, cap in agents.items()})
@@ -299,7 +299,8 @@ class GlobalController(ControllerContext):
             if self.config.get("logs", True):
                 logging.getLogger().addHandler(
                     otel_writer.ProcessLogHandler(
-                        GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("deployment_id")
+                        GLOBAL_CONTROLLER_LOG_SOURCE,
+                        self.config.get("workflow_group_id"),
                     )
                 )
             self.orchestrator.register_background_processes(self.process_supervisor)
@@ -323,7 +324,7 @@ class GlobalController(ControllerContext):
 
     @cached_property
     def orchestrator(self):
-        """Who runs this project's replicas (controller/orchestrator.py), picked on first use."""
+        """Who runs this workflow group's replicas (controller/orchestrator.py), picked on first use."""
         return orchestrator_for(self)
 
     # ------------------------------------------------------------------ #
@@ -407,7 +408,7 @@ class GlobalController(ControllerContext):
     def reload_config(self):
         """Re-read the config, republish the spec, and let the reconciler converge.
         Raises SchemaError, changing nothing, when the edited config is invalid."""
-        logger.info("Reloading the deployment in %s", self.workspace)
+        logger.info("Reloading the workflow group in %s", self.workspace)
         manifest, violations = check_deployment(self.workspace)
         if violations:
             raise SchemaError(violations)
@@ -454,28 +455,28 @@ class GlobalController(ControllerContext):
         )
 
     def _read_config_folder(self):
-        """Parse every project's config files into what the deployment publishes:
-        returns (policy rules by project, payloads by Redis key, prompts.yaml's live
+        """Parse every workflow's config files into what the workflow group publishes:
+        returns (policy rules by workflow, payloads by Redis key, prompts.yaml's live
         versions or None, governance.yaml's rules or None). Agent names in the files
-        become `<project>.<agent>`, as in the agent specs. A file that is not UTF-8, not
+        become `<workflow>.<agent>`, as in the agent specs. A file that is not UTF-8, not
         valid YAML, or not the expected shape raises a RuntimeError that names it."""
         rules = {}
         scaling_policies = {}
         llm_entries = {}
         prompts = None
         governance_seed = None
-        for project in project_names(self.workspace):
+        for workflow_name in workflow_names(self.workspace):
 
-            def qualify(name, project=project):
-                return qualified_name(project, name)
+            def qualify(name, workflow_name=workflow_name):
+                return qualified_name(workflow_name, name)
 
-            config_dir = os.path.join(self.workspace, project, "config")
+            config_dir = os.path.join(self.workspace, workflow_name, "config")
             policy, path = _read_config_file(config_dir, "policy")
             if policy is not None:
-                rules[project] = _policy_rules(policy, path, qualify)
+                rules[workflow_name] = _policy_rules(policy, path, qualify)
             scaling, _ = _read_config_file(config_dir, "scaling")
             if scaling and scaling.get("scaling") is not None:
-                scaling_policies[project] = scaling["scaling"]
+                scaling_policies[workflow_name] = scaling["scaling"]
             entries, path = _read_config_file(config_dir, "llms")
             workflow, _ = _read_config_file(config_dir, "workflow_config")
             agents = [
@@ -495,7 +496,7 @@ class GlobalController(ControllerContext):
             if document is not None:
                 # Seeds governance:config per agent; a SET would overwrite dashboard edits.
                 env = {
-                    **read_dotenv(os.path.join(self.workspace, project, ".env")),
+                    **read_dotenv(os.path.join(self.workspace, workflow_name, ".env")),
                     **os.environ,
                 }
                 try:
@@ -510,7 +511,7 @@ class GlobalController(ControllerContext):
                         ]
                     governance_seed["agents"][qualify(name)] = agent_rules
         # The gateway prices and caps a call by its model's one entry, so a second name
-        # for the same model, in this project or another, would be silently dropped.
+        # for the same model, in this workflow or another, would be silently dropped.
         names_by_model = {}
         for name, entry in llm_entries.items():
             if not entry.get("model_id"):
@@ -521,7 +522,7 @@ class GlobalController(ControllerContext):
             if other != name:
                 raise RuntimeError(
                     f"llms.yaml entries {other} and {name} name the same model, "
-                    f"{entry['model_id']}; use one name for it in every project."
+                    f"{entry['model_id']}; use one name for it in every workflow."
                 )
         # The gateway would refuse every LLM call over a malformed one; fail the deploy.
         try:
@@ -529,7 +530,7 @@ class GlobalController(ControllerContext):
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
         payloads = {
-            "scaling:config": json.dumps({"projects": scaling_policies}, default=str),
+            "scaling:config": json.dumps({"workflows": scaling_policies}, default=str),
             "llms:config": json.dumps(llm_entries, default=str),
         }
         live_prompts = None
@@ -540,7 +541,7 @@ class GlobalController(ControllerContext):
         return rules, payloads, live_prompts, governance_seed
 
     def _write_policies(self, rules, payloads, live_prompts, governance_seed):
-        """Publish each project's policy rules, LiteLLM's prices, and each config file
+        """Publish each workflow's policy rules, LiteLLM's prices, and each config file
         under its key, to every host Redis."""
         targets = list(self.machine_redis.values()) or [self.redis]
         rules_json = json.dumps(rules)
@@ -567,7 +568,7 @@ class GlobalController(ControllerContext):
 
         logger.info(
             "Policy rules and %d config file(s) written to %d Redis instance(s): rules "
-            "for %d project(s)",
+            "for %d workflow(s)",
             len(payloads),
             len(targets),
             len(rules),
@@ -591,21 +592,33 @@ class GlobalController(ControllerContext):
             json.dumps(governance.seed(existing, governance_seed, time.time())),
         )
 
+    def _workflow_ids(self):
+        """Each workflow's workflow_id, by its name, from workflow_group.yaml's `workflows:`."""
+        return {
+            name: entry["workflow_id"]
+            for name, entry in (self.config.get("workflows") or {}).items()
+        }
+
     # Only relevant for demo purposes
     def _write_identity(self):
-        """Publish the deployment's identity, as the dashboard knows it, to every
-        machine's Redis."""
+        """Publish the workflow group's id and each workflow's name, by its workflow_id, to
+        every machine's Redis, where the dashboard reads them."""
         payload = {
-            "project_id": str(self.config.get("deployment_id")),
-            "project_name": os.environ.get("CANYONOS_PROJECT_NAME", ""),
+            "workflow_group_id": str(self.config.get("workflow_group_id")),
+            "workflows": json.dumps(
+                {
+                    workflow_id: name
+                    for name, workflow_id in self._workflow_ids().items()
+                }
+            ),
         }
         targets = list(self.machine_redis.values()) or [self.redis]
         for redis_client in targets:
             redis_client.hset_multiple(IDENTITY_KEY, payload)
 
         logger.info(
-            "Identity (project %s) published to %d Redis instance(s).",
-            payload["project_id"],
+            "Identity (workflow group %s) published to %d Redis instance(s).",
+            payload["workflow_group_id"],
             len(targets),
         )
 
@@ -654,7 +667,7 @@ class GlobalController(ControllerContext):
         return result.returncode == 0
 
     def _probe_redis(self, host, connect_host, redis_port):
-        """How a Redis already running on this machine answers the project's password
+        """How a Redis already running on this machine answers the workflow group's password
         within 5 seconds: `REDIS_ANSWERS`, `REDIS_REFUSES_PASSWORD`, or `REDIS_SILENT`
         when it never answers."""
         try:
@@ -697,7 +710,7 @@ class GlobalController(ControllerContext):
                 deployment = os.environ.get(DOCKER_PROJECT_ENV, "<deployment>")
                 logger.critical(
                     "Redis container %s on %s holds another password than this "
-                    "deployment's. Run `canyonos stop %s` to remove the old Redis, then "
+                    "workflow group's. Run `canyonos stop %s` to remove the old Redis, then "
                     "deploy again.",
                     container_name,
                     host,
@@ -720,17 +733,17 @@ class GlobalController(ControllerContext):
             self.redis_ports[host] = redis_port
         else:
             # Redis listens on the declared port inside the container too, so
-            # agents reaching it by container name over the project's network use
+            # agents reaching it by container name over the workflow group's network use
             # the same number the host does.
             cmd = [
                 "docker",
                 "run",
                 "-d",
-                *project_label_args(),
+                *docker_group_label_args(),
                 "--name",
                 container_name,
                 "--network",
-                project_group(),
+                docker_group(),
                 *resource_limit_args(),
                 "-p",
                 f"127.0.0.1:{redis_port}:{redis_port}",
@@ -1116,8 +1129,8 @@ class GlobalController(ControllerContext):
         are read in parallel, like _poll_machine_metrics, so a slow one does not hold
         up the others.
         """
-        # No machine Redis (Kubernetes: every replica writes to the project's): this one.
-        hosts = dict(self.machine_redis) or {"project": self.redis}
+        # No machine Redis (Kubernetes: every replica writes to the workflow group's): this one.
+        hosts = dict(self.machine_redis) or {"workflow_group": self.redis}
         # Futures already queued finished, per host, so a poll reads only those still
         # running or new. One set per host: the threads share nothing.
         finished = self.__dict__.setdefault("_finished_futures", {})
@@ -1133,7 +1146,8 @@ class GlobalController(ControllerContext):
             try:
                 send_telemetry(
                     hosts[host],
-                    self.config.get("deployment_id"),
+                    self.config.get("workflow_group_id"),
+                    self._workflow_ids(),
                     finished=finished[host],
                 )
             except Exception as e:
@@ -1180,7 +1194,7 @@ class GlobalController(ControllerContext):
                     {
                         "kind": "machine",
                         "host": host,
-                        "project_id": self.config.get("deployment_id"),
+                        "workflow_group_id": self.config.get("workflow_group_id"),
                         "metrics": metrics,
                     }
                 )
@@ -1223,7 +1237,12 @@ class GlobalController(ControllerContext):
                                 "agent_name": name,
                                 "host": host,
                                 "port": port,
-                                "project_id": self.config.get("deployment_id"),
+                                "workflow_group_id": self.config.get(
+                                    "workflow_group_id"
+                                ),
+                                "workflow_id": self._workflow_ids().get(
+                                    name.partition(".")[0]
+                                ),
                                 "metrics": metrics,
                             }
                         ]
@@ -1470,7 +1489,8 @@ class GlobalController(ControllerContext):
         delivered, gone = otel_writer.deliver_completed_requests(
             redis_clients,
             all_completed,
-            getattr(self, "config", {}).get("deployment_id"),
+            self.config.get("workflow_group_id"),
+            self._workflow_ids(),
         )
         # A request leaves "request:completed" only once its futures are gone on every
         # machine. A Cleanup that fails or never arrives leaves them in place, so the

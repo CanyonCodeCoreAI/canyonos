@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-  '/v1/deployments': {
+  '/v1/workflow-groups': {
     parameters: {
       query?: never;
       header?: never;
@@ -12,10 +12,10 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List the deployments
-     * @description Return the one deployment this server holds, with the name its last `PUT`<br/>gave it.
+     * List the workflow groups
+     * @description Return the one workflow group this server holds, with the name its last `PUT`<br/>gave it.
      */
-    get: operations['list_deployments_v1_deployments_get'];
+    get: operations['list_workflow_groups_v1_workflow_groups_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -24,7 +24,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}': {
+  '/v1/workflow-groups/{workflow_group_id}': {
     parameters: {
       query?: never;
       header?: never;
@@ -32,27 +32,27 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Read the deployment's status
-     * @description Report the deployment's name and `deployment.yaml` as last uploaded, how far the<br/>apply loop got, the deploy's phase, progress and verdict, and while it runs, its<br/>endpoint, agents and machine errors read from Redis; a part that could not be read<br/>is left null and named under `errors`.
+     * Read the workflow group's status
+     * @description Report the workflow group's name and `workflow_group.yaml` as last uploaded, how<br/>far the apply loop got, the deploy's phase, progress and verdict, and while it runs,<br/>its endpoint, agents and machine errors read from Redis; a part that could not be<br/>read is left null and named under `errors`.
      */
-    get: operations['status_v1_deployments__deployment_id__get'];
+    get: operations['status_v1_workflow_groups__workflow_group_id__get'];
     /**
-     * Upload deployment.yaml and its .env
-     * @description Write `deployment.yaml` and the `.env` beside it into `/workspace`, removing that<br/>`.env` when `env` is null, and keep `name` as the deployment's name. With<br/>`projects`, remove the uploaded projects it leaves out; with `api_key_hash`, keep<br/>it as the deployment's API key, none when it is empty.
+     * Upload workflow_group.yaml and its .env
+     * @description Write `workflow_group.yaml` and the `.env` beside it into `/workspace`, removing<br/>that `.env` when `env` is null, and keep `name` as the workflow group's name. With<br/>`workflows`, remove the uploaded workflows it leaves out; with `api_key_hash`, keep<br/>it as the workflow group's API key, none when it is empty.
      */
-    put: operations['put_deployment_v1_deployments__deployment_id__put'];
+    put: operations['put_workflow_group_v1_workflow_groups__workflow_group_id__put'];
     post?: never;
     /**
      * Stop the deploy and remove the upload
      * @description Remove everything uploaded to `/workspace`, then wait for the apply loop to stop<br/>the deploy; 504 if it did not stop in time, 500 if stopping it failed.
      */
-    delete: operations['delete_deployment_v1_deployments__deployment_id__delete'];
+    delete: operations['delete_workflow_group_v1_workflow_groups__workflow_group_id__delete'];
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/projects/{name}': {
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{name}': {
     parameters: {
       query?: never;
       header?: never;
@@ -60,27 +60,27 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Read a project
-     * @description Return uploaded project `name`; 404 if it was never uploaded.
+     * Read a workflow
+     * @description Return uploaded workflow `name`; 404 if it was never uploaded.
      */
-    get: operations['get_project_v1_deployments__deployment_id__projects__name__get'];
+    get: operations['get_workflow_v1_workflow_groups__workflow_group_id__workflows__name__get'];
     /**
-     * Upload a project
-     * @description Check the uploaded gzip tar of project `name` as `canyonos validate` does, then<br/>unpack it into `/workspace/<name>`, removing what its last upload had and this one<br/>lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.
+     * Upload a workflow
+     * @description Check the uploaded gzip tar of workflow `name` as `canyonos validate` does, then<br/>unpack it into `/workspace/<name>`, removing what its last upload had and this one<br/>lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.
      */
-    put: operations['put_project_v1_deployments__deployment_id__projects__name__put'];
+    put: operations['put_workflow_v1_workflow_groups__workflow_group_id__workflows__name__put'];
     post?: never;
     /**
-     * Remove a project
-     * @description Remove from `/workspace` what project `name`'s last upload put there; 404 if it<br/>was never uploaded.
+     * Remove a workflow
+     * @description Remove from `/workspace` what workflow `name`'s last upload put there; 404 if it<br/>was never uploaded.
      */
-    delete: operations['delete_project_v1_deployments__deployment_id__projects__name__delete'];
+    delete: operations['delete_workflow_v1_workflow_groups__workflow_group_id__workflows__name__delete'];
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/logs/controller': {
+  '/v1/workflow-groups/{workflow_group_id}/logs/controller': {
     parameters: {
       query?: never;
       header?: never;
@@ -91,7 +91,7 @@ export interface paths {
      * Read the controller log
      * @description Return the deploy process's kept output, the last `tail` lines of it, as text;<br/>with `follow=true`, keep streaming new lines until the process has exited and every<br/>line was sent. Empty when nothing was deployed yet.
      */
-    get: operations['controller_log_v1_deployments__deployment_id__logs_controller_get'];
+    get: operations['controller_log_v1_workflow_groups__workflow_group_id__logs_controller_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -100,7 +100,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/health': {
+  '/v1/workflow-groups/{workflow_group_id}/health': {
     parameters: {
       query?: never;
       header?: never;
@@ -111,7 +111,7 @@ export interface paths {
      * Check the running deploy
      * @description Check the running deploy's Global Controller, Redis, each agent's replica count<br/>and its endpoint, each with how to fix it when it fails; 409 if no deploy is<br/>running.
      */
-    get: operations['health_v1_deployments__deployment_id__health_get'];
+    get: operations['health_v1_workflow_groups__workflow_group_id__health_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -120,7 +120,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/projects': {
+  '/v1/workflow-groups/{workflow_group_id}/workflows': {
     parameters: {
       query?: never;
       header?: never;
@@ -128,10 +128,10 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List the uploaded projects
-     * @description Return every uploaded project, by name.
+     * List the uploaded workflows
+     * @description Return every uploaded workflow, by name.
      */
-    get: operations['list_projects_v1_deployments__deployment_id__projects_get'];
+    get: operations['list_workflows_v1_workflow_groups__workflow_group_id__workflows_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -140,7 +140,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/logs/agents/{name}': {
+  '/v1/workflow-groups/{workflow_group_id}/logs/agents/{name}': {
     parameters: {
       query?: never;
       header?: never;
@@ -151,7 +151,7 @@ export interface paths {
      * Read an agent's replica logs
      * @description Return the last `tail` lines of each running replica of agent `name`, or of the<br/>one replica whose ID is `name`, read on its machine; 409 if no deploy is running,<br/>404 naming the agents when `name` is neither, 503 when Redis cannot be read.
      */
-    get: operations['logs_v1_deployments__deployment_id__logs_agents__name__get'];
+    get: operations['logs_v1_workflow_groups__workflow_group_id__logs_agents__name__get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -160,7 +160,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/deployments/{deployment_id}/dashboard': {
+  '/v1/workflow-groups/{workflow_group_id}/dashboard': {
     parameters: {
       query?: never;
       header?: never;
@@ -169,10 +169,10 @@ export interface paths {
     };
     get?: never;
     /**
-     * Register the deployment's Redis with the dashboard
-     * @description Send this deployment's Redis host, port and password, plus a client certificate<br/>its CA signs when its Redis takes only TLS, to the dashboard api at `url` and<br/>return the project it registered. Connection failures and 5xx answers are retried<br/>for a minute; 502 when the api refuses it or never answers.
+     * Register the workflow group's Redis with the dashboard
+     * @description Send this workflow group's Redis host, port and password, plus a client<br/>certificate its CA signs when its Redis takes only TLS, to the dashboard api at<br/>`url` and return the workflows it registered. Connection failures and 5xx answers<br/>are retried for a minute; 502 when the api refuses it or never answers.
      */
-    put: operations['put_dashboard_v1_deployments__deployment_id__dashboard_put'];
+    put: operations['put_dashboard_v1_workflow_groups__workflow_group_id__dashboard_put'];
     post?: never;
     delete?: never;
     options?: never;
@@ -186,7 +186,8 @@ export interface components {
   schemas: {
     /**
      * Error
-     * @description Every error answer; `findings` and `warnings` only come with `project_invalid`.
+     * @description Every error answer; `findings` and `warnings` only come with
+     *     `workflow_invalid`.
      */
     Error: {
       /** Error */
@@ -204,18 +205,18 @@ export interface components {
        */
       warnings: string[] | null;
     };
-    /** Deployments */
-    Deployments: {
-      /** Deployments */
-      deployments: components['schemas']['Deployment'][];
+    /** WorkflowGroups */
+    WorkflowGroups: {
+      /** Workflow Groups */
+      workflow_groups: components['schemas']['WorkflowGroup'][];
     };
     /**
-     * Deployment
-     * @description `name` is what the deployment's `PUT` last sent, empty before one.
+     * WorkflowGroup
+     * @description `name` is what the workflow group's `PUT` last sent, empty before one.
      */
-    Deployment: {
-      /** Deployment Id */
-      deployment_id: string;
+    WorkflowGroup: {
+      /** Workflow Group Id */
+      workflow_group_id: string;
       /** Name */
       name: string;
     };
@@ -230,14 +231,14 @@ export interface components {
       warnings: string[];
     };
     /**
-     * DeploymentBody
-     * @description `config` is `deployment.yaml`'s text and `env` the `.env` beside it, null for
-     *     none. `projects`, when given, is every project the deployment has; the uploaded
-     *     projects it leaves out are removed. `api_key_hash`, when given, is the SHA-256 of the
-     *     deploy's API key, "" for none, used only on Kubernetes, where a change restarts the
-     *     deploy.
+     * WorkflowGroupBody
+     * @description `config` is `workflow_group.yaml`'s text and `env` the `.env` beside it, null for
+     *     none. `workflows`, when given, is every workflow the workflow group has; the
+     *     uploaded workflows it leaves out are removed. `api_key_hash`, when given, is the
+     *     SHA-256 of the deploy's API key, "" for none, used only on Kubernetes, where a
+     *     change restarts the deploy.
      */
-    DeploymentBody: {
+    WorkflowGroupBody: {
       /** Name */
       name: string;
       /** Config */
@@ -245,10 +246,10 @@ export interface components {
       /** Env */
       env: string | null;
       /**
-       * Projects
+       * Workflows
        * @default null
        */
-      projects: string[] | null;
+      workflows: string[] | null;
       /**
        * Api Key Hash
        * @default null
@@ -262,9 +263,9 @@ export interface components {
     };
     /**
      * Status
-     * @description `name` and `config` are what the deployment's `PUT` last sent, without the `.env`;
-     *     `running` is whether the deploy process is alive, so a failed deploy can still be
-     *     running while it stops itself.
+     * @description `name` and `config` are what the workflow group's `PUT` last sent, without the
+     *     `.env`; `running` is whether the deploy process is alive, so a failed deploy can
+     *     still be running while it stops itself.
      */
     Status: {
       /** Version */
@@ -358,8 +359,10 @@ export interface components {
     };
     /** Route */
     Route: {
-      /** Project */
-      project: string;
+      /** Workflow */
+      workflow: string;
+      /** Workflow Id */
+      workflow_id: string | null;
       /** Agent */
       agent: string;
       /** Method */
@@ -394,14 +397,14 @@ export interface components {
       /** Fix */
       fix: string | null;
     };
-    /** Projects */
-    Projects: {
-      /** Projects */
-      projects: components['schemas']['Project'][];
+    /** Workflows */
+    Workflows: {
+      /** Workflows */
+      workflows: components['schemas']['Workflow'][];
     };
     /**
      * Fingerprints
-     * @description Digests over a project's uploaded files: `config` over its `config/` files and
+     * @description Digests over a workflow's uploaded files: `config` over its `config/` files and
      *     `.env`, which a reload applies, and `code` over the rest.
      */
     Fingerprints: {
@@ -411,10 +414,10 @@ export interface components {
       config: string;
     };
     /**
-     * Project
+     * Workflow
      * @description `test_query` is its `config/test_query.txt`, null when it has none.
      */
-    Project: {
+    Workflow: {
       /** Name */
       name: string;
       fingerprints: components['schemas']['Fingerprints'];
@@ -428,10 +431,15 @@ export interface components {
         [key: string]: string[];
       };
     };
-    /** DashboardProject */
-    DashboardProject: {
-      /** Project Id */
-      project_id: string;
+    /** DashboardWorkflows */
+    DashboardWorkflows: {
+      /** Workflows */
+      workflows: components['schemas']['DashboardWorkflow'][];
+    };
+    /** DashboardWorkflow */
+    DashboardWorkflow: {
+      /** Workflow Id */
+      workflow_id: string;
       /** Name */
       name: string;
     };
@@ -452,7 +460,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  list_deployments_v1_deployments_get: {
+  list_workflow_groups_v1_workflow_groups_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -467,7 +475,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['Deployments'];
+          'application/json': components['schemas']['WorkflowGroups'];
         };
       };
       /** @description Bad Request */
@@ -490,12 +498,12 @@ export interface operations {
       };
     };
   };
-  status_v1_deployments__deployment_id__get: {
+  status_v1_workflow_groups__workflow_group_id__get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -530,18 +538,18 @@ export interface operations {
       };
     };
   };
-  put_deployment_v1_deployments__deployment_id__put: {
+  put_workflow_group_v1_workflow_groups__workflow_group_id__put: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['DeploymentBody'];
+        'application/json': components['schemas']['WorkflowGroupBody'];
       };
     };
     responses: {
@@ -574,12 +582,12 @@ export interface operations {
       };
     };
   };
-  delete_deployment_v1_deployments__deployment_id__delete: {
+  delete_workflow_group_v1_workflow_groups__workflow_group_id__delete: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -632,12 +640,12 @@ export interface operations {
       };
     };
   };
-  get_project_v1_deployments__deployment_id__projects__name__get: {
+  get_workflow_v1_workflow_groups__workflow_group_id__workflows__name__get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
         name: string;
       };
       cookie?: never;
@@ -650,7 +658,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['Project'];
+          'application/json': components['schemas']['Workflow'];
         };
       };
       /** @description Bad Request */
@@ -673,12 +681,12 @@ export interface operations {
       };
     };
   };
-  put_project_v1_deployments__deployment_id__projects__name__put: {
+  put_workflow_v1_workflow_groups__workflow_group_id__workflows__name__put: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
         name: string;
       };
       cookie?: never;
@@ -718,12 +726,12 @@ export interface operations {
       };
     };
   };
-  delete_project_v1_deployments__deployment_id__projects__name__delete: {
+  delete_workflow_v1_workflow_groups__workflow_group_id__workflows__name__delete: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
         name: string;
       };
       cookie?: never;
@@ -759,7 +767,7 @@ export interface operations {
       };
     };
   };
-  controller_log_v1_deployments__deployment_id__logs_controller_get: {
+  controller_log_v1_workflow_groups__workflow_group_id__logs_controller_get: {
     parameters: {
       query?: {
         tail?: string;
@@ -767,7 +775,7 @@ export interface operations {
       };
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -802,12 +810,12 @@ export interface operations {
       };
     };
   };
-  health_v1_deployments__deployment_id__health_get: {
+  health_v1_workflow_groups__workflow_group_id__health_get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -851,12 +859,12 @@ export interface operations {
       };
     };
   };
-  list_projects_v1_deployments__deployment_id__projects_get: {
+  list_workflows_v1_workflow_groups__workflow_group_id__workflows_get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -868,7 +876,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['Projects'];
+          'application/json': components['schemas']['Workflows'];
         };
       };
       /** @description Bad Request */
@@ -891,14 +899,14 @@ export interface operations {
       };
     };
   };
-  logs_v1_deployments__deployment_id__logs_agents__name__get: {
+  logs_v1_workflow_groups__workflow_group_id__logs_agents__name__get: {
     parameters: {
       query?: {
         tail?: string;
       };
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
         name: string;
       };
       cookie?: never;
@@ -952,12 +960,12 @@ export interface operations {
       };
     };
   };
-  put_dashboard_v1_deployments__deployment_id__dashboard_put: {
+  put_dashboard_v1_workflow_groups__workflow_group_id__dashboard_put: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        deployment_id: string;
+        workflow_group_id: string;
       };
       cookie?: never;
     };
@@ -973,7 +981,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['DashboardProject'];
+          'application/json': components['schemas']['DashboardWorkflows'];
         };
       };
       /** @description Bad Request */

@@ -1,20 +1,20 @@
 # Workflow layout
 
-Where `canyonos` finds a project, what goes in its `config` folder, what reaches the
+Where `canyonos` finds a workflow, what goes in its `config` folder, what reaches the
 agent images, and what CanyonOS writes into your files.
 
 ## The workflow root
 
-Every `canyonos` command reads a project from its root, which depends on the project
+Every `canyonos` command reads a workflow from its root, which depends on the workflow
 folder you give it:
 
-| The project folder      | Project root                                                                                |
+| The workflow folder      | Workflow root                                                                               |
 | ----------------------- | ------------------------------------------------------------------------------------------- |
 | Has a `.canyon` folder  | `.canyon`, which `canyonos convert` writes. The source beside it is not part of the deploy. |
 | Has no `.canyon` folder | The folder itself                                                                           |
 
-Nothing outside the root is read, with two exceptions from the project folder: its
-`.env` ([What `.env` is for](#what-env-is-for)) and its name, which is the project's
+Nothing outside the root is read, with two exceptions from the workflow folder: its
+`.env` ([What `.env` is for](#what-env-is-for)) and its name, which is the workflow's
 name in routes and Docker names ([Names](#names)). Every path in these docs is
 relative to the root.
 
@@ -72,28 +72,28 @@ out and everything the build writes on top.
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `canyonos new-app`                   | The starter files, into an empty folder                                                                                                                                                                     |
 | `canyonos convert`                   | `.canyon`, through your coding agent, including `.canyon/.env.example` with the names of the keys your code needs. In a git repository, it also adds `.canyon/` to `.gitignore` unless it is already there. |
-| `canyonos deploy`                    | `deployment.yaml` and its `deployment_id` on the first deploy. On Docker, also each agent's `resources` and `replicas`, with defaults filled in and any change you make in the deploy's menu.               |
+| `canyonos deploy`                    | `workflow_group.yaml` and its `workflow_group_id` on the first deploy. On Docker, also each agent's `resources` and `replicas`, with defaults filled in and any change you make in the deploy's menu.               |
 | `canyonos config`                    | The keys you change                                                                                                                                                                                         |
 
 `deploy` writes `resources` and `replicas` to `config/workflow_config.yaml` in each
-project's root; `config` writes to `deployment.yaml` in the deployment folder.
+workflow's root; `config` writes to `workflow_group.yaml` in the workflow group folder.
 
-Every later deploy reuses `deployment_id`, so the deployment stays one deployment on the
-dashboard and keeps its Docker names. Deleting that line starts a new deployment.
+Every later deploy reuses `workflow_group_id`, so the workflow group stays one workflow group on the
+dashboard and keeps its Docker names. Deleting that line starts a new workflow group.
 
 Nothing in CanyonOS writes or deletes `.env`: it is only read.
 
 ## What `.env` is for
 
-`.env` lives in the project folder, beside `.canyon` after convert. Put API keys and
+`.env` lives in the workflow folder, beside `.canyon` after convert. Put API keys and
 any other secrets your code reads there.
 
 `canyonos deploy` copies it into the Global Controller's `/workspace`. The Global
-Controller reads it for `${VAR}` references in the project's config files. On Docker,
-it passes the file to each of the project's agent replicas with `--env-file`;
+Controller reads it for `${VAR}` references in the workflow's config files. On Docker,
+it passes the file to each of the workflow's agent replicas with `--env-file`;
 the endpoint, Redis and metrics-collector containers don't get it. On Kubernetes,
-`.env` becomes a Secret; see [Kubernetes deployment](KUBERNETES.md). The `${VAR}`s in
-`deployment.yaml` come from the `.env` beside it.
+`.env` becomes a Secret; see [Kubernetes workflow group](KUBERNETES.md). The `${VAR}`s in
+`workflow_group.yaml` come from the `.env` beside it.
 
 Before it builds anything, `canyonos deploy` warns about keys that `.env.example` in the
 root lists but `.env` leaves out or empty.
@@ -109,18 +109,18 @@ written into a Python string or a JSON file.
 
 ## Names
 
-On Docker, CanyonOS names everything it starts after the deployment: the name of the
-deployment folder, lowercased, with characters Docker doesn't allow replaced by `-` and
-cut to 24 characters, then the first 8 characters of `deployment_id`. A project's name
-is its folder's name, made Docker-safe the same way. For a deployment folder `prod` and
-a project folder `myapp`:
+On Docker, CanyonOS names everything it starts after the workflow group: the name of the
+workflow group folder, lowercased, with characters Docker doesn't allow replaced by `-` and
+cut to 24 characters, then the first 8 characters of `workflow_group_id`. A workflow's name
+is its folder's name, made Docker-safe the same way. For a workflow group folder `prod` and
+a workflow folder `myapp`:
 
 | What                   | Name                                                 | Example                                             |
 | ---------------------- | ---------------------------------------------------- | --------------------------------------------------- |
-| An agent's image       | `canyonos-<deployment>-<project>--<agent>`           | `canyonos-prod-3f9a1c2e-myapp--splitagent`          |
-| An agent replica       | `canyonos-<deployment>-<project>--<agent>-<replica>` | `canyonos-prod-3f9a1c2e-myapp--splitagent-1a2b3c4d` |
-| The Global Controller  | `canyonos-<deployment>-global-controller`            | `canyonos-prod-3f9a1c2e-global-controller`          |
-| The deployment's Redis | `canyonos-<deployment>-redis-<host>`                 | `canyonos-prod-3f9a1c2e-redis-localhost`            |
+| An agent's image       | `canyonos-<workflow group>-<workflow>--<agent>`          | `canyonos-prod-3f9a1c2e-myapp--splitagent`          |
+| An agent replica       | `canyonos-<workflow group>-<workflow>--<agent>-<replica>` | `canyonos-prod-3f9a1c2e-myapp--splitagent-1a2b3c4d` |
+| The Global Controller  | `canyonos-<workflow group>-global-controller`            | `canyonos-prod-3f9a1c2e-global-controller`          |
+| The workflow group's Redis | `canyonos-<workflow group>-redis-<host>`                 | `canyonos-prod-3f9a1c2e-redis-localhost`            |
 
-Agent names are lowercased, with the `.` of `<project>.<agent>` written `--`, and
+Agent names are lowercased, with the `.` of `<workflow>.<agent>` written `--`, and
 `<replica>` is 8 random hexadecimal characters.

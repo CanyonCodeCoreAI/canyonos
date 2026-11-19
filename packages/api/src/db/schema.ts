@@ -5,9 +5,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
-  check,
   doublePrecision,
-  foreignKey,
   index,
   integer,
   jsonb,
@@ -15,10 +13,8 @@ import {
   pgTable,
   text,
   timestamp,
-  unique,
   uniqueIndex,
   uuid,
-  varchar,
 } from 'drizzle-orm/pg-core';
 
 export const file_component_kind = pgEnum('file_component_kind', [
@@ -45,16 +41,18 @@ export const deployment_status = pgEnum('deployment_status', [
 
 // snake_case column keys so `$inferSelect` matches the snake_case API payload directly — the repos
 // select the exact shape without a rename mapper.
-export const projects = pgTable('projects', {
+export const workflows = pgTable('workflows', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
-  // Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
-  // with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
+  // Temporary: applied now so multi-workflow dashboards work without blocking the flow; revisit
+  // with the workflow-key design in CAN-521 (the api should not hold per-workflow Redis addresses).
   redis_host: text('redis_host'),
   redis_port: integer('redis_port'),
   redis_password: text('redis_password'),
-  // The client certificate a Docker deployment's Redis takes, as sealed JSON.
+  // The client certificate a Docker workflow group's Redis takes, as sealed JSON.
   redis_tls: text('redis_tls'),
+  // The workflow shares this workflow group's machines and Redis.
+  workflow_group_id: uuid('workflow_group_id'),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()
     .defaultNow(),
@@ -64,14 +62,14 @@ export const projects = pgTable('projects', {
 });
 
 // One row per stored version of an agent function's system prompt. The first versions come from
-// the project's prompts.yaml; dashboard saves add the rest. `live` marks the version agents are sent.
+// the workflow's prompts.yaml; dashboard saves add the rest. `live` marks the version agents are sent.
 export const systemPrompts = pgTable(
   'system_prompts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    project_id: uuid('project_id')
+    workflow_id: uuid('workflow_id')
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
+      .references(() => workflows.id, { onDelete: 'cascade' }),
     // `<Agent>.<function>`: the function whose LLM calls get this prompt.
     name: text('name').notNull(),
     // `<Agent>-<function>-<content hash>-v<n>`. Kept as the one string instead of normalized
@@ -84,9 +82,9 @@ export const systemPrompts = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_system_prompts_project_name').on(table.project_id, table.name),
-    uniqueIndex('uq_system_prompts_project_name_version').on(
-      table.project_id,
+    index('idx_system_prompts_workflow_name').on(table.workflow_id, table.name),
+    uniqueIndex('uq_system_prompts_workflow_name_version').on(
+      table.workflow_id,
       table.name,
       table.version
     ),
@@ -103,13 +101,13 @@ export const fileBlobs = pgTable('file_blobs', {
     .defaultNow(),
 });
 
-// Generic file store. `project_id` is nullable so non-project files fit later. Bytes are addressed
+// Generic file store. `workflow_id` is nullable so non-workflow files fit later. Bytes are addressed
 // through `content_hash`.
 export const files = pgTable(
   'files',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    project_id: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    workflow_id: uuid('workflow_id').references(() => workflows.id, { onDelete: 'cascade' }),
     path: text('path').notNull(),
     name: text('name').notNull(),
     content_hash: text('content_hash')
@@ -126,57 +124,14 @@ export const files = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_files_project').on(table.project_id),
-    index('idx_files_project_component_path').on(
-      table.project_id,
+    index('idx_files_workflow').on(table.workflow_id),
+    index('idx_files_workflow_component_path').on(
+      table.workflow_id,
       table.component_kind,
       table.path
     ),
     index('idx_files_content_hash').on(table.content_hash),
-    uniqueIndex('uq_files_project_path').on(table.project_id, table.path),
-    // A constraint, not an index: project_workflows' composite foreign key needs this to exist
-    // before its own ALTER TABLE runs, and only a table constraint is created that early.
-    unique('uq_files_project_id_id').on(table.project_id, table.id),
-  ]
-);
-
-export const projectWorkflows = pgTable(
-  'project_workflows',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    project_id: uuid('project_id')
-      .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    source_file_id: uuid('source_file_id').notNull(),
-    generation_status: varchar('generation_status', { length: 32 }).notNull().default('PENDING'),
-    generation_revision: bigint('generation_revision', { mode: 'number' }).notNull().default(0),
-    design: jsonb('design'),
-    error_message: text('error_message'),
-    model: varchar('model', { length: 64 }),
-    stale_at: timestamp('stale_at', { withTimezone: true, mode: 'string' }),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index('idx_project_workflows_project').on(table.project_id),
-    uniqueIndex('uq_project_workflows_source_file').on(table.source_file_id),
-    foreignKey({
-      columns: [table.project_id, table.source_file_id],
-      foreignColumns: [files.project_id, files.id],
-      name: 'project_workflows_project_source_files_fk',
-    }).onDelete('cascade'),
-    check(
-      'project_workflows_generation_status_check',
-      sql`${table.generation_status} in ('PENDING', 'GENERATING', 'READY', 'FAILED')`
-    ),
-    check(
-      'project_workflows_ready_design_check',
-      sql`${table.generation_status} <> 'READY' or ${table.design} is not null`
-    ),
+    uniqueIndex('uq_files_workflow_path').on(table.workflow_id, table.path),
   ]
 );
 
@@ -205,9 +160,9 @@ export const deployments = pgTable(
   'deployments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    project_id: uuid('project_id')
+    workflow_id: uuid('workflow_id')
       .notNull()
-      .references(() => projects.id),
+      .references(() => workflows.id),
     deploy_setup_id: uuid('deploy_setup_id')
       .notNull()
       .references(() => deploySetups.id),
@@ -234,11 +189,11 @@ export const deployments = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_deployments_project').on(table.project_id),
-    // At most one active deployment per project. 'stopping' and 'stopped' stay out so a teardown
+    index('idx_deployments_workflow').on(table.workflow_id),
+    // At most one active deployment per workflow. 'stopping' and 'stopped' stay out so a teardown
     // releases the slot; deploy.repo.ts is what rejects a deploy requested mid-teardown.
-    uniqueIndex('uq_deployments_active_per_project')
-      .on(table.project_id)
+    uniqueIndex('uq_deployments_active_per_workflow')
+      .on(table.workflow_id)
       .where(
         sql`${table.status} in ('pending', 'receiving_files', 'processing_files', 'provisioning_resources', 'launching_resources')`
       ),
@@ -269,7 +224,7 @@ export const deploymentEvents = pgTable(
 );
 
 // The immutable per-deploy file manifest: which `(path -> content_hash)` a deployment shipped, so
-// its exact file set stays retrievable after the live project files change. `component_kind` is
+// its exact file set stays retrievable after the live workflow files change. `component_kind` is
 // snapshotted because the runtime needs it and the source may change after the deploy.
 export const deploymentFiles = pgTable(
   'deployment_files',
@@ -317,8 +272,8 @@ export const otelSpans = pgTable(
     index('idx_otel_spans_parent').on(table.parent_span_id),
     index('idx_otel_spans_name_start').on(table.name, table.start_time_unix_nano),
     index('idx_otel_spans_attributes').using('gin', table.attributes),
-    index('idx_otel_spans_project_start').on(
-      sql`(${table.attributes} ->> 'canyon.project.id')`,
+    index('idx_otel_spans_workflow_start').on(
+      sql`(${table.attributes} ->> 'canyonos.workflow.id')`,
       table.start_time_unix_nano
     ),
   ]
@@ -386,8 +341,8 @@ export const otelMetricRollups = pgTable(
       table.bucket_start_unix_nano
     ),
     index('idx_otel_metric_rollups_bucket').on(table.bucket_start_unix_nano),
-    index('idx_otel_metric_rollups_project_name_bucket').on(
-      sql`(${table.resource_attributes} ->> 'canyonos.project.id')`,
+    index('idx_otel_metric_rollups_workflow_group_name_bucket').on(
+      sql`(${table.resource_attributes} ->> 'canyonos.workflow_group.id')`,
       table.metric_name,
       table.bucket_start_unix_nano
     ),

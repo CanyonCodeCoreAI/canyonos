@@ -51,7 +51,8 @@ _TRACES_COLUMNS = [
     "future_id",
     "parent_id",
     "session_id",
-    "project_id",
+    "workflow_group_id",
+    "workflow_id",
     "agent_id",
     "model",
     "prompt_name",
@@ -106,7 +107,7 @@ def _normalize_json_text(value):
     return value
 
 
-def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH):
+def _trace_write_rows(rows, redis_client=None, workflow_group_id=None, db_path=DB_PATH):
     """Upsert future rows (as returned by ``_pull_telemetry``) into the traces_waiting
     table. Rows without finished_at are kept (not skipped) -- that's what "waiting" means
     here. `redis_client` is only used to look up the executing agent's hourly cost for
@@ -195,7 +196,8 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
                     "future_id": fid,
                     "parent_id": raw.get("parent") or None,
                     "session_id": session_id,
-                    "project_id": project_id,
+                    "workflow_group_id": workflow_group_id,
+                    "workflow_id": raw.get("workflow_id"),
                     "agent_id": agent_id,
                     "model": raw.get("model"),
                     "prompt_name": raw.get("prompt_name"),
@@ -239,9 +241,11 @@ def _trace_write_rows(rows, redis_client=None, project_id=None, db_path=DB_PATH)
 # reset an already-exported row back to unsent.
 _METRICS_UPSERT = """
     INSERT INTO metrics_waiting (
-        sample_id, kind, agent_id, agent_name, host, port, project_id, observed_at, metrics
+        sample_id, kind, agent_id, agent_name, host, port, workflow_group_id, workflow_id,
+        observed_at, metrics
     ) VALUES (
-        :sample_id, :kind, :agent_id, :agent_name, :host, :port, :project_id, :observed_at, :metrics
+        :sample_id, :kind, :agent_id, :agent_name, :host, :port, :workflow_group_id,
+        :workflow_id, :observed_at, :metrics
     )
     ON CONFLICT(sample_id) DO UPDATE SET
         kind=excluded.kind,
@@ -249,7 +253,8 @@ _METRICS_UPSERT = """
         agent_name=excluded.agent_name,
         host=excluded.host,
         port=excluded.port,
-        project_id=excluded.project_id,
+        workflow_group_id=excluded.workflow_group_id,
+        workflow_id=excluded.workflow_id,
         observed_at=excluded.observed_at,
         metrics=excluded.metrics
 """
@@ -261,7 +266,8 @@ def metric_write_rows(rows, db_path=DB_PATH):
     in metric_convert.
 
     Each entry is ``{"kind", "host", "metrics": <hash dict>}`` plus, for agent rows,
-    ``"port"``/``"agent_id"``/``"agent_name"``, and optionally ``"project_id"``. The
+    ``"port"``/``"agent_id"``/``"agent_name"``/``"workflow_id"``, and optionally
+    ``"workflow_group_id"``. The
     producer-stamped ``observed_at`` inside the hash is the metric timestamp;
     ``sample_id = {kind}:{agent_id or host[:port]}:{observed_at_ns}`` so a GC re-poll of the same tick
     upserts instead of duplicating (and a stalled producer never grows the table).
@@ -293,7 +299,8 @@ def metric_write_rows(rows, db_path=DB_PATH):
                         "agent_name": raw.get("agent_name"),
                         "host": host,
                         "port": str(port) if port is not None else None,
-                        "project_id": raw.get("project_id"),
+                        "workflow_group_id": raw.get("workflow_group_id"),
+                        "workflow_id": raw.get("workflow_id"),
                         "observed_at": observed_at,
                         "metrics": json.dumps(metrics),
                     },
@@ -312,16 +319,17 @@ def metric_write_rows(rows, db_path=DB_PATH):
 # to unsent.
 _LOGS_UPSERT = """
     INSERT INTO logs_waiting (
-        log_id, future_id, session_id, project_id, agent_id,
+        log_id, future_id, session_id, workflow_group_id, workflow_id, agent_id,
         observed_at, severity_number, severity_text, body, attributes
     ) VALUES (
-        :log_id, :future_id, :session_id, :project_id, :agent_id,
+        :log_id, :future_id, :session_id, :workflow_group_id, :workflow_id, :agent_id,
         :observed_at, :severity_number, :severity_text, :body, :attributes
     )
     ON CONFLICT(log_id) DO UPDATE SET
         future_id=excluded.future_id,
         session_id=excluded.session_id,
-        project_id=excluded.project_id,
+        workflow_group_id=excluded.workflow_group_id,
+        workflow_id=excluded.workflow_id,
         agent_id=excluded.agent_id,
         observed_at=excluded.observed_at,
         severity_number=excluded.severity_number,
@@ -331,7 +339,7 @@ _LOGS_UPSERT = """
 """
 
 
-def _log_write_rows(rows, project_id=None, db_path=DB_PATH):
+def _log_write_rows(rows, workflow_group_id=None, db_path=DB_PATH):
     """Upsert future rows' `logs` JSON arrays into the logs_waiting table, one row per log
     record. `log_id = {future_id}:{index}` so a GC re-poll of the same future upserts
     instead of duplicating, the same rationale as metrics_waiting.sample_id."""
@@ -359,7 +367,13 @@ def _log_write_rows(rows, project_id=None, db_path=DB_PATH):
                 conn.execute(
                     _LOGS_UPSERT,
                     _log_params(
-                        entry, f"{fid}:{index}", fid, session_id, project_id, agent_id
+                        entry,
+                        f"{fid}:{index}",
+                        fid,
+                        session_id,
+                        workflow_group_id,
+                        raw.get("workflow_id"),
+                        agent_id,
                     ),
                 )
         conn.commit()
@@ -367,13 +381,16 @@ def _log_write_rows(rows, project_id=None, db_path=DB_PATH):
         conn.close()
 
 
-def _log_params(entry, log_id, future_id, session_id, project_id, agent_id):
+def _log_params(
+    entry, log_id, future_id, session_id, workflow_group_id, workflow_id, agent_id
+):
     """The _LOGS_UPSERT parameters for one OTel-shaped log entry."""
     return {
         "log_id": log_id,
         "future_id": future_id,
         "session_id": session_id,
-        "project_id": project_id,
+        "workflow_group_id": workflow_group_id,
+        "workflow_id": workflow_id,
         "agent_id": agent_id,
         "observed_at": entry.get("ObservedTimestamp") or entry.get("Timestamp"),
         "severity_number": entry.get("SeverityNumber"),
@@ -391,10 +408,10 @@ class ProcessLogHandler(logging.Handler):
     double-record a failure, since `build_failure_entry` only ever writes to futures.
     """
 
-    def __init__(self, source_name, project_id=None, db_path=DB_PATH):
+    def __init__(self, source_name, workflow_group_id=None, db_path=DB_PATH):
         super().__init__(level=logging.INFO)
         self._source_name = source_name
-        self._project_id = project_id
+        self._workflow_group_id = workflow_group_id
         self._db_path = db_path
         self._conn = None
 
@@ -412,7 +429,8 @@ class ProcessLogHandler(logging.Handler):
                     uuid.uuid4().hex,
                     None,
                     None,
-                    self._project_id,
+                    self._workflow_group_id,
+                    None,
                     self._source_name,
                 ),
             )
@@ -482,26 +500,31 @@ def _read_futures(redis_client, future_ids):
     return rows
 
 
-def _queue_rows(rows, redis_client, project_id, db_path):
-    _trace_write_rows(rows, redis_client, project_id, db_path)
-    _log_write_rows(rows, project_id, db_path)
+def _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path):
+    for row in rows:
+        # A future's service is its agent, named `<workflow>.<agent>`.
+        row["workflow_id"] = workflow_ids.get(row.get("service", "").partition(".")[0])
+    _trace_write_rows(rows, redis_client, workflow_group_id, db_path)
+    _log_write_rows(rows, workflow_group_id, db_path)
 
 
-def send_telemetry(redis_client, project_id=None, db_path=DB_PATH, finished=None):
+def send_telemetry(
+    redis_client, workflow_group_id, workflow_ids, db_path=DB_PATH, finished=None
+):
     """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
-    and ``logs_waiting`` tables for OTLP export. The GC calls this once per poll for each
-    machine's Redis, keeping `finished` (see _pull_telemetry) between polls. Returns the
-    rows it wrote.
+    and ``logs_waiting`` tables for OTLP export, each with its agent's workflow_id from
+    `workflow_ids`, by workflow name. The GC calls this once per poll for each machine's
+    Redis, keeping `finished` (see _pull_telemetry) between polls. Returns the rows it wrote.
     """
     rows = _pull_telemetry(redis_client, finished)
-    _queue_rows(rows, redis_client, project_id, db_path)
+    _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path)
     if finished is not None:
         finished.update(row["future_id"] for row in rows if row.get("finished_at"))
     return rows
 
 
 def deliver_completed_requests(
-    redis_clients, request_ids, project_id=None, db_path=DB_PATH
+    redis_clients, request_ids, workflow_group_id, workflow_ids, db_path=DB_PATH
 ):
     """Persist a final all-machine snapshot and mark the requests safe to clean up.
 
@@ -544,7 +567,7 @@ def deliver_completed_requests(
     terminal_by_request = {request_id: set() for request_id in request_ids}
     for redis_client in redis_clients:
         rows = _read_futures(redis_client, wanted)
-        _queue_rows(rows, redis_client, project_id, db_path)
+        _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path)
         for row in rows:
             request_id = row.get("request_id")
             if request_id in pending and _is_finished(row):

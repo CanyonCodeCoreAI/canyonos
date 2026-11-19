@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The deployment's internal traffic on Docker is mutual TLS, signed by a CA of its
+"""The workflow group's internal traffic on Docker is mutual TLS, signed by a CA of its
 own: Redis refuses a plaintext client and a TLS client without a certificate the CA
 signed, a gRPC call to a replica without one is refused, the CA stays in the CLI's
 private folder and the Global Controller, and every other container holds only a
@@ -21,7 +21,7 @@ from ..harness import (
     cli_value,
     docker,
     manifest,
-    project_containers,
+    workflow_group_containers,
     qualified,
     redis_port,
     redis_tls_context,
@@ -108,9 +108,9 @@ def test_redis_refuses_plaintext_and_tls_without_a_client_certificate(
 
 
 def test_a_grpc_call_without_a_client_certificate_is_refused(recorder, deployed):
-    config = manifest(deployed.project_dir)
+    config = manifest(deployed.workflow_dir)
     databases = {
-        qualified(deployed.project_dir, agent["name"])
+        qualified(deployed.workflow_dir, agent["name"])
         for agent in config.get("agents", [])
         if agent.get("type") == "database"
     }
@@ -120,7 +120,7 @@ def test_a_grpc_call_without_a_client_certificate_is_refused(recorder, deployed)
     assert routed, f"{agent} has no routed replica"
     endpoint = next(
         name
-        for name in project_containers(recorder, deployed.group)
+        for name in workflow_group_containers(recorder, deployed.group)
         if name.startswith(f"{deployed.group}-endpoint-")
     )
     call = docker(
@@ -147,7 +147,7 @@ def test_only_the_global_controller_holds_the_ca_key(recorder, deployed):
     gc = f"{deployed.group}-global-controller"
     containers = [
         name
-        for name, state in project_containers(recorder, deployed.group).items()
+        for name, state in workflow_group_containers(recorder, deployed.group).items()
         if state == "running" and name != gc
     ]
     assert containers, f"no running container in {deployed.group} but the GC"

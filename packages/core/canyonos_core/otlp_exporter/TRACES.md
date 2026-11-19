@@ -26,7 +26,8 @@ parent_span_id = parent_id
 | `future_id` (PK) | Execution id → OTel `span_id`. |
 | `parent_id` | Parent future → parent `span_id`; NULL for a root span. |
 | `session_id` | Request id (`= request_id`) → OTel `trace_id`; `NOT NULL`. |
-| `project_id` | Deployment/project id (span attribute). |
+| `workflow_group_id` | Workflow group id → span attribute `canyonos.workflow_group.id`. |
+| `workflow_id` | Id of the workflow the agent belongs to → span attribute `canyonos.workflow.id`. |
 | `agent_id` | Executing replica id (span attribute). |
 | `model` | LLM model id. |
 | `cpu`, `gpu` | Observed resource values. |

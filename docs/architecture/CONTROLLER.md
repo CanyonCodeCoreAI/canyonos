@@ -2,9 +2,9 @@
 
 CanyonOS has two controllers, at two scales.
 
-- The **Global Controller** runs once per deploy and owns the deployment: every project
-  in it, each agent named `<project>.<agent>`. It publishes `deployment.yaml`, each
-  project's workflow config, the policies and each agent's desired replica count to Redis, polls the
+- The **Global Controller** runs once per deploy and owns the workflow group: every workflow
+  in it, each agent named `<workflow>.<agent>`. It publishes `workflow_group.yaml`, each
+  workflow's config, the policies and each agent's desired replica count to Redis, polls the
   replicas, cleans up finished requests, and keeps the Reconciler (Docker and EC2) and the
   OTLP exporter running.
 - The **Local Controller** runs inside every agent replica and owns that replica. It
@@ -41,8 +41,8 @@ canyonos CLI
 └────────────────────────────────────────────────────────────┘
 ```
 
-Containers are named `canyonos-<deployment>-<role>`, a replica's after its ID with the
-`.` of `<project>.<agent>` written `--`.
+Containers are named `canyonos-<workflow group>-<role>`, a replica's after its ID with the
+`.` of `<workflow>.<agent>` written `--`.
 
 Each machine has its own Redis, and each replica reports to its machine's. The Global
 Controller container drives Docker through the host's Docker socket. A replica's
@@ -50,28 +50,28 @@ Controller container drives Docker through the host's Docker socket. A replica's
 
 | Replica                                 | `address`                                          | Port published on the machine |
 | --------------------------------------- | -------------------------------------------------- | ----------------------------- |
-| On the Global Controller's machine      | `<replica id>:50051`, on the deployment's network  | none                          |
+| On the Global Controller's machine      | `<replica id>:50051`, on the workflow group's network  | none                          |
 | On another machine (EC2)                | `<private_host>:<host_port>`                       | `<host_port>`                 |
 | The endpoint, in a deploy with machines | `<CANYONOS_PRIVATE_IP>:<host_port>`                | `<host_port>`, on that IP     |
 
 On Kubernetes, the operator runs the Global Controller as a pod
-(`CANYONOS_TARGET=kubernetes`), and every replica reports to the one project Redis. See
+(`CANYONOS_TARGET=kubernetes`), and every replica reports to the one workflow Redis. See
 [Operator](OPERATOR.md).
 
 ## Internal TLS
 
-On Docker with `provider: local`, every connection inside the deployment is mutual TLS,
-signed by a CA the deployment has to itself:
+On Docker with `provider: local`, every connection inside the workflow group is mutual TLS,
+signed by a CA the workflow group has to itself:
 
 1. The first `canyonos deploy` makes the CA (EC P-256, ten years) in
-   `~/.canyonos/deployments/<deployment>/ca/`, readable only by you. Later deploys reuse
-   it. A deploy refuses to start while the deployment's Redis still runs but the CA is gone.
+   `~/.canyonos/deployments/<workflow group>/ca/`, readable only by you. Later deploys reuse
+   it. A deploy refuses to start while the workflow group's Redis still runs but the CA is gone.
 2. The CLI hands the CA and a client certificate of the Global Controller's own to its
    container in `CANYONOS_TLS_*` variables, copied from the CLI's environment, never on the
    command line.
 3. The Global Controller signs a certificate for Redis and the metrics collector, and the
    Reconciler for each replica. Each goes to its container in an env file deleted right
-   after `docker run`. A certificate names the container, its name on the deployment's
+   after `docker run`. A certificate names the container, its name on the workflow group's
    network and `localhost`, and serves as both server and client. Only the Global
    Controller's container holds the CA's key.
 
@@ -79,7 +79,7 @@ signed by a CA the deployment has to itself:
 | --- | --- | --- |
 | Redis | TLS only (`--port 0 --tls-port <redis_port>`), a client certificate the CA signed, and the password | Plaintext with the password (Kubernetes: TLS when the operator sets it) |
 | gRPC between controllers | Mutual TLS: the server requires a client certificate, the client checks the server's name | Plaintext |
-| Dashboard API to Redis | TLS with a client certificate the Global Controller signs when it registers the deployment, stored encrypted like the password | Plaintext with the password |
+| Dashboard API to Redis | TLS with a client certificate the Global Controller signs when it registers the workflow group, stored encrypted like the password | Plaintext with the password |
 
 A container reads its certificate in `controller/utils/internal_tls.py` (flat as
 `canyonos_internal_tls.py` in agent images), which writes it to files and sets
@@ -93,9 +93,9 @@ The CLI talks to the container's HTTP server on `8000`. The routes are in [CLI](
 
 On Docker, the server answers only requests that send `Authorization: Bearer <secret>`.
 The CLI makes a random secret each time it starts the container, hands it over in
-`CANYONOS_CONTROLLER_SECRET` and saves the header in the deployment's `state.json`
+`CANYONOS_CONTROLLER_SECRET` and saves the header in the workflow group's `state.json`
 (`headers`). Any other request gets `401` with code `unauthenticated`, so agent replicas
-on the deployment's network can't call it. On Kubernetes the server checks the caller's
+on the workflow group's network can't call it. On Kubernetes the server checks the caller's
 kubeconfig token instead. A request body over 512 MiB gets `413`.
 
 Startup on Docker and EC2:
@@ -116,7 +116,7 @@ the metrics collectors. Redis is removed only if everything went away cleanly. S
 [Health and liveness](RECONCILER.md#health-and-liveness).
 
 On Kubernetes, `run-gc` builds no images and waits for no replicas. It waits for the
-project's Redis, then polls. SIGTERM stops the Global Controller and leaves the agents
+workflow group's Redis, then polls. SIGTERM stops the Global Controller and leaves the agents
 running.
 
 ## The orchestrator
@@ -134,16 +134,16 @@ replicas. `CANYONOS_TARGET` picks it once:
 
 | Job                                                                | `CanyonOrchestrator`                                                                  | `KubernetesOrchestrator`                                                         |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Support services (`start_`, `undo_`, `stop_support_services`, `remove_stale_containers`) | one Redis and one metrics collector per machine. Removes stopped leftovers first, and undoes it on a failed startup. At stop, removes the collectors, and Redis when everything went away cleanly | connects to the project's Redis (`CANYONOS_REDIS_HOST`, `_PORT`); starts and removes nothing |
+| Support services (`start_`, `undo_`, `stop_support_services`, `remove_stale_containers`) | one Redis and one metrics collector per machine. Removes stopped leftovers first, and undoes it on a failed startup. At stop, removes the collectors, and Redis when everything went away cleanly | connects to the workflow group's Redis (`CANYONOS_REDIS_HOST`, `_PORT`); starts and removes nothing |
 | Background processes, images (`register_background_processes`, `mark_images_ready`) | the Reconciler under the process supervisor; `reconciler:images_ready` lets it launch | none: there is no Reconciler and no build                                       |
 | Replica counts (`set_replicas`, `apply_configured_replicas`, `forget_removed_agents`) | writes the desired count to Redis and wakes the Reconciler; a reload resets every agent to its configured count | patches the CanyonAgent's `/scale`; the operator mirrors it into Redis. A restart keeps live scaling; the CLI removes unconfigured agents |
 | `replace_replica`                                                  | a replacement request the Reconciler acts on                                          | nothing: Kubernetes replaces failed pods                                         |
-| `poll_machine_metrics`, `machine_redis_for_replica`                | each machine's collector sample; the replica's machine's Redis                        | pod usage from the metrics API; the project Redis                                |
+| `poll_machine_metrics`, `machine_redis_for_replica`                | each machine's collector sample; the replica's machine's Redis                        | pod usage from the metrics API; the workflow group's Redis                    |
 | `replica_log_tail`                                                 | the replica container's last output, read on its machine                              | raises: use `kubectl logs`                                                       |
-| `remove_all_replicas`                                              | the Reconciler drains and removes every replica                                       | nothing: the agents keep running, and removing a project is the operator's job   |
+| `remove_all_replicas`                                              | the Reconciler drains and removes every replica                                       | nothing: the agents keep running, and removing a workflow group is the operator's job |
 
 The methods are only half of the contract. The Global Controller reads desired counts and
-the replica list straight from the project's Redis, so every orchestrator must keep these
+the replica list straight from the workflow group's Redis, so every orchestrator must keep these
 up to date. The Reconciler writes them on Docker and EC2, the operator on Kubernetes:
 
 | Key                              | Value                                                                                                                                                                                            |
@@ -311,7 +311,7 @@ mounted ConfigMap does the same.
 
 It does two things:
 
-1. Validates the edited deployment first. If it is invalid, nothing changes.
+1. Validates the edited workflow group first. If it is invalid, nothing changes.
 2. Publishes the new config as at startup, which resets every agent to its configured
    replica count, and forgets the agents no longer configured.
 

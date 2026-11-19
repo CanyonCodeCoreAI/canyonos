@@ -84,18 +84,18 @@ type EndpointSpec struct {
 
 // EndpointRoute is one agent method the endpoint serves.
 type EndpointRoute struct {
-	// project is the project folder of the deployment the agent belongs to.
+	// workflow is the workflow the agent belongs to.
 	// +kubebuilder:validation:MinLength=1
 	// +required
-	Project string `json:"project"`
+	Workflow string `json:"workflow"`
 
 	// agent is the name of the agent whose method the route serves, as in the
-	// project's config (for example Workflow).
+	// workflow's config (for example Workflow).
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Agent string `json:"agent"`
 
-	// method is the agent function served at POST /<project>/<agent>/<method>.
+	// method is the agent function served at POST /<workflow>/<agent>/<method>.
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Method string `json:"method"`

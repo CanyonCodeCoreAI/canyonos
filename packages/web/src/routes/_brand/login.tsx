@@ -10,9 +10,8 @@ import type { BrandCopy } from '@/modules/auth/components/CanyonBrandPanel';
 
 const LOGIN_BRAND: BrandCopy = {
   eyebrow: 'Self-hosted',
-  title: 'Every deployment this install runs, in one place.',
-  description:
-    'Deployments, scaling policies, prompts and spend for the agents on this controller.',
+  title: 'Every workflow this install runs, in one place.',
+  description: 'Workflows, scaling policies, prompts and spend for the agents on this controller.',
   footnote: 'Sign in to pick up where you left off.',
 };
 

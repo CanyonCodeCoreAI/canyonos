@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos stop`: tear down the deploys of the deployments it is given or picks
-(see selection.py), or of every deployment with --all, found by label whether or not its
+Logic for `canyonos stop`: tear down the deploys of the workflow groups it is given or picks
+(see selection.py), or of every workflow group with --all, found by label whether or not its
 folder still exists.
 Its containers, /workspace volume and network go; its images and `.canyon` stay for a
 fast redeploy, and the shared dashboard is stopped with its history kept once no other
-deployment's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse it.
+workflow group's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse it.
 """
 
 import json
@@ -29,7 +29,7 @@ from canyonos.dashboard_stack import (
     stop_dashboard,
     teardown_dashboard,
 )
-from canyonos.gc import GCError, delete_deployment, list_deployments
+from canyonos.gc import GCError, delete_workflow_group, list_workflow_groups
 from canyonos.init import GC_CONTAINER_PORT, GC_SECRET_ENV, docker_env, load_state
 from canyonos.usage.consent import is_interactive
 from utils.tui import select_menu
@@ -63,12 +63,12 @@ def controller_running(state):
 
 
 def stop_deployment(state, name=None):
-    """Stop deployment `name`, by default this folder's: through its Global Controller
+    """Stop workflow group `name`, by default this folder's: through its Global Controller
     while it runs, else by removing every container, volume and network labelled with
-    the deployment. The dashboard is left. Returns what it couldn't remove; the state
+    the workflow group. The dashboard is left. Returns what it couldn't remove; the state
     file stays whenever something is left, so the stop can be retried.
 
-    It decides nothing: whether a deployment may be stopped is `stop_if_safe`'s call.
+    It decides nothing: whether a workflow group may be stopped is `stop_if_safe`'s call.
     Teardown reports rather than raises, since it is also a step of `canyonos deploy`.
     """
     name = name or deployment.deployment_name()
@@ -76,7 +76,7 @@ def stop_deployment(state, name=None):
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
     with ui.status(f"Tearing down {name}..."):
-        # A stale record cannot answer DELETE /deployment, so establish this before
+        # A stale record cannot answer the DELETE, so establish this before
         # making an HTTP request that would otherwise add a full request timeout.
         if controller_running(state):
             failures = _tear_down(name, state, env)
@@ -96,9 +96,9 @@ def stop_deployment(state, name=None):
 
 
 def stop_if_safe(state, name=None):
-    """`stop_deployment` for deployment `name`, by default this folder's, unless its
+    """`stop_deployment` for workflow group `name`, by default this folder's, unless its
     Global Controller is not running: why it went down is unknown, so what it started
-    is removed only when the user names the deployment. Returns what it couldn't
+    is removed only when the user names the workflow group. Returns what it couldn't
     stop."""
     name = name or deployment.deployment_name()
     if controller_running(state):
@@ -112,14 +112,14 @@ def stop_if_safe(state, name=None):
 
 
 def stopper(choice):
-    """How to stop the deployments of `choice`: `stop_deployment` when the user named or
+    """How to stop the workflow groups of `choice`: `stop_deployment` when the user named or
     ticked them, else `stop_if_safe`."""
     return stop_deployment if choice.confirmed else stop_if_safe
 
 
 def _tear_down(name, state, env):
-    """Have the running Global Controller of deployment `name` remove its deploy, then
-    remove it, the deployment's network and volume, and the state files; returns what it
+    """Have the running Global Controller of workflow group `name` remove its deploy, then
+    remove it, the workflow group's network and volume, and the state files; returns what it
     couldn't."""
     container_id = state["container_id"]
     failures = []
@@ -128,9 +128,9 @@ def _tear_down(name, state, env):
     # too. Removing the GC container itself doesn't touch them -- they're
     # sibling containers on the host, not nested inside it.
     try:
-        delete_deployment(state)
+        delete_workflow_group(state)
     except GCError as e:
-        failures.append(f"Cleaning the running deployment failed: {e}")
+        failures.append(f"Cleaning the running workflow group failed: {e}")
 
     failure = cleanup_docker(
         ["docker", "stop", container_id],
@@ -239,8 +239,8 @@ def _clean_deployments():
         env = dict(item.partition("=")[::2] for item in json.loads(inspected[0]))
         headers = {"Authorization": f"Bearer {env.get(GC_SECRET_ENV)}"}
         try:
-            for held in list_deployments(port, headers):
-                delete_deployment({"port": port, "headers": headers, **held})
+            for held in list_workflow_groups(port, headers):
+                delete_workflow_group({"port": port, "headers": headers, **held})
         except GCError as e:
             failures.append(
                 f"Cleaning Global Controller {container_id[:12]}'s deploy failed: {e}"
@@ -255,7 +255,7 @@ _DEPLOYMENT_RESOURCES = (
     (["docker", "volume", "ls"], "Name", ["docker", "volume", "rm"], "volumes"),
     (["docker", "network", "ls"], "Name", ["docker", "network", "rm"], "networks"),
 )
-# The network every deployment shared before each got its own; it carries no label.
+# The network every workflow group shared before each got its own; it carries no label.
 LEGACY_NETWORK = "canyonos-local"
 
 
@@ -289,7 +289,7 @@ def _remove_deployment_resources(deployments, env=None):
             and line.split()[1] != COMPOSE_PROJECT
         ]
         if kind == "networks":
-            # A stopped dashboard api keeps its place on each deployment's network and
+            # A stopped dashboard api keeps its place on each workflow group's network and
             # would not start again on one that is gone.
             for network in names:
                 _list_docker(
@@ -349,7 +349,7 @@ def _remove_state_files(deployments):
 
 
 def _unlabelled_leftovers():
-    """Names of containers an older CLI started before deployments were labelled. They
+    """Names of containers an older CLI started before workflow groups were labelled. They
     are only reported: a name alone can't tell them from someone else's."""
     listed = _list_docker(
         [
@@ -380,7 +380,7 @@ _OWN_IMAGES = tuple(
 
 
 def agent_images(name):
-    """The `docker images` reference every agent image of deployment `name` matches."""
+    """The `docker images` reference every agent image of workflow group `name` matches."""
     return f"canyonos-{name}-*"
 
 
@@ -416,7 +416,7 @@ def remove_images(references):
 
 
 def _remove_home():
-    """Delete `~/.canyonos`: every deployment's records, the dashboard's, and the usage
+    """Delete `~/.canyonos`: every workflow group's records, the dashboard's, and the usage
     settings; returns what it couldn't."""
     home = os.path.dirname(deployment.deployments_dir())
     try:
@@ -439,8 +439,8 @@ def confirm_clean_all():
         )
         return False
     ui.say(
-        "This removes every CanyonOS deployment, the dashboard and its data, "
-        "CanyonOS's images and ~/.canyonos, which holds every deployment's records, "
+        "This removes every CanyonOS workflow group, the dashboard and its data, "
+        "CanyonOS's images and ~/.canyonos, which holds every workflow group's records, "
         "your usage settings and this machine's API key."
     )
     answer = select_menu(
@@ -451,7 +451,7 @@ def confirm_clean_all():
 
 
 def stop_all(remove_everything=False):
-    """`canyonos stop --all`: tear down every CanyonOS deployment on this machine, from
+    """`canyonos stop --all`: tear down every CanyonOS workflow group on this machine, from
     any folder, and stop the dashboard, keeping its history. With `remove_everything`,
     for `canyonos clean --all`, also remove the dashboard and its data, CanyonOS's
     images and `~/.canyonos`, leaving only the CLI to uninstall. Returns True when
@@ -460,8 +460,8 @@ def stop_all(remove_everything=False):
         deployments = os.listdir(deployment.deployments_dir())
     except FileNotFoundError:
         deployments = []
-    ui.json_result["deployments"] = deployments
-    with ui.status("Tearing down every CanyonOS deployment..."):
+    ui.json_result["workflow_groups"] = deployments
+    with ui.status("Tearing down every CanyonOS workflow group..."):
         failures = []
         if remove_everything:
             if not teardown_dashboard():
@@ -511,11 +511,11 @@ def stop_all(remove_everything=False):
             "`uv tool uninstall canyonos`."
         )
     else:
-        ui.ok("Every CanyonOS deployment is torn down and the dashboard stopped")
+        ui.ok("Every CanyonOS workflow group is torn down and the dashboard stopped")
     leftovers = _unlabelled_leftovers()
     if leftovers:
         ui.hint(
-            "These containers look like an older CanyonOS's but carry no deployment "
+            "These containers look like an older CanyonOS's but carry no workflow group "
             "label, so they were left in place. If they are, remove them with "
             f"`docker rm -f {' '.join(leftovers)}`."
         )
@@ -535,30 +535,30 @@ def stop_unused_dashboard(deployments):
             return False
     if dashboard_kept and _existing_dashboard_port() is not None:
         ui.hint(
-            "The dashboard was left running because another CanyonOS deployment is "
+            "The dashboard was left running because another CanyonOS workflow group is "
             "still deployed."
         )
     return True
 
 
 def stop_deployments(choice):
-    """Stop each deployment of `choice` as `stopper` says, then stop the dashboard
-    if no other deployment runs. Returns True when nothing of them is left running."""
+    """Stop each workflow group of `choice` as `stopper` says, then stop the dashboard
+    if no other workflow group runs. Returns True when nothing of them is left running."""
     stop = stopper(choice)
     stopped = [not stop(p.state, p.name) for p in choice.deployments]
     return stop_unused_dashboard(choice.deployments) and all(stopped)
 
 
 def run_stop(all_deployments=False, refs=()):
-    """Run `canyonos stop`: `stop_deployments` on the deployments `refs` name or
+    """Run `canyonos stop`: `stop_deployments` on the workflow groups `refs` name or
     `selection.choose` picks, or `stop_all` with `all_deployments`. Returns True when
     each was found and nothing of it is left running."""
     if all_deployments:
         return stop_all()
     choice = selection.choose("stop", refs, selection.recorded_deployments())
-    ui.json_result["deployments"] = [p.name for p in choice.deployments]
+    ui.json_result["workflow_groups"] = [p.name for p in choice.deployments]
     if not choice.deployments:
         if choice.ok:
-            ui.warn("No deploy is running.")
+            ui.warn("No workflow group is running.")
         return choice.ok
     return stop_deployments(choice) and choice.ok

@@ -25,13 +25,13 @@ from canyonos.clean import run_clean
 from canyonos.auth import BEARER_PLACEHOLDER, auth_header, machine_api_key
 from canyonos.constants import (
     CANYON_DIR,
-    project_config_path,
-    project_folder,
+    workflow_config_path,
+    workflow_folder,
 )
 from canyonos.dashboard_registration import (
     RegistrationError,
     add_sample_data,
-    register_project,
+    register_workflows,
 )
 from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
 from canyonos.deploy import run_deploy
@@ -53,7 +53,7 @@ STAGES = (
     "Workflow Selection",
     "Workflow Setup",
     "Deployment",
-    "Deployment Health",
+    "Workflow Group Health",
     "First Request",
 )
 TOTAL_STEPS = len(STAGES)
@@ -64,7 +64,7 @@ BAR_DONE, BAR_TODO = "█", "░"
 # Characters of an unexpected endpoint reply to show before truncating it.
 MAX_REPLY_SHOWN = 200
 
-# The project's env file, which the manifest passes to every container.
+# The workflow's env file, which the manifest passes to every container.
 ENV_FILENAME = ".env"
 
 # Stage 6's request, in seconds: accepting it, answering it, one poll, and the
@@ -166,10 +166,10 @@ def _typed(command, run, what, optional=False):
         ui.warn(f"Expected `{command}`.")
 
 
-def _is_project(folder):
+def _is_workflow(folder):
     """True if `folder` holds a `config/workflow_config.yaml`, in either layout: under
     a ported `CANYON_DIR`, or at its root."""
-    return os.path.isfile(project_config_path(project_folder(folder)))
+    return os.path.isfile(workflow_config_path(workflow_folder(folder)))
 
 
 def _bundled(name):
@@ -194,8 +194,8 @@ def _starter_files(name):
 
 
 def _fetch(name, into=None):
-    """Copy the bundled workflow `name`, a deployment folder holding its
-    `deployment.yaml` and the project `name`, into a folder of its own under `into`
+    """Copy the bundled workflow `name`, a workflow group folder holding its
+    `workflow_group.yaml` and the workflow `name`, into a folder of its own under `into`
     (the current directory by default) and return that folder.
 
     A folder already holding this workflow is returned untouched, so a second run
@@ -208,7 +208,7 @@ def _fetch(name, into=None):
     destination = os.path.join(into or os.getcwd(), name)
 
     if os.path.exists(destination):
-        if _is_project(os.path.join(destination, name)):
+        if _is_workflow(os.path.join(destination, name)):
             return destination
         raise RuntimeError(
             f"{destination} already exists and does not hold the {name} workflow. "
@@ -260,8 +260,8 @@ def _get_starter():
         else:
             ui.fail("`canyonos quickstart` needs a terminal to ask what to deploy.")
             ui.hint(
-                "  -> run it directly, or use `canyonos deploy <project>` in a "
-                "deployment folder"
+                "  -> run it directly, or use `canyonos deploy <workflow>` in a "
+                "workflow group folder"
             )
         return None
 
@@ -278,15 +278,15 @@ def _get_starter():
     return name, folder
 
 
-# Keys reach the agents only through the project's `.env`: the manifest passes
+# Keys reach the agents only through the workflow's `.env`: the manifest passes
 # it to every container as `env_file`, and an exported shell variable does not
 # reach them. Each workflow ships one naming the keys it needs, so the ask is to
 # edit a file that is already there rather than to answer a prompt.
 
 
-def _ask_for_keys(names, project):
+def _ask_for_keys(names, folder):
     """Say which keys the workflow needs and where to put them: the `.env` of its
-    project folder `project`. Nothing to say for a workflow that needs none, which
+    workflow folder `folder`. Nothing to say for a workflow that needs none, which
     is the point of Hello World."""
     if not names:
         return
@@ -296,7 +296,7 @@ def _ask_for_keys(names, project):
     ui.blank()
     # The full path, so the command works from whatever folder that terminal
     # happens to be in -- this run's `cd` moved only this process.
-    ui.command(f"  vi {os.path.join(os.getcwd(), project, ENV_FILENAME)}")
+    ui.command(f"  vi {os.path.join(os.getcwd(), folder, ENV_FILENAME)}")
     ui.blank()
     ui.say("Set your key in it, then carry on here:")
     ui.blank()
@@ -312,8 +312,8 @@ def _change_into(folder):
     return True
 
 
-def _prepare_project(folder):
-    """Finish stage 3: change into the workflow's deployment folder. Returns True
+def _prepare_workflow(folder):
+    """Finish stage 3: change into the workflow group folder. Returns True
     when it is ready to deploy.
 
     `cd` is typed rather than done quietly, because every command after it runs
@@ -327,22 +327,21 @@ def _prepare_project(folder):
         _typed(
             f"cd ./{os.path.basename(folder)}",
             lambda: _change_into(folder),
-            "move into the workflow's deployment folder, where the rest of the run "
-            "happens",
+            "move into the workflow group folder, where the rest of the run happens",
         )
     )
 
 
 def _deploy(folder):
-    """Run stage 4: deploy the starter's project from its deployment folder `folder`,
-    the current one, with this machine's API key when one is set, then check it and
-    show the dashboard address. Returns True when it is up and healthy."""
+    """Run stage 4: deploy the starter's workflow from its workflow group folder
+    `folder`, the current one, with this machine's API key when one is set, then check
+    it and show the dashboard address. Returns True when it is up and healthy."""
     _step(4)
     name = os.path.basename(folder)
     deployed = _typed(
         f"canyonos deploy {name}",
         lambda: run_deploy([name], banner=False),
-        "deploy the workflow's project, building each agent's image",
+        "deploy the workflow, building each agent's image",
     )
     if deployed is None:
         return False
@@ -368,17 +367,17 @@ def _health_check():
     passed = _typed(
         "canyonos doctor",
         run_doctor,
-        "check the running deploy: controller, Redis, agents, endpoint, dashboard",
+        "check the running workflow group: controller, Redis, agents, endpoint, dashboard",
     )
     if passed is None:
         return False
     if passed:
         ui.blank()
-        ui.ok("Deployment health checks passed.")
+        ui.ok("Workflow group health checks passed.")
         return True
 
     ui.blank()
-    ui.fail("Deployment health checks failed, so a request would not get through.")
+    ui.fail("Workflow group health checks failed, so a request would not get through.")
     ui.hint("  -> resolve the items above, then run `canyonos quickstart` again")
     return False
 
@@ -401,7 +400,7 @@ def _offer_clean():
     remove. So anything other than the command is taken as a no.
 
     `clean` rather than `stop`, because the offer is to undo the run: `stop`
-    would leave the agents' images and the project's `.canyon` behind on a
+    would leave the agents' images and the workflow's `.canyon` behind on a
     machine someone may have been trying CanyonOS out on. It stops the deploy
     first itself, so one typed command still covers the whole teardown.
     """
@@ -427,7 +426,7 @@ def _offer_clean():
 
 def _sample_query(folder="."):
     """The test query of the workflow in `folder` and the file it came from, looked
-    for in both the ported `CANYON_DIR` layout and a `config/` at the project root.
+    for in both the ported `CANYON_DIR` layout and a `config/` at the workflow root.
     `(None, None)` when the workflow ships none."""
     for path in (
         os.path.join(folder, CANYON_DIR, "config", "test_query.txt"),
@@ -466,7 +465,7 @@ def _await_result(endpoint, request_id, key, timeout=REQUEST_TIMEOUT):
     with ui.status("Waiting for the workflow..."):
         while time.time() < deadline:
             try:
-                # The URL is always http:// to the deployment's own endpoint, never a
+                # The URL is always http:// to the workflow group's own endpoint, never a
                 # caller's scheme, which the rule cannot see.
                 # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 with urllib.request.urlopen(request, timeout=POLL_TIMEOUT) as answer:
@@ -481,7 +480,7 @@ def _await_result(endpoint, request_id, key, timeout=REQUEST_TIMEOUT):
     return {"status": "timeout"}
 
 
-def _curl_for(endpoint, project, keyed):
+def _curl_for(endpoint, folder, keyed):
     """The `curl` stage 6 asks for, with the API key's placeholder header when the
     deploy is `keyed`, and the file its query came from.
 
@@ -490,7 +489,7 @@ def _curl_for(endpoint, project, keyed):
     as shown rather than needing an edit. It is one line, and the query is
     flattened to single spaces, because it has to survive being typed.
     """
-    query, query_path = _sample_query(project)
+    query, query_path = _sample_query(folder)
     if query:
         query = " ".join(query.split())
     # The starter serves one route.
@@ -573,8 +572,8 @@ def _send_request(command, endpoint, key):
     return False
 
 
-def _first_request(workflow, project):
-    """Run stage 6: send the first request to the starter in the folder `project`,
+def _first_request(workflow, folder):
+    """Run stage 6: send the first request to the starter in the folder `folder`,
     fill the dashboard with `workflow`'s
     recorded runs, then offer to take the deploy down. Returns True when the
     workflow answered.
@@ -584,7 +583,7 @@ def _first_request(workflow, project):
     either way, and it is the last thing anyone does here.
     """
     _step(6)
-    answered = _send_first_request(project)
+    answered = _send_first_request(folder)
     # Whether or not the request landed. A workflow shipping a placeholder key
     # fails its first request until someone fills one in, and that is the run
     # that most needs a dashboard with something in it.
@@ -595,23 +594,26 @@ def _first_request(workflow, project):
 
 
 def _add_sample_data(workflow):
-    """Ask the dashboard to add `workflow`'s example runs to this project, whether
-    or not the first request worked. Never fails the run."""
+    """Ask the dashboard to add `workflow`'s example runs to each workflow of this
+    workflow group, whether or not the first request worked. Never fails the run."""
     try:
-        project = register_project(load_state())
+        registered = register_workflows(load_state())
         ui.blank()
         ui.say("Adding example runs to the dashboard...")
-        added = add_sample_data(project["project_id"], workflow)
+        spans = sum(
+            add_sample_data(entry["workflow_id"], workflow)["spans"]
+            for entry in registered
+        )
     except (KeyError, OSError, RuntimeError, ValueError, RegistrationError) as e:
         ui.warn(f"The dashboard kept only this run's trace: {e}")
         return
 
-    ui.ok(f"Added example runs ({added['spans']} spans).")
+    ui.ok(f"Added example runs ({spans} spans).")
 
 
-def _send_first_request(project):
+def _send_first_request(folder):
     """Show the `curl` for the deployed endpoint, with the query of the starter in
-    `project` and the API key's placeholder when this machine has a key, wait for the
+    `folder` and the API key's placeholder when this machine has a key, wait for the
     user to type it, send it with the key and wait for the answer. True when the
     workflow answered."""
     try:
@@ -623,7 +625,7 @@ def _send_first_request(project):
         return False
 
     key = machine_api_key()
-    command, query_path = _curl_for(endpoint, project, key is not None)
+    command, query_path = _curl_for(endpoint, folder, key is not None)
     if key:
         ui.hint(
             "  type <your api key> as shown: quickstart sends this machine's key in "
@@ -694,10 +696,10 @@ def _quickstart():
 
     name, folder = picked
 
-    # `canyonos deploy` runs from the deployment folder, which names the deployment
-    # and holds its `deployment.yaml`, and every command after it runs from there.
+    # `canyonos deploy` runs from the workflow group folder, which names the workflow group
+    # and holds its `workflow_group.yaml`, and every command after it runs from there.
     # So the run changes into it, the way a user would `cd`.
-    if not _prepare_project(folder):
+    if not _prepare_workflow(folder):
         return False
 
     _ask_for_keys(STARTERS[name]["secrets"], name)

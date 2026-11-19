@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The manifest schema: every key `deployment.yaml` and a project's
+"""The manifest schema: every key `workflow_group.yaml` and a workflow's
 `config/workflow_config.yaml` may carry.
 
 Anything not declared here is rejected, so a typo fails the deploy with a line
@@ -81,18 +81,20 @@ _AGENT_KEYS_BY_TYPE = {
     "database": _DATABASE_KEYS,
 }
 
-# The deployment's settings, in the folder `canyonos deploy` runs from, and each
-# project folder's own config, relative to the folder.
-DEPLOYMENT_CONFIG = "deployment.yaml"
+# The workflow group's settings, in the folder `canyonos deploy` runs from, and each
+# workflow folder's own config, relative to the folder.
+DEPLOYMENT_CONFIG = "workflow_group.yaml"
 CONFIG_PATH = os.path.join("config", "workflow_config.yaml")
 
 # What a folder runs and serves.
-_PROJECT_KEYS = frozenset({"agents", "endpoint"})
-_PROJECT_ENDPOINT_KEYS = frozenset({"routes"})
-# Where and how every folder of the deployment runs.
+_WORKFLOW_KEYS = frozenset({"agents", "endpoint"})
+_WORKFLOW_ENDPOINT_KEYS = frozenset({"routes"})
+# Where and how every folder of the workflow group runs.
 _DEPLOYMENT_KEYS = frozenset(
     {
-        "deployment_id",
+        "workflow_group_id",
+        # Each workflow's workflow_id and folder, by its name; the CLI writes it.
+        "workflows",
         "target",
         "deploy_mode",
         "provider",
@@ -108,29 +110,28 @@ _DEPLOYMENT_KEYS = frozenset(
         "kubernetes",
     }
 )
-# Who runs the deployment: Docker on the deploying machine (the default) or the
+# Who runs the workflow group: Docker on the deploying machine (the default) or the
 # Kubernetes cluster. Keep in sync with the CLI's canyonos/target.py: the CLI and the
 # core image ship separately.
 TARGETS = ("docker", "kubernetes")
-# How each project's code agents run: replicas of their own each, or all in one replica.
+# How each workflow's code agents run: replicas of their own each, or all in one replica.
 DEPLOY_MODES = ("distributed", "toy")
 _DEPLOYMENT_ENDPOINT_KEYS = frozenset({"api_port"})
-_MOVED_TO_DEPLOYMENT = (
-    "is a deployment setting, shared by every project: set it in deployment.yaml"
-)
+_MOVED_TO_DEPLOYMENT = "is a workflow group setting, shared by every workflow: set it in workflow_group.yaml"
 _ROUTE_KEYS = frozenset({"agent", "method"})
 _REDIS_KEYS = frozenset({"host", "port", "db"})
 # Keys that used to mean something and now do nothing, each with the message
 # that tells a user carrying one what to do instead.
 _RETIRED_KEYS = {
     "database": "is no longer used; telemetry is configured under otel: -- remove it",
-    "project_id": "is no longer used; the deployment's id is deployment_id in "
-    "deployment.yaml -- remove it",
+    "project_id": "is no longer used; the workflow group's id is workflow_group_id "
+    "in workflow_group.yaml -- remove it",
+    "deployment_id": "was renamed to workflow_group_id -- rename it",
     **{
         old: f"was renamed to {new}: -- rename it"
         for old, new in providers.RENAMED_SECTIONS.items()
     },
-    "env_file": "is no longer used; the `.env` in the project folder reaches the "
+    "env_file": "is no longer used; the `.env` in the workflow folder reaches the "
     "agent replicas by itself -- remove it",
 }
 _OTEL_KEYS = frozenset({"destinations"})
@@ -153,7 +154,7 @@ class Resources:
 
 @dataclass(frozen=True)
 class RedisSpec:
-    """The `redis` section of `workflow_config.yaml`: where the project Redis runs."""
+    """The `redis` section of `workflow_config.yaml`: where the workflow group's Redis runs."""
 
     host: str = "localhost"
     port: int = 6379
@@ -181,12 +182,14 @@ class OtelSpec:
 
 @dataclass(frozen=True)
 class RouteSpec:
-    """One agent method a project serves, at `POST /<project>/<agent>/<method>`. The
-    project is set when the project joins a deployment."""
+    """The agent method a workflow serves, at `POST /<workflow_id>` and at
+    `POST /<workflow>/<agent>/<method>`. The workflow and its workflow_id are set when
+    the workflow joins a workflow group."""
 
     agent: str
     method: str
-    project: str = ""
+    workflow: str = ""
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,8 +209,8 @@ class _Agent:
     resources: Resources = field(default_factory=Resources)
     stateful: bool = False
     env: dict = field(default_factory=dict)
-    # The project folder the agent comes from; set when the project joins a deployment.
-    project: str = ""
+    # The workflow folder the agent comes from; set when the workflow joins a workflow group.
+    workflow: str = ""
 
     type: ClassVar[str] = "agent"
 
@@ -236,8 +239,8 @@ class DatabaseAgent(_Agent):
 
 
 @dataclass(frozen=True)
-class Project:
-    """A project's `config/workflow_config.yaml`, checked and parsed by `load_project`."""
+class Workflow:
+    """A workflow's `config/workflow_config.yaml`, checked and parsed by `load_workflow`."""
 
     agents: tuple
     routes: tuple = ()
@@ -245,8 +248,8 @@ class Project:
 
 @dataclass(frozen=True)
 class Manifest:
-    """A deployment, as `load_deployment` composes it: its `deployment.yaml` and the
-    agents and routes of every project in it, each agent named `<project>.<agent>`."""
+    """A workflow group, as `load_deployment` composes it: its `workflow_group.yaml` and the
+    agents and routes of every workflow in it, each agent named `<workflow>.<agent>`."""
 
     agents: tuple
     target: str = TARGETS[0]
@@ -272,7 +275,7 @@ class Manifest:
 
 
 def _is_rooted(path):
-    """True for a path anchored anywhere but the project, on either OS.
+    """True for a path anchored anywhere but the workflow, on either OS.
 
     `posixpath` alone takes `\\outside\\agent.py`, `C:\\x` and
     `\\\\server\\share` for relative names. The leading-backslash test is
@@ -287,15 +290,15 @@ def _is_rooted(path):
     )
 
 
-def _project_relative_py(collector, node, key, prefix, required):
-    """A source path inside the project: relative, no `..`, ending in `.py`."""
+def _workflow_relative_py(collector, node, key, prefix, required):
+    """A source path inside the workflow: relative, no `..`, ending in `.py`."""
     value = _string(collector, node, key, prefix, required=required)
     if value is None:
         return ""
     field_name = _field(prefix, key)
     if _is_rooted(value):
         collector.add(
-            node, key, field_name, f"must be relative to the project, got {value!r}"
+            node, key, field_name, f"must be relative to the workflow, got {value!r}"
         )
         return ""
     if ".." in value.replace("\\", "/").split("/"):
@@ -303,7 +306,7 @@ def _project_relative_py(collector, node, key, prefix, required):
             node,
             key,
             field_name,
-            f"must not escape the project with '..', got {value!r}",
+            f"must not escape the workflow with '..', got {value!r}",
         )
         return ""
     if not value.endswith(".py"):
@@ -477,7 +480,7 @@ def _agent(collector, entries, index):
     elif agent_type == "agent":
         agent_class = CodeAgent
         fields = {
-            "entrypoint": _project_relative_py(
+            "entrypoint": _workflow_relative_py(
                 collector, node, "entrypoint", prefix, required=True
             ),
             "requirements": _requirements(collector, node, prefix),
@@ -602,7 +605,7 @@ def _otel(collector, node):
 
 
 def _routes(collector, node, agent_specs):
-    """Parse the project's required `endpoint.routes`: the agent methods it serves."""
+    """Parse the workflow's required `endpoint.routes`: the agent methods it serves."""
     if "endpoint" not in node or node["endpoint"] is None:
         collector.add(
             node,
@@ -612,19 +615,20 @@ def _routes(collector, node, agent_specs):
         )
         return ()
     block = _mapping(
-        collector, node, "endpoint", "", _PROJECT_ENDPOINT_KEYS | {"api_port"}
+        collector, node, "endpoint", "", _WORKFLOW_ENDPOINT_KEYS | {"api_port"}
     )
     if block is None:
         return ()
     if "api_port" in block:
         collector.add(block, "api_port", "endpoint.api_port", _MOVED_TO_DEPLOYMENT)
     raw = block.get("routes")
-    if not isinstance(raw, list) or not raw:
+    if not isinstance(raw, list) or len(raw) != 1:
         collector.add(
             block,
             "routes",
             "endpoint.routes",
-            f"expected a list of `agent` and `method` entries, got {_describe(raw)}",
+            "expected one `agent` and `method` entry, the workflow this folder "
+            f"serves, got {_describe(raw)}",
         )
         return ()
     functions = {
@@ -711,10 +715,32 @@ def _by_agent(collector, node, key, prefix, agent_names):
         )
 
 
+def _agents_as_named(document):
+    """Let a per-agent provider setting, such as ec2-assign's `machine_type`, name an
+    agent `<folder>.<agent>`, as its user knows it: rename it `<workflow>.<agent>`, its
+    name in the workflow group, when just one workflow has that folder (see `workflows`)."""
+    workflows = {}
+    for workflow in document.get("workflows") or {}:
+        workflows.setdefault(workflow.rsplit("-", 1)[0], []).append(workflow)
+    for schema in providers.SCHEMAS.values():
+        section = document.get(schema.SECTION) if schema.MACHINE_PER_REPLICA else None
+        by_agent = (
+            section.get(schema.MACHINE_PER_REPLICA)
+            if isinstance(section, dict)
+            else None
+        )
+        if not isinstance(by_agent, dict):
+            continue
+        for name in list(by_agent):
+            folder, _, agent = str(name).partition(".")
+            if len(workflows.get(folder, ())) == 1:
+                by_agent[f"{workflows[folder][0]}.{agent}"] = by_agent.pop(name)
+
+
 def _check_provider_sections(collector, node, provider, agent_names):
-    """Check each provider's top-level section of `deployment.yaml`, such as
+    """Check each provider's top-level section of `workflow_group.yaml`, such as
     `ec2-pool:`. Unknown and retired keys are always reported. The section's values are
-    checked only for the deployment's `provider`, and the section itself is required
+    checked only for the workflow group's `provider`, and the section itself is required
     then only if it has required keys."""
     for name, schema in providers.SCHEMAS.items():
         if not schema.SECTION:
@@ -791,9 +817,9 @@ def _read_document(path):
     return collector, document
 
 
-def load_project(path):
-    """Parse and check a project's `config/workflow_config.yaml`, reading its `${VAR}`s
-    from the project's own `.env` and reporting every problem at once.
+def load_workflow(path):
+    """Parse and check a workflow's `config/workflow_config.yaml`, reading its `${VAR}`s
+    from the workflow's own `.env` and reporting every problem at once.
 
     Raises:
         SchemaError: the file is unusable; `.violations` holds them all.
@@ -801,24 +827,24 @@ def load_project(path):
     # A port in `.canyon` reads the `.env` beside it, the one deploy ships.
     with dotenv_applied(resolve_env_file(path) or ""):
         collector, document = _read_document(path)
-        moved = document.keys() & (_DEPLOYMENT_KEYS - _PROJECT_KEYS)
+        moved = document.keys() & (_DEPLOYMENT_KEYS - _WORKFLOW_KEYS)
         for key in moved:
             collector.add(document, key, key, _MOVED_TO_DEPLOYMENT)
         _check_keys(
-            collector, document, "", _PROJECT_KEYS | moved | _RETIRED_KEYS.keys()
+            collector, document, "", _WORKFLOW_KEYS | moved | _RETIRED_KEYS.keys()
         )
         agent_specs = _agents(collector, document)
-        project = Project(
+        workflow = Workflow(
             agents=agent_specs,
             routes=_routes(collector, document, agent_specs),
         )
     if collector.violations:
         raise SchemaError(collector.violations)
-    return project
+    return workflow
 
 
-def project_names(workspace):
-    """The projects of the deployment in `workspace`: its folders that hold a
+def workflow_names(workspace):
+    """The workflows of the workflow group in `workspace`: its folders that hold a
     `config/workflow_config.yaml`, by name."""
     return sorted(
         name
@@ -827,33 +853,33 @@ def project_names(workspace):
     )
 
 
-def qualified_name(project, agent_name):
-    """An agent's name in a deployment: `<project>.<agent>`, unique across projects.
-    Project names never hold a `.`, so the project is the part before the first one."""
-    return f"{project}.{agent_name}"
+def qualified_name(workflow, agent_name):
+    """An agent's name in a workflow group: `<workflow>.<agent>`, unique across workflows.
+    Workflow names never hold a `.`, so the workflow is the part before the first one."""
+    return f"{workflow}.{agent_name}"
 
 
 def load_deployment(workspace):
-    """Parse and check the deployment in `workspace`: its `deployment.yaml` and every
-    project's `config/workflow_config.yaml`, composed into one Manifest. Each agent is
-    named `<project>.<agent>` and records its project, and each route its project.
+    """Parse and check the workflow group in `workspace`: its `workflow_group.yaml` and every
+    workflow's `config/workflow_config.yaml`, composed into one Manifest. Each agent is
+    named `<workflow>.<agent>` and records its workflow, and each route its workflow.
 
     Raises:
-        SchemaError: the deployment is unusable; `.violations` holds the problems of
+        SchemaError: the workflow group is unusable; `.violations` holds the problems of
             every file.
     """
     path = os.path.join(workspace, DEPLOYMENT_CONFIG)
     violations = []
     agent_specs = []
     routes = []
-    names = project_names(workspace)
+    names = workflow_names(workspace)
     if not names:
         violations.append(
             SchemaViolation(workspace, 0, "", f"holds no folder with {CONFIG_PATH}")
         )
     for name in names:
         try:
-            project = load_project(os.path.join(workspace, name, CONFIG_PATH))
+            workflow = load_workflow(os.path.join(workspace, name, CONFIG_PATH))
         except SchemaError as error:
             violations.extend(error.violations)
             continue
@@ -861,11 +887,11 @@ def load_deployment(workspace):
             replace(
                 agent_spec,
                 name=qualified_name(name, agent_spec.name),
-                project=name,
+                workflow=name,
             )
-            for agent_spec in project.agents
+            for agent_spec in workflow.agents
         ]
-        routes += [replace(route, project=name) for route in project.routes]
+        routes += [replace(route, workflow=name) for route in workflow.routes]
 
     with dotenv_applied(os.path.join(workspace, ".env")):
         try:
@@ -873,10 +899,19 @@ def load_deployment(workspace):
         except SchemaError as error:
             raise SchemaError(violations + list(error.violations)) from None
         _check_keys(collector, document, "", _DEPLOYMENT_KEYS | _RETIRED_KEYS.keys())
+        _agents_as_named(document)
         provider = _provider(collector, document, "")
         endpoint = _mapping(
             collector, document, "endpoint", "", _DEPLOYMENT_ENDPOINT_KEYS
         )
+        workflows = document.get("workflows") or {}
+        routes = [
+            replace(
+                route,
+                workflow_id=(workflows.get(route.workflow) or {}).get("workflow_id"),
+            )
+            for route in routes
+        ]
         manifest = Manifest(
             agents=tuple(agent_specs),
             target=_target(collector, document),
@@ -886,7 +921,7 @@ def load_deployment(workspace):
             cleanup_interval=_number(
                 collector, document, "cleanup_interval", "", 10, 0
             ),
-            deployment_id=_string(collector, document, "deployment_id", ""),
+            deployment_id=_string(collector, document, "workflow_group_id", ""),
             redis=_redis(collector, document),
             logs=_boolean(collector, document, "logs", "", True),
             otel=_otel(collector, document),
@@ -941,51 +976,56 @@ def _expanded(path, env_path):
 
 
 def load_deployment_config(workspace):
-    """The deployment in `workspace` as the raw config the Global Controller acts on,
-    composed the way `load_deployment` composes the Manifest: `deployment.yaml`, plus
-    every project's agents, named `<project>.<agent>` and given their `project`, and
-    its routes, given their `project`. Read once `load_deployment` has accepted it."""
+    """The workflow group in `workspace` as the raw config the Global Controller acts on,
+    composed the way `load_deployment` composes the Manifest: `workflow_group.yaml`, plus
+    every workflow's agents, named `<workflow>.<agent>` and given their `workflow`, and
+    its routes, given their `workflow`. Read once `load_deployment` has accepted it."""
     config = _expanded(
         os.path.join(workspace, DEPLOYMENT_CONFIG), os.path.join(workspace, ".env")
     )
     config["deploy_mode"] = str(config.get("deploy_mode", DEPLOY_MODES[0])).casefold()
+    _agents_as_named(config)
     agent_specs = []
     routes = []
-    for name in project_names(workspace):
-        project = _expanded(
+    for name in workflow_names(workspace):
+        workflow = _expanded(
             os.path.join(workspace, name, CONFIG_PATH),
             os.path.join(workspace, name, ".env"),
         )
-        project_specs = [
+        workflow_specs = [
             {
                 **agent_spec,
                 "name": qualified_name(name, agent_spec["name"]),
-                "project": name,
+                "workflow": name,
             }
-            for agent_spec in project["agents"]
+            for agent_spec in workflow["agents"]
         ]
         agent_specs += (
-            _toy_bundle(name, project_specs)
+            _toy_bundle(name, workflow_specs)
             if config["deploy_mode"] == "toy"
-            else project_specs
+            else workflow_specs
+        )
+        workflow_id = ((config.get("workflows") or {}).get(name) or {}).get(
+            "workflow_id"
         )
         routes += [
-            {**route, "project": name} for route in project["endpoint"]["routes"]
+            {**route, "workflow": name, "workflow_id": workflow_id}
+            for route in workflow["endpoint"]["routes"]
         ]
     config["agents"] = agent_specs
     config["endpoint"] = {**(config.get("endpoint") or {}), "routes": routes}
     return config
 
 
-def _toy_bundle(project, agent_specs):
-    """A project's agent specs for toy mode: its databases as they are, and one spec
+def _toy_bundle(workflow, agent_specs):
+    """A workflow's agent specs for toy mode: its databases as they are, and one spec
     whose single replica runs every code agent, listed under its `agents`, with their
     resources added up, CPU at most the machine's, and their requirements combined."""
     hosted = [spec for spec in agent_specs if spec.get("type", "agent") == "agent"]
     defaults = Resources()
     bundle = {
-        "name": qualified_name(project, "toy"),
-        "project": project,
+        "name": qualified_name(workflow, "toy"),
+        "workflow": workflow,
         "type": "agent",
         # An agent that sets no resources gets the defaults, as its own replica would.
         "resources": {

@@ -14,7 +14,7 @@ export const MonitoringKindSchema = z.enum(['flow', 'stock']);
 export const MonitoringResourceSchema = z.enum(['cpu', 'memory', 'disk', 'gpu']);
 
 export const MonitoringScopeSchema = z.object({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   ...TIME_RANGE_FIELDS,
 });
 
@@ -171,14 +171,16 @@ export const MonitoringReplicaSchema = z.object({
 });
 
 export const MonitoringReplicasResponseSchema = MonitoringScopeSchema.pick({
-  project_id: true,
+  workflow_id: true,
 }).extend({
   replicas: z.array(MonitoringReplicaSchema),
 });
 
 export const MonitoringRouteSchema = z.object({
   url: z.string(),
-  project: z.string(),
+  workflow: z.string(),
+  /** The workflow's id, which `url` ends with; absent from a controller that gives none. */
+  workflow_id: z.string().nullish(),
   agent: z.string(),
   method: z.string(),
   arguments: z.array(z.string()),
@@ -191,7 +193,7 @@ export const MonitoringEndpointSchema = z.object({
 });
 
 export const MonitoringEndpointResponseSchema = MonitoringScopeSchema.pick({
-  project_id: true,
+  workflow_id: true,
 }).extend({
   endpoint: MonitoringEndpointSchema.nullable(),
 });

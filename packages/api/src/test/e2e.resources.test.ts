@@ -4,12 +4,12 @@
 import { describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
-import { otelSpans, projects } from '@api/db/schema';
-import { GEN_AI, PROJECT_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
+import { otelSpans, workflows } from '@api/db/schema';
+import { GEN_AI, WORKFLOW_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, TEST_API_KEY } from './project-test.utils';
-import { write_project_span, write_unattributed_span } from './telemetry-test.utils';
+import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';
+import { bearer, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -34,9 +34,9 @@ interface SpanSeed {
   failed?: boolean;
 }
 
-async function insert_project(name: string, ms_ago: number): Promise<string> {
+async function insert_workflow(name: string, ms_ago: number): Promise<string> {
   const id = crypto.randomUUID();
-  await db.insert(projects).values({
+  await db.insert(workflows).values({
     id,
     name,
     created_at: at(ms_ago),
@@ -45,9 +45,9 @@ async function insert_project(name: string, ms_ago: number): Promise<string> {
   return id;
 }
 
-async function insert_span(project_id: string, span: SpanSeed): Promise<void> {
+async function insert_span(workflow_id: string, span: SpanSeed): Promise<void> {
   const start = nanos_ago(span.ms_ago);
-  await write_project_span(project_id, {
+  await write_workflow_span(workflow_id, {
     span_id: span.span_id,
     trace_id: span.trace_id,
     start_time_unix_nano: start,
@@ -68,18 +68,18 @@ const range = (from_ms_ago: number, to_ms_ago = 0) => ({
 const overview = (token: string, query: { from: string; to: string }) =>
   api.resources.overview.get({ $headers: bearer(token), $query: query });
 
-const tokens_usage = (project: {
+const tokens_usage = (workflow: {
   resource_usage: { resource_id: string; usage: number }[];
-}): number => project.resource_usage.find((usage) => usage.resource_id === 'tokens')!.usage;
+}): number => workflow.resource_usage.find((usage) => usage.resource_id === 'tokens')!.usage;
 
 // The fleet spans the whole install, so every assertion below picks the rows the test seeded.
-type FleetProject = NonNullable<Awaited<ReturnType<typeof overview>>['data']>['projects'][number];
+type FleetWorkflow = NonNullable<Awaited<ReturnType<typeof overview>>['data']>['workflows'][number];
 
-const fleet_row = (data: { projects: FleetProject[] }, project_id: string): FleetProject =>
-  data.projects.find((project) => project.id === project_id)!;
+const fleet_row = (data: { workflows: FleetWorkflow[] }, workflow_id: string): FleetWorkflow =>
+  data.workflows.find((workflow) => workflow.id === workflow_id)!;
 
-const fleet_rows = (data: { projects: FleetProject[] }, ids: string[]): FleetProject[] =>
-  data.projects.filter((project) => ids.includes(project.id));
+const fleet_rows = (data: { workflows: FleetWorkflow[] }, ids: string[]): FleetWorkflow[] =>
+  data.workflows.filter((workflow) => ids.includes(workflow.id));
 
 describe('GET /resources/overview', () => {
   test('a request without the API key is rejected with 401', async () => {
@@ -87,12 +87,12 @@ describe('GET /resources/overview', () => {
     expect(res.error?.status as number).toBe(401);
   });
 
-  test('derives per-project cost, requests and tokens from project spans', async () => {
+  test('derives per-workflow cost, requests and tokens from workflow spans', async () => {
     const token = TEST_API_KEY;
 
-    const alpha = await insert_project('Alpha', 3 * DAY_MS);
-    const bravo = await insert_project('Bravo', 2 * DAY_MS);
-    const charlie = await insert_project('Charlie', 1 * DAY_MS);
+    const alpha = await insert_workflow('Alpha', 3 * DAY_MS);
+    const bravo = await insert_workflow('Bravo', 2 * DAY_MS);
+    const charlie = await insert_workflow('Charlie', 1 * DAY_MS);
 
     await insert_span(alpha, {
       span_id: 'fleet-a1-s',
@@ -124,20 +124,20 @@ describe('GET /resources/overview', () => {
     const data = res.data!;
 
     const mine = fleet_rows(data, [alpha, bravo, charlie]);
-    expect(mine.map((project) => project.id)).toEqual([alpha, bravo, charlie]);
-    expect(mine.map((project) => project.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
-    expect(mine.map((project) => project.requests)).toEqual([2, 1, 0]);
-    expect(mine.map((project) => project.cost)).toEqual([1, 1, 0]);
-    expect(mine.map((project) => tokens_usage(project))).toEqual([1.2, 0.3, 0]);
-    expect(mine.map((project) => project.avg_latency_ms)).toEqual([2000, 2000, 0]);
-    expect(mine.every((project) => project.error_rate_pct === 0)).toBe(true);
+    expect(mine.map((workflow) => workflow.id)).toEqual([alpha, bravo, charlie]);
+    expect(mine.map((workflow) => workflow.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
+    expect(mine.map((workflow) => workflow.requests)).toEqual([2, 1, 0]);
+    expect(mine.map((workflow) => workflow.cost)).toEqual([1, 1, 0]);
+    expect(mine.map((workflow) => tokens_usage(workflow))).toEqual([1.2, 0.3, 0]);
+    expect(mine.map((workflow) => workflow.avg_latency_ms)).toEqual([2000, 2000, 0]);
+    expect(mine.every((workflow) => workflow.error_rate_pct === 0)).toBe(true);
 
     const untracked = data.resources.filter((resource) => resource.id !== 'tokens');
     expect(untracked.map((resource) => resource.id)).toEqual(['gpu', 'cpu', 'mem', 'storage']);
     expect(untracked.every((resource) => resource.available === false)).toBe(true);
     expect(untracked.every((resource) => resource.pool === 0)).toBe(true);
-    for (const project of mine) {
-      const untracked_usage = project.resource_usage.filter(
+    for (const workflow of mine) {
+      const untracked_usage = workflow.resource_usage.filter(
         (usage) => usage.resource_id !== 'tokens'
       );
       expect(untracked_usage.every((usage) => usage.usage === 0)).toBe(true);
@@ -151,9 +151,9 @@ describe('GET /resources/overview', () => {
 
   test('two spans in one trace count as one request', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('OneTrace', DAY_MS);
+    const workflow = await insert_workflow('OneTrace', DAY_MS);
 
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'one-trace-a',
       trace_id: 'one-trace',
       ms_ago: 2 * HOUR_MS,
@@ -161,7 +161,7 @@ describe('GET /resources/overview', () => {
       input_tokens: 100,
       cost: 0.1,
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'one-trace-b',
       trace_id: 'one-trace',
       ms_ago: 2 * HOUR_MS,
@@ -172,19 +172,19 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    const project_row = fleet_row(res.data!, project);
+    const workflow_row = fleet_row(res.data!, workflow);
 
-    expect(project_row.requests).toBe(1);
-    expect(project_row.cost).toBe(0.4);
+    expect(workflow_row.requests).toBe(1);
+    expect(workflow_row.cost).toBe(0.4);
     // Latency stays a per-span average across both spans, not a per-trace wall clock.
-    expect(project_row.avg_latency_ms).toBe(2000);
+    expect(workflow_row.avg_latency_ms).toBe(2000);
   });
 
-  test('a span with no canyon.project.id is invisible', async () => {
+  test('a span with no canyon.workflow.id is invisible', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('Owned', DAY_MS);
+    const workflow = await insert_workflow('Owned', DAY_MS);
 
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'orphan-owned',
       trace_id: 'orphan-owned-trace',
       ms_ago: 2 * HOUR_MS,
@@ -203,18 +203,18 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    const project_row = fleet_row(res.data!, project);
+    const workflow_row = fleet_row(res.data!, workflow);
 
-    expect(project_row.requests).toBe(1);
-    expect(project_row.cost).toBe(0.1);
-    expect(tokens_usage(project_row)).toBe(0);
-    expect(project_row.avg_latency_ms).toBe(1000);
+    expect(workflow_row.requests).toBe(1);
+    expect(workflow_row.cost).toBe(0.1);
+    expect(tokens_usage(workflow_row)).toBe(0);
+    expect(workflow_row.avg_latency_ms).toBe(1000);
   });
 
-  test('one trace id in two projects stays isolated', async () => {
+  test('one trace id in two workflows stays isolated', async () => {
     const token = TEST_API_KEY;
-    const first = await insert_project('First', 2 * DAY_MS);
-    const second = await insert_project('Second', DAY_MS);
+    const first = await insert_workflow('First', 2 * DAY_MS);
+    const second = await insert_workflow('Second', DAY_MS);
 
     await insert_span(first, {
       span_id: 'shared-first',
@@ -244,12 +244,12 @@ describe('GET /resources/overview', () => {
     expect(tokens_usage(second_row)).toBe(0.3);
   });
 
-  test('each project appears with its own totals', async () => {
+  test('each workflow appears with its own totals', async () => {
     const token = TEST_API_KEY;
-    const my_project = await insert_project('Mine', DAY_MS);
-    const their_project = await insert_project('Theirs', DAY_MS);
+    const my_workflow = await insert_workflow('Mine', DAY_MS);
+    const their_workflow = await insert_workflow('Theirs', DAY_MS);
 
-    await insert_span(my_project, {
+    await insert_span(my_workflow, {
       span_id: 'mine-s',
       trace_id: 'mine-trace',
       ms_ago: 2 * HOUR_MS,
@@ -257,7 +257,7 @@ describe('GET /resources/overview', () => {
       input_tokens: 100,
       cost: 0.1,
     });
-    await insert_span(their_project, {
+    await insert_span(their_workflow, {
       span_id: 'theirs-s',
       trace_id: 'theirs-trace',
       ms_ago: 2 * HOUR_MS,
@@ -268,15 +268,15 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    expect(fleet_row(res.data!, my_project).cost).toBe(0.1);
-    expect(fleet_row(res.data!, their_project)).toMatchObject({ name: 'Theirs', cost: 5 });
+    expect(fleet_row(res.data!, my_workflow).cost).toBe(0.1);
+    expect(fleet_row(res.data!, their_workflow)).toMatchObject({ name: 'Theirs', cost: 5 });
   });
 
   test('a narrow window excludes older spans', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('Windowed', 40 * DAY_MS);
+    const workflow = await insert_workflow('Windowed', 40 * DAY_MS);
 
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'win-recent-s',
       trace_id: 'win-recent',
       ms_ago: 2 * HOUR_MS,
@@ -284,7 +284,7 @@ describe('GET /resources/overview', () => {
       input_tokens: 100_000,
       cost: 0.1,
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'win-older-s',
       trace_id: 'win-older',
       ms_ago: 3 * DAY_MS,
@@ -295,18 +295,18 @@ describe('GET /resources/overview', () => {
 
     const day = await overview(token, range(DAY_MS));
     expect(day.error).toBeNull();
-    expect(fleet_row(day.data!, project).requests).toBe(1);
-    expect(tokens_usage(fleet_row(day.data!, project))).toBe(0.1);
+    expect(fleet_row(day.data!, workflow).requests).toBe(1);
+    expect(tokens_usage(fleet_row(day.data!, workflow))).toBe(0.1);
 
     const week = await overview(token, range(7 * DAY_MS));
     expect(week.error).toBeNull();
-    expect(fleet_row(week.data!, project).requests).toBe(2);
-    expect(tokens_usage(fleet_row(week.data!, project))).toBe(0.3);
+    expect(fleet_row(week.data!, workflow).requests).toBe(2);
+    expect(tokens_usage(fleet_row(week.data!, workflow))).toBe(0.3);
 
     const before_today = await overview(token, range(7 * DAY_MS, DAY_MS));
     expect(before_today.error).toBeNull();
-    expect(fleet_row(before_today.data!, project).requests).toBe(1);
-    expect(tokens_usage(fleet_row(before_today.data!, project))).toBe(0.2);
+    expect(fleet_row(before_today.data!, workflow).requests).toBe(1);
+    expect(tokens_usage(fleet_row(before_today.data!, workflow))).toBe(0.2);
   });
 
   test('a range whose from is not before its to is rejected with 422', async () => {
@@ -319,9 +319,9 @@ describe('GET /resources/overview', () => {
 
   test('an ERROR status span drives the error rate', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('Erroring', DAY_MS);
+    const workflow = await insert_workflow('Erroring', DAY_MS);
 
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'err-ok-1',
       trace_id: 'err-trace',
       ms_ago: 2 * HOUR_MS,
@@ -329,7 +329,7 @@ describe('GET /resources/overview', () => {
       input_tokens: 10,
       cost: 0.01,
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'err-ok-2',
       trace_id: 'err-trace',
       ms_ago: 2 * HOUR_MS,
@@ -337,7 +337,7 @@ describe('GET /resources/overview', () => {
       input_tokens: 10,
       cost: 0.01,
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'err-failed',
       trace_id: 'err-trace',
       ms_ago: 2 * HOUR_MS,
@@ -349,14 +349,14 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    expect(fleet_row(res.data!, project).error_rate_pct).toBeCloseTo(100 / 3, 10);
+    expect(fleet_row(res.data!, workflow).error_rate_pct).toBeCloseTo(100 / 3, 10);
   });
 
   test('tokens sum input and output, and latency averages the span durations', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('Derived', DAY_MS);
+    const workflow = await insert_workflow('Derived', DAY_MS);
 
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'derive-both',
       trace_id: 'derive-a',
       ms_ago: 2 * HOUR_MS,
@@ -365,7 +365,7 @@ describe('GET /resources/overview', () => {
       output_tokens: 100_000,
       cost: 0.5,
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'derive-none',
       trace_id: 'derive-b',
       ms_ago: 2 * HOUR_MS,
@@ -375,16 +375,16 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    const project_row = fleet_row(res.data!, project);
+    const workflow_row = fleet_row(res.data!, workflow);
 
-    expect(tokens_usage(project_row)).toBe(0.5);
-    expect(project_row.avg_latency_ms).toBe(600);
-    expect(project_row.cost).toBe(1);
+    expect(tokens_usage(workflow_row)).toBe(0.5);
+    expect(workflow_row.avg_latency_ms).toBe(600);
+    expect(workflow_row.cost).toBe(1);
   });
 
   test('attributes of the wrong type and invalid counts are absent, not a failure', async () => {
     const token = TEST_API_KEY;
-    const project = await insert_project('Malformed', DAY_MS);
+    const workflow = await insert_workflow('Malformed', DAY_MS);
 
     const start = nanos_ago(2 * HOUR_MS);
     await db.insert(otelSpans).values({
@@ -394,13 +394,13 @@ describe('GET /resources/overview', () => {
       start_time_unix_nano: start,
       end_time_unix_nano: start + 500n * NANOS_PER_MS,
       attributes: {
-        [PROJECT_ID_ATTRIBUTE]: project,
+        [WORKFLOW_ID_ATTRIBUTE]: workflow,
         [GEN_AI.USAGE_COST]: 'free',
         [GEN_AI.INPUT_TOKENS]: { count: 5 },
         [GEN_AI.OUTPUT_TOKENS]: ['7'],
       },
     });
-    await insert_span(project, {
+    await insert_span(workflow, {
       span_id: 'malformed-counts',
       trace_id: 'malformed-counts-trace',
       ms_ago: 2 * HOUR_MS,
@@ -412,12 +412,12 @@ describe('GET /resources/overview', () => {
 
     const res = await overview(token, range(30 * DAY_MS));
     expect(res.error).toBeNull();
-    const project_row = fleet_row(res.data!, project);
+    const workflow_row = fleet_row(res.data!, workflow);
 
-    expect(project_row.requests).toBe(2);
-    expect(tokens_usage(project_row)).toBe(0);
-    expect(project_row.cost).toBe(0.25);
-    expect(project_row.avg_latency_ms).toBe(500);
-    expect(project_row.error_rate_pct).toBe(0);
+    expect(workflow_row.requests).toBe(2);
+    expect(tokens_usage(workflow_row)).toBe(0);
+    expect(workflow_row.cost).toBe(0.25);
+    expect(workflow_row.avg_latency_ms).toBe(500);
+    expect(workflow_row.error_rate_pct).toBe(0);
   });
 });

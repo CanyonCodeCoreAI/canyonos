@@ -8,7 +8,7 @@ import type { RedisClient } from 'bun';
 import { db } from '@api/db/client';
 import { badGateway, conflict } from '@core/errors';
 
-import { projectSpans, spanAgentName, spanCost } from '../metrics/metrics.sql';
+import { spanAgentName, spanCost, workflowGroupSpans, workflowSpans } from '../metrics/metrics.sql';
 import { SpendRuleSchema } from './governance.types';
 import type { AgentRules } from './governance.types';
 
@@ -125,16 +125,16 @@ export const governance_repo = {
     );
   },
 
-  /** The projects with a scaling policy stored, from `{projects: {<project>: <policy>}}`. */
-  async scaling_projects(redis: RedisClient): Promise<Set<string>> {
+  /** The workflows with a scaling policy stored, from `{workflows: {<workflow>: <policy>}}`. */
+  async scaling_workflows(redis: RedisClient): Promise<Set<string>> {
     const document = parse_json(await redis.get(SCALING_KEY));
-    const projects =
-      typeof document === 'object' && document !== null && 'projects' in document
-        ? document.projects
+    const workflows =
+      typeof document === 'object' && document !== null && 'workflows' in document
+        ? document.workflows
         : null;
-    if (typeof projects !== 'object' || projects === null) return new Set();
+    if (typeof workflows !== 'object' || workflows === null) return new Set();
     return new Set(
-      Object.entries(projects).flatMap(([project, policy]) => (policy == null ? [] : [project]))
+      Object.entries(workflows).flatMap(([workflow, policy]) => (policy == null ? [] : [workflow]))
     );
   },
 
@@ -143,9 +143,10 @@ export const governance_repo = {
     return new Set(await redis.smembers(UP_AGENTS_KEY));
   },
 
-  /** Each agent's span cost since its own start, from one query; agents with none read 0. */
+  /** Each agent's span cost since its own start, over the spans of the workflow's whole workflow
+   * group, whose controllers share governance:spend; from one query; agents with none read 0. */
   async spend_since(
-    project_id: string,
+    workflow_id: string,
     agents: readonly { readonly name: string; readonly since: string }[]
   ): Promise<Map<string, number>> {
     if (agents.length === 0) return new Map();
@@ -159,7 +160,7 @@ export const governance_repo = {
       sql`, `
     );
     const rows = (await db.execute(sql`
-      with scoped as (${projectSpans(project_id, range)}),
+      with scoped as (${workflowGroupSpans(workflow_id, range)}),
       governed (agent, since) as (values ${governed})
       select g.agent, coalesce(sum(${sql.raw(spanCost('s'))}), 0)::float8 as usd
       from governed g
@@ -171,15 +172,15 @@ export const governance_repo = {
     return new Map(rows.map(({ agent, usd }) => [agent, Number(usd)]));
   },
 
-  /** Distinct caller to callee agent pairs over the last week of the project's spans. */
-  async call_edges(project_id: string): Promise<{ source: string; target: string }[]> {
+  /** Distinct caller to callee agent pairs over the last week of the workflow's spans. */
+  async call_edges(workflow_id: string): Promise<{ source: string; target: string }[]> {
     const now = Date.now();
     const range = {
       from: new Date(now - EDGE_DAYS * DAY_MS).toISOString(),
       to: new Date(now + DAY_MS).toISOString(),
     };
     const rows = await db.execute(sql`
-      with scoped as (${projectSpans(project_id, range)})
+      with scoped as (${workflowSpans(workflow_id, range)})
       select distinct ${sql.raw(spanAgentName('parent'))} as source,
         ${sql.raw(spanAgentName('child'))} as target
       from scoped child

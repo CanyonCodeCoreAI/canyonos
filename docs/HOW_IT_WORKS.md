@@ -5,17 +5,17 @@ part works inside, see [Architecture](architecture/README.md).
 
 ## The big picture
 
-You run `canyonos deploy <project folder>... --folder <deployment folder>` from the folder
-that holds your projects. It starts the
+You run `canyonos deploy <workflow folder>... --workflow-group <workflow group folder>` from the folder
+that holds your workflows. It starts the
 Global Controller and the dashboard, and the Global Controller starts everything else:
 your agents, the endpoint that takes requests, and Redis to keep track of them. A
 request comes in through the endpoint, your agents call each other to answer it, and the
 dashboard records every step. On Kubernetes, the CanyonOS operator in the cluster starts
 these parts instead; see [Where it runs](#where-it-runs).
 
-The CLI and the dashboard call what one `canyonos deploy` starts a *deployment*: one
-Global Controller, Redis and endpoint for every project folder it names. Its ID is the
-`deployment_id` the first deploy writes into its `deployment.yaml`.
+The CLI and the dashboard call what one `canyonos deploy` starts a *workflow group*: one
+Global Controller, Redis and endpoint for every workflow folder it names. Its ID is the
+`workflow_group_id` the first deploy writes into its `workflow_group.yaml`.
 
 ![canyonos deploy starts the Global Controller, which builds and starts your workflow's agent replicas, sends telemetry to the Dashboard and keeps shared state in Redis. Your app sends a request to the Endpoint, which routes it to Agent A; Agent A calls Agent B, and each agent's LLM Gateway sends its model calls to the model providers.](images/how-it-works.svg)
 
@@ -24,8 +24,8 @@ Global Controller, Redis and endpoint for every project folder it names. Its ID 
 | Part                | What it does                                                                                                      | Read more                                      |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | CLI                 | The `canyonos` commands you run: deploy, test, stop, logs and the rest                                            | [CLI reference](guides/CLI.md)                 |
-| Workflow config     | Lists a project's agents, what each one installs and runs on, and the methods the endpoint serves                 | [Configure your workflow](guides/CONFIGURE.md) |
-| Deployment config   | `deployment.yaml`: where the deployment runs, and the settings all its projects share                             | [Configure your workflow](guides/CONFIGURE.md) |
+| Workflow config     | Lists a workflow's agents, what each one installs and runs on, and the methods the endpoint serves                 | [Configure your workflow](guides/CONFIGURE.md) |
+| Workflow group config   | `workflow_group.yaml`: where the workflow group runs, and the settings all its workflows share                             | [Configure your workflow](guides/CONFIGURE.md) |
 | Global Controller   | Builds an image per agent, starts the agents, and replaces any that fail                                          | [Controller](architecture/CONTROLLER.md)       |
 | Agents and replicas | Each agent runs in containers of its own; a replica is one copy, and autoscaling adds or removes copies with load | [Autoscaling](guides/SCALING.md)               |
 | Endpoint            | Your workflow's HTTP API, which answers requests that carry the machine's API key                                 | [Endpoint](architecture/ENDPOINT.md)           |

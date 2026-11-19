@@ -18,13 +18,13 @@ import { Skeleton } from '@repo/ui/shadcn/skeleton';
 import { TooltipProvider } from '@repo/ui/shadcn/tooltip';
 import { EmptyState } from '@/modules/core/components/EmptyState';
 import { QueryError } from '@/modules/core/components/QueryError';
-import { DASHBOARD_POLL_INTERVAL_MS } from '@/modules/projects/projects.query-cache';
 import { SCALING_SCOPE, ScalingPolicyCard } from '@/modules/scaling/scaling-policy-card';
 import {
   scalingAgentsQueryOptions,
   scalingErrorMessage,
   scalingQueryOptions,
 } from '@/modules/scaling/scaling.queries';
+import { DASHBOARD_POLL_INTERVAL_MS } from '@/modules/workflows/workflows.query-cache';
 
 type ReadState = 'loading' | 'error' | 'ready';
 
@@ -35,15 +35,15 @@ function readState(query: { isError: boolean; isFetching: boolean; data: unknown
   return 'ready';
 }
 
-export function ScalingScreen({ project_id }: { readonly project_id: string }) {
-  const query = useQuery(scalingQueryOptions(project_id));
+export function ScalingScreen({ workflow_id }: { readonly workflow_id: string }) {
+  const query = useQuery(scalingQueryOptions(workflow_id));
 
   return (
     <main
       className="scroll-area flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto p-7"
       data-testid="scaling-screen"
       data-state={readState(query)}
-      data-project-id={project_id}
+      data-workflow-id={workflow_id}
     >
       <header className="flex flex-col gap-1.5">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
@@ -53,16 +53,16 @@ export function ScalingScreen({ project_id }: { readonly project_id: string }) {
           {SCALING_SCOPE}
         </p>
       </header>
-      <ScalingBody project_id={project_id} query={query} />
+      <ScalingBody workflow_id={workflow_id} query={query} />
     </main>
   );
 }
 
 function ScalingBody({
-  project_id,
+  workflow_id,
   query,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly query: UseQueryResult<ScalingResponse, Error>;
 }) {
   if (query.isError && !query.isFetching) {
@@ -84,8 +84,8 @@ function ScalingBody({
       </div>
     );
   }
-  const projects = Object.entries(query.data.projects);
-  if (projects.length === 0) {
+  const workflows = Object.entries(query.data.workflows);
+  if (workflows.length === 0) {
     return (
       <EmptyState size="section" test_id="scaling-empty">
         The controller has not published any agents yet.
@@ -95,23 +95,22 @@ function ScalingBody({
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex max-w-3xl flex-col gap-10">
-        {projects.map(([project, policy]) => (
+        {workflows.map(([workflow, policy]) => (
           <section
-            key={project}
+            key={workflow}
             className="flex flex-col gap-7"
-            aria-label={project}
-            data-testid="scaling-project"
-            data-project={project}
+            aria-label={workflow}
+            data-testid="scaling-workflow"
+            data-workflow={workflow}
           >
-            <h2 className="text-foreground font-mono text-base font-semibold">{project}</h2>
+            <h2 className="text-foreground font-mono text-base font-semibold">{workflow}</h2>
             {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
             <ScalingPolicyCard
               key={JSON.stringify(policy)}
-              project_id={project_id}
-              project={project}
+              workflow_id={workflow_id}
               policy={policy}
             />
-            <ScalingAgents project_id={project_id} project={project} policy={policy} />
+            <ScalingAgents workflow_id={workflow_id} workflow={workflow} policy={policy} />
           </section>
         ))}
       </div>
@@ -127,20 +126,20 @@ function agentsState(state: ReadState, agents: readonly ScalingAgent[] | undefin
 }
 
 /**
- * What each agent of `project`, named `<project>.<agent>`, is running right now, polled, so a
+ * What each agent of `workflow`, named `<workflow>.<agent>`, is running right now, polled, so a
  * saved policy can be seen taking effect.
  */
 function ScalingAgents({
-  project_id,
-  project,
+  workflow_id,
+  workflow,
   policy,
 }: {
-  readonly project_id: string;
-  readonly project: string;
+  readonly workflow_id: string;
+  readonly workflow: string;
   readonly policy: ScalingStatus;
 }) {
-  const query = useQuery(scalingAgentsQueryOptions(project_id));
-  const agents = query.data?.agents.filter((agent) => agent.name.startsWith(`${project}.`));
+  const query = useQuery(scalingAgentsQueryOptions(workflow_id));
+  const agents = query.data?.agents.filter((agent) => agent.name.startsWith(`${workflow}.`));
   const state = readState(query);
   const metric = policy.status === 'applied' ? policy.policy.metric : null;
 

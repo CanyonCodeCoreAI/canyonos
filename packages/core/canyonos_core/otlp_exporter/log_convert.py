@@ -57,10 +57,12 @@ def log_row_to_log_records(row):
     trace_id = int(session_id, 16) if session_id else None
     span_id = int(future_id, 16) if future_id else None
 
-    # Logs outside any session have no trace_id, so project_id on the Resource keeps them attributable.
+    # Logs outside any session have no trace_id, so the ids on the Resource keep them attributable.
     resource_attributes = {"service.name": row.get("agent_id") or "unknown_agent"}
-    if row.get("project_id"):
-        resource_attributes["canyonos.project.id"] = row["project_id"]
+    if row.get("workflow_group_id"):
+        resource_attributes["canyonos.workflow_group.id"] = row["workflow_group_id"]
+    if row.get("workflow_id"):
+        resource_attributes["canyonos.workflow.id"] = row["workflow_id"]
     resource = Resource(resource_attributes)
 
     # CanyonOS-specific identity fields are namespaced as canyonos.* per the OTel

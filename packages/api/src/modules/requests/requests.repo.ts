@@ -9,9 +9,8 @@ import type { TimeRange } from '@core/time-range';
 
 import { OTEL_DISTRIBUTION_VALUES } from '../metrics/metrics.distribution';
 import {
-  allProjectSpans,
+  allWorkflowSpans,
   isModelSpan,
-  projectRequestSpans,
   spanCost,
   spanDurationMs,
   spanErrorCount,
@@ -27,6 +26,7 @@ import {
   spanServerCost,
   spanTokenCost,
   spanTotalTokens,
+  workflowRequestSpans,
 } from '../metrics/metrics.sql';
 import type {
   RequestList,
@@ -167,12 +167,12 @@ function payload(value: string | null): unknown {
 
 export const requests_repo = {
   /** One page and the `total` of the same filtered set, read off one scan of the range. */
-  async page_by_project(
-    project_id: string,
+  async page_by_workflow(
+    workflow_id: string,
     page: RequestPage
   ): Promise<Pick<RequestList, 'total' | 'items'>> {
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, page)}),
+      with scoped as (${workflowRequestSpans(workflow_id, page)}),
       ${sql.raw(REQUESTS_CTE)},
       matched as (
         select q.* from requests q
@@ -196,24 +196,24 @@ export const requests_repo = {
   },
 
   /** The request reads whole wherever it started; only its medians come from `range`. */
-  async trace_by_project(
-    project_id: string,
+  async trace_by_workflow(
+    workflow_id: string,
     session_id: string,
     range: TimeRange
   ): Promise<RequestTrace | null> {
     const rows = await db.execute(sql`
       with scoped as (
-        select s.* from (${allProjectSpans(project_id)}) s where s.trace_id = ${session_id}
+        select s.* from (${allWorkflowSpans(workflow_id)}) s where s.trace_id = ${session_id}
       ),
       ${sql.raw(REQUESTS_CTE)},
       -- Billed requests only: one that never priced itself contributes a $0 that drags the
       -- reference below every request a reader could compare against.
-      project_requests as (
+      workflow_requests as (
         select
           coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as token_count,
           sum(${sql.raw(spanCost('s'))}) as total_cost,
           coalesce(sum(${sql.raw(spanServerCost('s'))}), 0) as harness_cost
-        from (${projectRequestSpans(project_id, range)}) s
+        from (${workflowRequestSpans(workflow_id, range)}) s
         group by s.trace_id
         having sum(${sql.raw(spanCost('s'))}) > 0
       ),
@@ -223,7 +223,7 @@ export const requests_repo = {
           percentile_cont(0.5) within group (order by m.total_cost)::numeric(20, 10) as median_cost,
           percentile_cont(0.5) within group (order by m.harness_cost)
             ::numeric(20, 10) as median_harness_cost
-        from project_requests m
+        from workflow_requests m
       ),
       block_rows as (
         select
@@ -305,6 +305,6 @@ export const requests_repo = {
     )[0];
     if (!row) return null;
 
-    return { ...row, project_id, input: payload(row.input), output: payload(row.output) };
+    return { ...row, workflow_id, input: payload(row.input), output: payload(row.output) };
   },
 };

@@ -24,7 +24,7 @@ import {
   SIGNAL_LABELS,
   UNIT_AXIS_LABELS,
 } from '@/modules/monitoring/monitoring.queries';
-import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import { WorkflowWindowControl } from '@/modules/workflows/components/workflow-window-control';
 import type { RangeSelection } from '@/modules/core/time-range';
 import type { TraceView } from '@/modules/monitoring/monitoring.search';
 
@@ -38,7 +38,7 @@ const VIEW_OPTIONS = [
   { value: 'llm_calls', label: 'LLM calls' },
 ] as const satisfies readonly TimeRangeOption<TraceView>[];
 
-const route = getRouteApi('/_authenticated/projects/$project_id/monitoring');
+const route = getRouteApi('/_authenticated/workflows/$workflow_id/monitoring');
 
 type ShownSignal = keyof typeof SIGNAL_COLORS;
 
@@ -47,14 +47,14 @@ type ShownSeries = MonitoringSeries & { signal: ShownSignal };
 const isShown = (series: MonitoringSeries): series is ShownSeries => series.signal in SIGNAL_COLORS;
 
 interface MonitoringScreenProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
   readonly view: TraceView;
 }
 
-export function MonitoringScreen({ project_id, range, view }: MonitoringScreenProps) {
+export function MonitoringScreen({ workflow_id, range, view }: MonitoringScreenProps) {
   const query = useQuery(
-    monitoringSeriesQueryOptions(project_id, { range, time_zone: LOCAL_TIME_ZONE })
+    monitoringSeriesQueryOptions(workflow_id, { range, time_zone: LOCAL_TIME_ZONE })
   );
   const navigate = route.useNavigate();
 
@@ -64,7 +64,7 @@ export function MonitoringScreen({ project_id, range, view }: MonitoringScreenPr
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Traces
         </h1>
-        <ProjectWindowControl />
+        <WorkflowWindowControl />
       </header>
 
       <SignalGrid query={query} />
@@ -80,7 +80,7 @@ export function MonitoringScreen({ project_id, range, view }: MonitoringScreenPr
           data-testid="trace-view-toggle"
           className="self-start"
         />
-        <TraceViewPanel project_id={project_id} range={range} view={view} />
+        <TraceViewPanel workflow_id={workflow_id} range={range} view={view} />
       </section>
     </main>
   );
@@ -120,16 +120,16 @@ function SignalGrid({ query }: { readonly query: UseQueryResult<MonitoringSeries
 }
 
 function TraceViewPanel({
-  project_id,
+  workflow_id,
   range,
   view,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
   readonly view: TraceView;
 }) {
-  if (view === 'llm_calls') return <LlmCallList project_id={project_id} range={range} />;
-  return <TraceList project_id={project_id} range={range} />;
+  if (view === 'llm_calls') return <LlmCallList workflow_id={workflow_id} range={range} />;
+  return <TraceList workflow_id={workflow_id} range={range} />;
 }
 
 function SignalQuadrant({

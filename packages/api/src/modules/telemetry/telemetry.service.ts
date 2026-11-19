@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { PROJECT_ID_ATTRIBUTE, STATUS_CODE } from '@api/modules/metrics/metrics.contract';
+import { STATUS_CODE } from '@api/modules/metrics/metrics.contract';
 import { badRequest } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
@@ -35,8 +35,6 @@ const SPAN_KIND_NAMES = [
 ] as const;
 const STATUS_CODE_NAMES = [STATUS_CODE.UNSET, STATUS_CODE.OK, STATUS_CODE.ERROR] as const;
 
-// Ventis names the project attribute `project_id`; every dashboard query reads `canyon.project.id`.
-const PRODUCER_PROJECT_ID_ATTRIBUTE = 'project_id';
 const INPUT_ATTRIBUTE = 'gen_ai.prompt';
 const OUTPUT_ATTRIBUTE = 'gen_ai.completion';
 
@@ -99,9 +97,6 @@ export const map_span = (span: OtlpSpan): SpanRow | null => {
   if (!span_id || !trace_id || !end_time || end_time === '0') return null;
 
   const attributes = flatten_attributes(span.attributes);
-  const project_id = attributes[PROJECT_ID_ATTRIBUTE] ?? attributes[PRODUCER_PROJECT_ID_ATTRIBUTE];
-  // A span carrying neither key is still stored; it simply belongs to no project.
-  if (project_id !== undefined) attributes[PROJECT_ID_ATTRIBUTE] = project_id;
 
   const parent_span_id = hex(span.parentSpanId);
   const status = span.status ?? {};

@@ -2,18 +2,18 @@
 
 We have 4 example workflows listed below. All of these workflows would work immediately with canyonos, following our design philosophy.
 
-Each example is a deployment folder: its `deployment.yaml`, and the project inside it, a folder of agent code named after the example. Deploy one from its folder, for example:
+Each example is a workflow group folder: its `workflow_group.yaml`, and the workflow inside it, a folder of agent code named after the example. Deploy one from its folder, for example:
 
 ```bash
 cd examples/portfolio
 canyonos deploy portfolio
 ```
 
-The project's name is its route prefix: `POST /portfolio/Workflow/main`. From anywhere else, name both folders: `canyonos deploy examples/portfolio/portfolio --folder examples/portfolio`.
+Each workflow answers at `POST /<workflow_id>`, the ID `canyonos deploy` prints and keeps in `workflow_group.yaml`. From anywhere else, name both folders: `canyonos deploy examples/portfolio/portfolio --workflow-group examples/portfolio`.
 
 Helloworld: No LLM involved, merely returns Hello World. The first step in building a workflow! Runs on this machine.
 
-Helloworld-ec2-assign: Helloworld set up to run each replica on an EC2 machine of its own (`provider: ec2-assign`). See [EC2 deployment](../docs/guides/EC2.md#quick-start).
+Helloworld-ec2-assign: Helloworld set up to run each replica on an EC2 machine of its own (`provider: ec2-assign`). See [EC2 workflow group](../docs/guides/EC2.md#quick-start).
 
 Portfolio: Manages your portfolio for you. You can state some holdings in plain English, and it will fetch each stock's price history, compute its returns and risk, roll that up into a risk profile for the whole portfolio, and write you a short briefing on it. 
 

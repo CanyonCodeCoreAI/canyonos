@@ -5,8 +5,8 @@
 
 `main` runs a local controller with no agent, which routes each call to a replica
 of the served agent, and gunicorn workers built by `worker_app`, which queue those
-calls and report their results. Every route needs a `query` token for this project,
-signed by a key the Global Controller published to Redis.
+calls and report their results. Every route needs the machine's API key, when the
+deploy set one.
 """
 
 import json
@@ -35,6 +35,7 @@ from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import (
     ENDPOINT_CPUS,
     ENDPOINT_PORT,
+    agent_path,
     route_path,
 )
 from canyonos_core.schema import qualified_name
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # How many requests each worker serves at once; the rest wait for a free thread.
 WORKER_THREADS = 16
-# The local dashboard's Postgres, by its container name on the project's network.
+# The local dashboard's Postgres, by its container name on the workflow group's network.
 DASHBOARD_DATABASE_URL = (
     "postgresql://canyonos:canyonos@canyonos-dashboard-db:5432/canyonos"
 )
@@ -105,13 +106,17 @@ def _record_from_dashboard(request_id):
 
 def create_app(routes, redis_client):
     """Build the Flask app that queues calls to each route's agent method at
-    `POST /<project>/<agent>/<method>`, refusing a body that lacks one of the method's
+    `POST /<workflow_id>` and `POST /<workflow>/<agent>/<method>`, refusing a body that lacks one of the method's
     declared `arguments`, and reports their results at `GET /status/<request_id>`;
     `POST /answer/<request_id>` answers that request's oldest waiting question. Every
     route first needs the machine's API key, when the deploy set one."""
     app = Flask("canyonos-endpoint")
-    served = {route_path(route): route.get("arguments") or [] for route in routes}
-    paths = ", ".join(f"POST {path}" for path in served)
+    served = {
+        path: route
+        for route in routes
+        for path in (route_path(route), agent_path(route))
+    }
+    paths = ", ".join(f"POST {route_path(route)}" for route in routes)
 
     @app.before_request
     def require_the_api_key():
@@ -144,10 +149,13 @@ def create_app(routes, redis_client):
             {"error": f"Method not allowed; this endpoint serves {paths}"}
         ), 405
 
-    @app.route("/<project>/<agent>/<method>", methods=["POST"])
+    @app.route("/<workflow_id>", methods=["POST"])
+    @app.route("/<workflow>/<agent>/<method>", methods=["POST"])
     @app.route("/answer/<request_id>", methods=["POST"])
-    def handle_request(project=None, agent=None, method=None, request_id=None):
-        path = f"/{project}/{agent}/{method}"
+    def handle_request(
+        workflow_id=None, workflow=None, agent=None, method=None, request_id=None
+    ):
+        path = f"/{workflow_id}" if workflow_id else f"/{workflow}/{agent}/{method}"
         if not request_id and path not in served:
             return not_found(None)
         # Parsed with stdlib json because Flask replaces decode errors with a
@@ -189,7 +197,8 @@ def create_app(routes, redis_client):
         context = kwargs.pop("_context", {})
         if not isinstance(context, dict):
             return jsonify({"error": "_context must be a JSON object"}), 400
-        arguments = served[path]
+        route = served[path]
+        arguments = route.get("arguments") or []
         missing = [name for name in arguments if name not in kwargs]
         if missing:
             return jsonify(
@@ -203,7 +212,8 @@ def create_app(routes, redis_client):
             redis_client.set(f"request:{request_id}:context", json.dumps(context))
 
         canyonos_context.set_request_id(request_id)
-        agent = qualified_name(project, agent)
+        agent = qualified_name(route["workflow"], route["agent"])
+        method = route["method"]
         future = Future(parent=None, agent_name=agent, method=method, args=kwargs)
         redis_client.set(f"request:{request_id}:future", future.id)
         if future.refusal:

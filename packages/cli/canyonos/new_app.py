@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos new-app`: scaffold a starter project in the current
+Logic for `canyonos new-app`: scaffold a starter workflow in the current
 directory. Runs locally, no container involved.
 """
 
+# nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 import importlib.resources
 import os
 
@@ -20,7 +21,7 @@ PYTHON_TEMPLATE_SUFFIX = ".tmpl"
 
 
 def template_files():
-    """Yield (relative target path, content) for every file of the starter project."""
+    """Yield (relative target path, content) for every file of the starter workflow."""
     root = importlib.resources.files("canyonos").joinpath(TEMPLATE_DIR)
     for directory, _, filenames in os.walk(str(root)):
         for filename in filenames:
@@ -32,7 +33,7 @@ def template_files():
 
 
 def deployment_template():
-    """Return the `deployment.yaml` `canyonos deploy` writes when a deployment has none."""
+    """Return the `workflow_group.yaml` `canyonos deploy` writes when a workflow group has none."""
     return (
         importlib.resources.files("canyonos")
         .joinpath(DEPLOYMENT_CONFIG)
@@ -41,7 +42,7 @@ def deployment_template():
 
 
 def run_new_app():
-    """Run `canyonos new-app`: write a one-agent starter project into the current
+    """Run `canyonos new-app`: write a one-agent starter workflow into the current
     directory, which must be empty. Returns False when nothing was written."""
     if os.listdir("."):
         ui.fail("Directory is not empty. Run `canyonos new-app` in an empty directory.")
@@ -53,8 +54,8 @@ def run_new_app():
             f.write(content)
 
     name = os.path.basename(os.getcwd())
-    ui.ok("Created new CanyonOS project.")
+    ui.ok("Created new CanyonOS workflow.")
     ui.hint(
-        f"Deploy it with `cd .. && canyonos deploy {name} --folder {name}-deployment`."
+        f"Deploy it with `cd .. && canyonos deploy {name} --workflow-group {name}-group`."
     )
     return True

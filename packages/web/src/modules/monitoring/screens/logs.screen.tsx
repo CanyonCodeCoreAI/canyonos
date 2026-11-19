@@ -5,15 +5,15 @@ import { useState } from 'react';
 
 import { LogList } from '@/modules/monitoring/components/log-list';
 import { ALL_SOURCES, LogSourceFilters } from '@/modules/monitoring/components/log-source-filters';
-import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import { WorkflowWindowControl } from '@/modules/workflows/components/workflow-window-control';
 import type { RangeSelection } from '@/modules/core/time-range';
 
 interface LogsScreenProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
 }
 
-export function LogsScreen({ project_id, range }: LogsScreenProps) {
+export function LogsScreen({ workflow_id, range }: LogsScreenProps) {
   const [agent, setAgent] = useState(ALL_SOURCES);
   const [replica, setReplica] = useState(ALL_SOURCES);
 
@@ -25,7 +25,7 @@ export function LogsScreen({ project_id, range }: LogsScreenProps) {
             Logs
           </h1>
           <LogSourceFilters
-            project_id={project_id}
+            workflow_id={workflow_id}
             range={range}
             agent={agent}
             replica={replica}
@@ -33,11 +33,11 @@ export function LogsScreen({ project_id, range }: LogsScreenProps) {
             onReplicaChange={setReplica}
           />
         </div>
-        <ProjectWindowControl />
+        <WorkflowWindowControl />
       </header>
 
       <LogList
-        project_id={project_id}
+        workflow_id={workflow_id}
         range={range}
         agent={agent === ALL_SOURCES ? undefined : agent}
         replica={replica === ALL_SOURCES ? undefined : replica}

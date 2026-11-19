@@ -117,16 +117,16 @@ def main():
 
 
 def _enter_deployment_folder(args):
-    """Deploy from the deployment's folder `args.folder`, made when it is missing, as
-    if the command were typed there; the project folders it names stay relative to
-    where it was typed."""
+    """Deploy from the workflow group's folder `args.folder` (--workflow-group), made when
+    it is missing, as if the command were typed there; the workflow folders it names stay
+    relative to where it was typed."""
     args.folders = [os.path.abspath(folder) for folder in args.folders]
     os.makedirs(args.folder, exist_ok=True)
     os.chdir(args.folder)
 
 
 def _uses_the_selected_deployment(args):
-    """True when `args` is a command that acts on one deployment of this machine and
+    """True when `args` is a command that acts on one workflow group of this machine and
     names none: `stop`, `clean`, `status`, `logs`, `test`, `sync` and `curl`."""
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
@@ -134,8 +134,8 @@ def _uses_the_selected_deployment(args):
 
 
 def _enter_selected_deployment(args):
-    """Act on the deployment `canyonos select-context` picked when the command names
-    none and runs outside a deployment folder: `stop` and `clean` name it, the others
+    """Act on the workflow group `canyonos select-context` picked when the command names
+    none and runs outside a workflow group folder: `stop` and `clean` name it, the others
     run from its folder, with the paths they were given kept relative to where they
     were typed."""
     if not _uses_the_selected_deployment(args):
@@ -143,7 +143,7 @@ def _enter_selected_deployment(args):
     selected = context.selected_deployment()
     if selected is None:
         return
-    ui.note(f"Acting on {selected.name}, the selected deployment")
+    ui.note(f"Acting on {selected.name}, the selected workflow group")
     if args.command in ("stop", "clean"):
         args.deployments = [selected.name]
         return
@@ -228,17 +228,19 @@ def _run_command(settings_at_start):
         lambda args: sys.exit(0 if deploy_to_target(args) else 1),
     )
     deploy.add_argument(
-        "--folder",
+        "--workflow-group",
+        dest="folder",
         metavar="PATH",
-        help="The deployment's folder, which holds its deployment.yaml, made when "
-        "missing (default: the current folder)",
+        help="The workflow group's folder, which holds its workflow_group.yaml, made "
+        "when missing (default: the current folder)",
     )
     deploy.add_argument(
         "folders",
         nargs="+",
         metavar="folder",
-        help="A project folder to deploy, with its config/workflow_config.yaml; the deployment "
-        "is named after its own folder (--folder) and set by its deployment.yaml",
+        help="A workflow's folder, with its config/workflow_config.yaml; the workflow "
+        "group is named after its own folder (--workflow-group) and set by its "
+        "workflow_group.yaml",
     )
     deploy.add_argument(
         "--serve",
@@ -304,13 +306,13 @@ def _run_command(settings_at_start):
         return run_maybe_json
 
     def this_machine_or_cluster(local, cluster):
-        """Run `local(args)`, or `cluster()` on Kubernetes: the deployment of this
-        folder only. --all and deployment names mean deployments on this machine, so
-        they always run `local`, whatever this folder's target."""
+        """Run `local(args)`, or `cluster()` on Kubernetes: the workflow group of this
+        folder only. --all and workflow group names mean workflow groups on this machine,
+        so they always run `local`, whatever this folder's target."""
 
         def run(args):
             if args.all and args.deployments:
-                ui.fail("Name deployments or pass --all, not both")
+                ui.fail("Name workflow groups or pass --all, not both")
                 return False
             if args.all or args.deployments:
                 return local(args)
@@ -331,15 +333,15 @@ def _run_command(settings_at_start):
         "deployments",
         nargs="*",
         metavar="DEPLOYMENT",
-        help="The name, folder name or ID (or its start) of a deployment to clean. "
-        "Without one, cleans the only deployment or this folder's, or asks "
+        help="The name, folder name or ID (or its start) of a workflow group to clean. "
+        "Without one, cleans the only workflow group or this folder's, or asks "
         "which",
     )
     clean.add_argument(
         "--all",
         action="store_true",
         help="Remove everything CanyonOS put on this machine before uninstalling the "
-        "CLI: every deployment, the dashboard and its data, CanyonOS's images and "
+        "CLI: every workflow group, the dashboard and its data, CanyonOS's images and "
         "~/.canyonos",
     )
     clean.add_argument(
@@ -356,14 +358,14 @@ def _run_command(settings_at_start):
         "deployments",
         nargs="*",
         metavar="DEPLOYMENT",
-        help="The name, folder name or ID (or its start) of a deployment to stop. "
-        "Without one, stops the only deployment, or asks which",
+        help="The name, folder name or ID (or its start) of a workflow group to stop. "
+        "Without one, stops the only workflow group, or asks which",
     )
     stop.add_argument(
         "--all",
         action="store_true",
-        help="Stop every CanyonOS deployment on this machine, from any folder, "
-        "including deployments whose folder is gone",
+        help="Stop every CanyonOS workflow group on this machine, from any folder, "
+        "including workflow groups whose folder is gone",
     )
     sync = add(
         "sync", lambda args: sys.exit(0 if run_sync_and_reload(args.folders) else 1)
@@ -372,7 +374,7 @@ def _run_command(settings_at_start):
         "folders",
         nargs="+",
         metavar="folder",
-        help="A project folder of the running deployment to copy in again",
+        help="A workflow folder of the running workflow group to copy in again",
     )
 
     logs = add(
@@ -440,7 +442,7 @@ def _run_command(settings_at_start):
     convert.add_argument(
         "--agent",
         choices=sorted(CONVERT_AGENTS),
-        help="Coding agent that converts the project, instead of asking (default: ask)",
+        help="Coding agent that converts the workflow, instead of asking (default: ask)",
     )
     convert.add_argument(
         "--scope",
@@ -500,13 +502,13 @@ def _run_command(settings_at_start):
         "deployment",
         nargs="?",
         metavar="DEPLOYMENT",
-        help="The name, folder name or ID (or its start) of the deployment to act on "
-        "from folders that are no deployment's, as `canyonos list` shows it",
+        help="The name, folder name or ID (or its start) of the workflow group to act on "
+        "from folders that are no workflow group's, as `canyonos list` shows it",
     )
     select_context.add_argument(
         "--clear",
         action="store_true",
-        help="Forget the selected deployment",
+        help="Forget the selected workflow group",
     )
     add("dashboard", lambda args: sys.exit(0 if run_open_dashboard() else 1))
     add("chat", lambda args: sys.exit(run_chat()))
@@ -524,9 +526,9 @@ def _run_command(settings_at_start):
     )
     curl.add_argument(
         "--route",
-        metavar="PROJECT/AGENT/METHOD",
-        help="The route to call when the deployment serves several: its URL, "
-        "<project>/<agent>/<method>, <agent>/<method> or <method> (default: the only "
+        metavar="WORKFLOW/AGENT/METHOD",
+        help="The route to call when the workflow group serves several: its URL, "
+        "<workflow>/<agent>/<method>, <agent>/<method> or <method> (default: the only "
         "route, else picked from a menu in a terminal)",
     )
     curl.add_argument(
@@ -550,7 +552,7 @@ def _run_command(settings_at_start):
     test.add_argument(
         "prompt",
         nargs="?",
-        help="Prompt sent to every workflow (default: each project's "
+        help="Prompt sent to every workflow (default: each workflow's "
         f"config/test_query.txt, else {DEFAULT_QUERY!r})",
     )
     test.add_argument(
@@ -576,7 +578,7 @@ def _run_command(settings_at_start):
     validate.add_argument(
         "root",
         nargs="?",
-        help="The folder to check (default: the project root)",
+        help="The folder to check (default: the workflow root)",
     )
     validate.add_argument(
         "--json",

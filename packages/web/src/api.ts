@@ -58,9 +58,9 @@ type EdenResponse<T> = Promise<{ data: T; error: null } | { data: null; error: a
  * @example
  * const data = await apiCall<MyType>(() => forgeApi.healthz.get());
  *
- * const project = await apiCall<Project>(
- *   () => forgeAuthApi.projects[project_id]!.get(),
- *   projectSchema
+ * const workflow = await apiCall<Workflow>(
+ *   () => forgeAuthApi.workflows[workflow_id]!.get(),
+ *   workflowSchema
  * );
  */
 export async function apiCall<T>(

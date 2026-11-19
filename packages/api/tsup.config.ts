@@ -10,7 +10,7 @@ export default defineConfig((options) => ({
     core: 'src/sdk/core.ts',
     auth: 'src/sdk/auth.ts',
     resources: 'src/sdk/resources.ts',
-    projects: 'src/sdk/projects.ts',
+    workflows: 'src/sdk/workflows.ts',
     requests: 'src/sdk/requests.ts',
     metrics: 'src/sdk/metrics.ts',
     monitoring: 'src/sdk/monitoring.ts',

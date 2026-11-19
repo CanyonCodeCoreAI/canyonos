@@ -3,7 +3,7 @@
 
 import { and, eq } from 'drizzle-orm';
 
-import { projects, systemPrompts } from '@api/db/schema';
+import { systemPrompts, workflows } from '@api/db/schema';
 import type { db } from '@api/db/client';
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -14,17 +14,17 @@ export type NewSystemPromptRow = typeof systemPrompts.$inferInsert;
 
 export async function list_system_prompts(
   reader: Reader,
-  project_id: string
+  workflow_id: string
 ): Promise<SystemPromptRow[]> {
-  return reader.select().from(systemPrompts).where(eq(systemPrompts.project_id, project_id));
+  return reader.select().from(systemPrompts).where(eq(systemPrompts.workflow_id, workflow_id));
 }
 
-/** Locks the project row for the transaction, so prompt writes to one project run one at a time. */
-export async function lock_project(tx: Tx, project_id: string): Promise<void> {
+/** Locks the workflow row for the transaction, so prompt writes to one workflow run one at a time. */
+export async function lock_workflow(tx: Tx, workflow_id: string): Promise<void> {
   await tx
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, project_id))
+    .select({ id: workflows.id })
+    .from(workflows)
+    .where(eq(workflows.id, workflow_id))
     .for('update');
 }
 
@@ -37,11 +37,11 @@ export async function insert_system_prompts(tx: Tx, rows: NewSystemPromptRow[]):
  * statements, so a unique "one live per prompt" index could never see both set at once. */
 export async function set_live_system_prompt(
   tx: Tx,
-  project_id: string,
+  workflow_id: string,
   name: string,
   version: string
 ): Promise<void> {
-  const prompt = and(eq(systemPrompts.project_id, project_id), eq(systemPrompts.name, name));
+  const prompt = and(eq(systemPrompts.workflow_id, workflow_id), eq(systemPrompts.name, name));
   await tx.update(systemPrompts).set({ live: false }).where(prompt);
   await tx
     .update(systemPrompts)

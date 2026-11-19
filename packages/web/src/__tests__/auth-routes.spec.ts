@@ -10,24 +10,24 @@ test('@smoke a stored API key grants access to the protected route', async ({ pa
   await authenticate(page);
   await page.goto('/');
 
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
-  await expectPath(page, '/projects');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
 });
 
-test('@smoke a visit to /login with a stored API key lands on the projects overview', async ({
+test('@smoke a visit to /login with a stored API key lands on the workflows overview', async ({
   page,
 }) => {
   await authenticate(page);
   await page.goto('/login');
 
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
-  await expectPath(page, '/projects');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
 });
 
 test('the old sign-up page sends a signed-out visitor to the sign-in screen', async ({ page }) => {
-  await page.goto('/register?redirect=/projects');
+  await page.goto('/register?redirect=/workflows');
 
   await expectPath(page, '/login');
-  expect(new URL(page.url()).searchParams.get('redirect')).toBe('/projects');
+  expect(new URL(page.url()).searchParams.get('redirect')).toBe('/workflows');
   await expect(page.getByTestId('auth-api-key')).toBeVisible();
 });

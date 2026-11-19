@@ -1,14 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos stop` removes the deployment's containers, its workspace volume and its
+"""`canyonos stop` removes the workflow group's containers, its workspace volume and its
 records under `~/.canyonos`; a second stop is a no-op, and `canyonos status` and
 `canyonos logs` then exit 3 for nothing running. `canyonos clean` removes the agents' images and keeps a
-port, the project's `.canyon`: it cleans the deployment, not its projects. This runs last; the container logs are collected first, because
+port, the workflow's `.canyon`: it cleans the workflow group, not its workflows. This runs last; the container logs are collected first, because
 stop removes them. What stop does to the shared dashboard is
 scenarios/test_shared_dashboard.py's.
 
-Each run stages the project under a new deployment id, so its images get new names;
+Each run stages the workflow under a new workflow group id, so its images get new names;
 the clean here is the run's final teardown and keeps them from piling up."""
 
 from pathlib import Path
@@ -20,9 +20,9 @@ from ..harness import (
     docker,
     docker_name,
     manifest,
-    project_containers,
+    workflow_group_containers,
     qualified,
-    stop_project,
+    stop_workflow_group,
 )
 
 
@@ -30,7 +30,9 @@ def _volume_exists(recorder, volume):
     return docker(recorder, ["volume", "inspect", volume], check=False).code == 0
 
 
-def test_stop_removes_the_project_and_its_records(recorder, deployed, artifacts_dir):
+def test_stop_removes_the_workflow_group_and_its_records(
+    recorder, deployed, artifacts_dir
+):
     collect_container_logs(recorder, artifacts_dir / "containers")
     state, volume = cli_value(
         recorder,
@@ -42,16 +44,16 @@ def test_stop_removes_the_project_and_its_records(recorder, deployed, artifacts_
     assert all(path.is_file() for path in records), records
     assert _volume_exists(recorder, volume), f"no workspace volume {volume}"
 
-    stop = stop_project(recorder, deployed.dir)
+    stop = stop_workflow_group(recorder, deployed.dir)
     assert stop is not None and stop.code == 0, stop and stop.output
 
-    leftovers = project_containers(recorder, deployed.group, every=True)
+    leftovers = workflow_group_containers(recorder, deployed.group, every=True)
     assert not leftovers, leftovers
     assert not _volume_exists(recorder, volume), f"{volume} is still there"
     kept = [path for path in records if path.exists()]
     assert not kept, kept
     again = canyonos(recorder, ["stop", "--json"], cwd=deployed.dir, timeout=600)
-    expected = {"ok": True, "code": None, "errors": [], "deployments": []}
+    expected = {"ok": True, "code": None, "errors": [], "workflow_groups": []}
     assert again.json() == expected, again.stdout
     status = canyonos(recorder, ["status", "--json"], cwd=deployed.dir, check=False)
     assert status.code == 3, status.output
@@ -67,22 +69,22 @@ def _images(recorder):
 
 def test_clean_removes_the_agent_images_and_keeps_the_port(recorder, deployed):
     built = {
-        f"{deployed.group}-{docker_name(qualified(deployed.project_dir, spec['name']))}"
-        for spec in manifest(deployed.project_dir).get("agents", [])
+        f"{deployed.group}-{docker_name(qualified(deployed.workflow_dir, spec['name']))}"
+        for spec in manifest(deployed.workflow_dir).get("agents", [])
         if spec.get("type", "agent") != "database"
     }
     missing = sorted(built - _images(recorder))
     assert not missing, f"never built: {missing}"
-    canyon = deployed.project_dir / ".canyon"
-    if deployed.project.port is not None:
+    canyon = deployed.workflow_dir / ".canyon"
+    if deployed.workflow.port is not None:
         assert canyon.is_dir(), canyon
 
     clean = canyonos(recorder, ["clean", "--json"], cwd=deployed.dir, timeout=600)
     name = deployed.group.removeprefix("canyonos-")
-    expected = {"ok": True, "code": None, "errors": [], "deployments": [name]}
+    expected = {"ok": True, "code": None, "errors": [], "workflow_groups": [name]}
     assert clean.json() == expected, clean.stdout
 
     left = sorted(built & _images(recorder))
     assert not left, left
-    if deployed.project.port is not None:
+    if deployed.workflow.port is not None:
         assert canyon.is_dir(), canyon

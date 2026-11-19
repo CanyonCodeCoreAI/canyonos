@@ -83,7 +83,7 @@ export const STARTERS = [
   },
 ] as const;
 
-/** Copy one workflow's deployment folder, its `deployment.yaml` and its project of the
+/** Copy one workflow group folder, its `workflow_group.yaml` and its workflow folder of the
  * same name, into the bundle, renaming its Python so Nuitka leaves it alone. */
 function bundleOne(starter: (typeof STARTERS)[number]): void {
   const source = join(repoRoot, 'examples', starter.name);

@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Fixtures for scenarios, which stage and deploy their own projects, and the
+"""Fixtures for scenarios, which stage and deploy their own workflows, and the
 `steps` marker for a module whose tests run in order on one shared fleet."""
 
 import pytest
 
 from ..harness import stage
-from ..projects import load_project
+from ..workflows import load_workflow
 
 FAILED_STEP_KEY = pytest.StashKey[str]()
 
@@ -43,12 +43,14 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture
 def staged(recorder, tmp_path):
-    """Stage a project from tests/e2e/projects by name. No query is sent in a
-    scenario, so the secrets a project declares get placeholder values."""
+    """Stage a workflow from tests/e2e/workflows by name. No query is sent in a
+    scenario, so the secrets a workflow declares get placeholder values."""
 
-    def staged_project(name: str):
-        project = load_project(name)
-        secrets = {secret: f"not-a-real-{secret.lower()}" for secret in project.secrets}
-        return stage(recorder, project, tmp_path, secrets)
+    def staged_workflow(name: str):
+        workflow = load_workflow(name)
+        secrets = {
+            secret: f"not-a-real-{secret.lower()}" for secret in workflow.secrets
+        }
+        return stage(recorder, workflow, tmp_path, secrets)
 
-    return staged_project
+    return staged_workflow

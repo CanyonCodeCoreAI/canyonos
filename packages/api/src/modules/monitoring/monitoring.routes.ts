@@ -6,8 +6,8 @@ import { Elysia } from 'elysia';
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
 import { authPlugin } from '../auth/auth.middleware';
-import { resolveProjectAccess } from '../auth/project-access';
-import { ProjectIdParams } from '../projects/projects.types';
+import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { WorkflowIdParams } from '../workflows/workflows.types';
 import {
   get_endpoint,
   get_error_summary,
@@ -37,12 +37,12 @@ const doc = { tags: ['Monitoring'], security: [{ bearerAuth: [] }] };
 
 export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
   .use(authPlugin)
-  .resolve(resolveProjectAccess)
+  .resolve(resolveWorkflowAccess)
   .get(
-    '/:project_id/monitoring/series',
-    ({ params, query }) => get_series(params.project_id, query),
+    '/:workflow_id/monitoring/series',
+    ({ params, query }) => get_series(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: GridQuerySchema,
       response: { 200: MonitoringSeriesResponseSchema },
       detail: {
@@ -53,21 +53,25 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       },
     }
   )
-  .get('/:project_id/monitoring/logs', ({ params, query }) => get_logs(params.project_id, query), {
-    params: ProjectIdParams,
-    query: MonitoringLogsQuerySchema,
-    response: { 200: MonitoringLogsResponseSchema },
-    detail: {
-      ...doc,
-      summary: 'Recent log records for the deployment, newest first',
-      description: 'Each log record is in the range by its own timestamp.',
-    },
-  })
   .get(
-    '/:project_id/monitoring/logs/sources',
-    ({ params, query }) => get_log_sources(params.project_id, query),
+    '/:workflow_id/monitoring/logs',
+    ({ params, query }) => get_logs(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
+      query: MonitoringLogsQuerySchema,
+      response: { 200: MonitoringLogsResponseSchema },
+      detail: {
+        ...doc,
+        summary: 'Recent log records for the workflow, newest first',
+        description: 'Each log record is in the range by its own timestamp.',
+      },
+    }
+  )
+  .get(
+    '/:workflow_id/monitoring/logs/sources',
+    ({ params, query }) => get_log_sources(params.workflow_id, query),
+    {
+      params: WorkflowIdParams,
       query: TimeRangeQuerySchema,
       response: { 200: MonitoringLogSourcesResponseSchema },
       detail: {
@@ -78,10 +82,10 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     }
   )
   .get(
-    '/:project_id/monitoring/llm',
-    ({ params, query }) => get_llm_calls(params.project_id, query),
+    '/:workflow_id/monitoring/llm',
+    ({ params, query }) => get_llm_calls(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringLlmCallsResponseSchema },
       detail: {
@@ -92,10 +96,10 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     }
   )
   .get(
-    '/:project_id/monitoring/traces',
-    ({ params, query }) => get_traces(params.project_id, query),
+    '/:workflow_id/monitoring/traces',
+    ({ params, query }) => get_traces(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: MonitoringListQuerySchema,
       response: { 200: MonitoringTracesResponseSchema },
       detail: {
@@ -106,10 +110,10 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     }
   )
   .get(
-    '/:project_id/monitoring/errors/summary',
-    ({ params, query }) => get_error_summary(params.project_id, query),
+    '/:workflow_id/monitoring/errors/summary',
+    ({ params, query }) => get_error_summary(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: TimeRangeQuerySchema,
       response: { 200: MonitoringErrorSummaryResponseSchema },
       detail: {
@@ -120,10 +124,10 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
     }
   )
   .get(
-    '/:project_id/monitoring/resources',
-    ({ params, query }) => get_resource_utilization(params.project_id, query),
+    '/:workflow_id/monitoring/resources',
+    ({ params, query }) => get_resource_utilization(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: GridQuerySchema,
       response: { 200: MonitoringResourceUtilizationResponseSchema },
       detail: {
@@ -134,13 +138,13 @@ export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
       },
     }
   )
-  .get('/:project_id/monitoring/replicas', ({ params }) => get_replicas(params.project_id), {
-    params: ProjectIdParams,
+  .get('/:workflow_id/monitoring/replicas', ({ params }) => get_replicas(params.workflow_id), {
+    params: WorkflowIdParams,
     response: { 200: MonitoringReplicasResponseSchema },
     detail: { ...doc, summary: 'Replicas reporting up, with their queue lengths' },
   })
-  .get('/:project_id/monitoring/endpoint', ({ params }) => get_endpoint(params.project_id), {
-    params: ProjectIdParams,
+  .get('/:workflow_id/monitoring/endpoint', ({ params }) => get_endpoint(params.workflow_id), {
+    params: WorkflowIdParams,
     response: { 200: MonitoringEndpointResponseSchema },
     detail: { ...doc, summary: 'Where the running endpoint answers' },
   });

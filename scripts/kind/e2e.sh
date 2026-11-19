@@ -130,8 +130,8 @@ EOF
     return 1
   }
   kubernetes_block() {  # deployment folder, namespace: deploy it to that namespace
-    sed -i 's/^target: docker$/target: kubernetes/' "$1/deployment.yaml"
-    printf 'kubernetes:\n  namespace: %s\n  registry: %s\n' "$2" "${REGISTRY}" >> "$1/deployment.yaml"
+    sed -i 's/^target: docker$/target: kubernetes/' "$1/workflow_group.yaml"
+    printf 'kubernetes:\n  namespace: %s\n  registry: %s\n' "$2" "${REGISTRY}" >> "$1/workflow_group.yaml"
   }
 
   cp -r /w/examples/helloworld /tmp/Target_Check
@@ -139,16 +139,16 @@ EOF
 
   log "deploy refuses an empty kubernetes: block"
   cp -r /w/examples/helloworld /tmp/Empty_Block
-  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/deployment.yaml
-  printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/deployment.yaml
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Empty_Block/workflow_group.yaml
+  printf 'kubernetes:\n  # namespace: later\n' >> /tmp/Empty_Block/workflow_group.yaml
   said="$(canyonos_in "${ADMIN_TOKEN}" /tmp/Empty_Block deploy helloworld 2>&1)" && fail "deploy passed an empty kubernetes: block"
   echo "${said}" | grep -q "kubernetes: section is missing or empty" \
     || fail "deploy did not name the empty kubernetes: block: ${said}"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
   cp -r /w/examples/helloworld /tmp/Bad_Yaml
-  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/deployment.yaml
-  printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/deployment.yaml
+  sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/workflow_group.yaml
+  printf 'kubernetes: [\n' >> /tmp/Bad_Yaml/workflow_group.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Bad_Yaml stop 2>&1)" && fail "stop passed with a config that is not YAML: ${said}"
   echo "${said}" | grep -q "Could not read" || fail "stop did not say it could not read the config: ${said}"
 
@@ -168,7 +168,7 @@ EOF
   grep -qF "${api_key}" /tmp/canyonbuilds.yaml && fail "the CanyonBuild holds the API key"
   as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -qF "${api_key}" \
     && fail "the CanyonProject holds the API key"
-  project_id="$(grep -E '^deployment_id:' /hw/deployment.yaml | awk '{print $2}')"
+  project_id="$(grep -E '^workflow_group_id:' /hw/workflow_group.yaml | awk '{print $2}')"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" \
     || fail "the endpoint is not forwarded to 127.0.0.1:8080: ${said}"
@@ -276,12 +276,12 @@ EOF
   code="$(api_call GET /auth/status "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json")) != {"api_key_required": True})' \
     || fail "/auth/status answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /projects "")"
+  code="$(api_call GET /workflows "")"
   [ "${code}" = 401 ] && grep -q auth.missing_key /tmp/api.json \
-    || fail "/projects with no key answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /projects "not-${dashboard_key}")"
+    || fail "/workflows with no key answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET /workflows "not-${dashboard_key}")"
   [ "${code}" = 401 ] && grep -q auth.invalid_key /tmp/api.json \
-    || fail "/projects with another key answered ${code}: $(cat /tmp/api.json)"
+    || fail "/workflows with another key answered ${code}: $(cat /tmp/api.json)"
   code="$(api_call GET /auth/check "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "/auth/check with the key answered ${code}: $(cat /tmp/api.json)"
   get() { curl -s -m 10 -H "Authorization: Bearer ${dashboard_key}" "${api}$1"; }
@@ -289,19 +289,19 @@ EOF
     for _ in $(seq 40); do get "$1" | grep -q "$2" && return 0; sleep 5; done
     fail "$3: $(get "$1")"
   }
-  until_found /projects "${project_id}" "the dashboard does not list the project"
-  code="$(api_call GET "/projects/${project_id}/scaling" "${dashboard_key}")"
+  until_found /workflows "${project_id}" "the dashboard does not list the project"
+  code="$(api_call GET "/workflows/${project_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "reading scaling answered ${code}: $(cat /tmp/api.json)"
   # One replica, as helloworld runs: the policy changes nothing, and goes right after.
   policy='{"min_replicas": 1, "max_replicas": 1, "metric": "queue_length_total", "scale_up_above": 10, "scale_down_below": 1}'
-  code="$(api_call PUT "/projects/${project_id}/scaling/helloworld" "${dashboard_key}" "${policy}")"
+  code="$(api_call PUT "/workflows/${project_id}/scaling" "${dashboard_key}" "${policy}")"
   [ "${code}" = 200 ] || fail "saving a scaling policy answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call DELETE "/projects/${project_id}/scaling/helloworld" "${dashboard_key}")"
+  code="$(api_call DELETE "/workflows/${project_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "deleting the scaling policy answered ${code}: $(cat /tmp/api.json)"
 
-  until_found "/projects/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/workflows/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard could not read the project's Redis"
-  until_found "/projects/${project_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
+  until_found "/workflows/${project_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
   echo "listed, Redis read, telemetry in"
 
   log "A rotated Redis password restarts every pod that uses it"
@@ -325,7 +325,7 @@ EOF
   done
   [ -n "${rolled}" ] || fail "pods still sign in with the old password: $(pods_on)"
   requests || fail "requests after the rotation"
-  until_found "/projects/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/workflows/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard lost the project's Redis after the rotation"
 
   log "A deploy with a new key refuses the old one"
@@ -352,7 +352,7 @@ EOF
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard is not on 127.0.0.1:8081"
 
   log "another project's serve keeps the running dashboard on its port"
-  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/deployment.yaml
+  printf 'dashboard_port: 9000\n' >> /tmp/Target_Check/workflow_group.yaml
   said="$(canyonos_in "${ADMIN}" /tmp/Target_Check serve)" || fail "serve from another project: ${said}"
   echo "${said}" | grep -q "127.0.0.1:8081" || fail "serve moved the running dashboard: ${said}"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard left 127.0.0.1:8081"
@@ -420,7 +420,7 @@ EOF
 
   log "deploy_mode: toy runs the project as one agent StatefulSet, which answers"
   cp -r /w/examples/helloworld /toy
-  printf 'deploy_mode: toy\n' >> /toy/deployment.yaml
+  printf 'deploy_mode: toy\n' >> /toy/workflow_group.yaml
   kubernetes_block /toy "${NS}"
   # CANYONOS_API_KEY sets this deploy's key without saving it.
   (cd /toy && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" /w/.venv/bin/canyonos deploy helloworld) \

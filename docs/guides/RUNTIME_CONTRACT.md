@@ -7,12 +7,12 @@ behaves differently from your app.
 
 ## Discovery
 
-`canyonos deploy` reads everything from each project's [root](BUILD_ARTIFACT.md):
+`canyonos deploy` reads everything from each workflow's [root](BUILD_ARTIFACT.md):
 
 | Input            | Where it comes from                                             |
 | ---------------- | --------------------------------------------------------------- |
 | Workflow config  | `config/workflow_config.yaml`                                   |
-| Agent class      | `entrypoint` on an agent entry, relative to the project root    |
+| Agent class      | `entrypoint` on an agent entry, relative to the workflow root   |
 | Agent functions  | `functions` on an agent entry                                   |
 | Endpoint         | The `endpoint:` block, naming the agent methods served on HTTP  |
 | Policy           | `config/policy.yaml`                                            |
@@ -28,7 +28,7 @@ entrypoint, a schema error or a class it can't find stops the deploy before anyt
 is built.
 
 The build writes `stubs/`, `grpc_stubs/` and `docker_container/` inside the deploy, not
-in your folder. Folders of yours with those names at the project root aren't copied into
+in your folder. Folders of yours with those names at the workflow root aren't copied into
 images.
 
 ## Agent class
@@ -144,7 +144,7 @@ or `await` it, for the result as its declared type; `.value()` gives the stored 
 ## Endpoint
 
 The endpoint serves agent methods over HTTP, each a route in the `endpoint:` block of
-its project's workflow config, at `POST /<project>/<agent>/<method>`. CanyonOS runs it
+its workflow's config, at `POST /<workflow_id>`. CanyonOS runs it
 in its own container; you write no server code. A typical target is an agent that takes
 the request and calls the others:
 
@@ -174,7 +174,7 @@ endpoint settings are in [Workflow config](WORKFLOW_CONFIG.md#endpoint).
 
 | Request                            | Body                                       | Answer                                                                                   |
 | ---------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `POST /<project>/<agent>/<method>` | A JSON object with every declared argument | `202` with `{"request_id"}`; `403` if [policy](#policy) refuses it; `400` for a bad body |
+| `POST /<workflow_id>` | A JSON object with every declared argument | `202` with `{"request_id"}`; `403` if [policy](#policy) refuses it; `400` for a bad body |
 | `GET /status/<request_id>`         | None                                       | `200` with the status below; `404` for an unknown request                                |
 | `POST /answer/<request_id>`        | A JSON object with the answer's keys       | `202` once passed on; `409` when nothing is waiting; `400` for a bad body                |
 
@@ -182,7 +182,7 @@ When the machine has an API key, every request needs it, sent as
 `Authorization: Bearer <your api key>`. Without it the request is refused before its
 body is read; see [API key](AUTHORIZATION.md#refusals).
 
-In `POST /<project>/<agent>/<method>`, each key becomes a keyword argument. `_context`
+In `POST /<workflow_id>`, each key becomes a keyword argument. `_context`
 is taken out first and used for [policy](#policy); it must be a JSON object. A bad body
 is one that isn't valid JSON or a JSON object, or that lacks a declared argument, so an
 empty body works only for a method with no arguments. `canyonos test`, the `curl`
@@ -249,30 +249,30 @@ key the answer takes with its type. For an Agents SDK approval, the question is
 
 ## Environment variables
 
-On Docker, each agent replica gets its project's `.env` with `--env-file`; the
+On Docker, each agent replica gets its workflow's `.env` with `--env-file`; the
 endpoint's container does not. An unreadable `.env` fails the deploy.
 [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for) says where the file lives and
 what else reads it. On Kubernetes, `.env` becomes a Secret; see
-[Kubernetes deployment](KUBERNETES.md).
+[Kubernetes workflow group](KUBERNETES.md).
 
 CanyonOS also sets these on each replica with `-e`, and they win over `.env`:
 
 | Variable                                               | What it is                                                 |
 | ------------------------------------------------------ | ---------------------------------------------------------- |
-| `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The deployment's Redis                                     |
-| `CANYONOS_REDIS_PASSWORD`                              | The password the deployment's Redis requires               |
-| `CANYONOS_TLS_CA_CERT`, `CANYONOS_TLS_CERT`, `CANYONOS_TLS_KEY` | On Docker, the deployment CA's certificate and this replica's own certificate and key, base64 PEM |
+| `CANYONOS_REDIS_HOST`, `CANYONOS_REDIS_PORT`           | The workflow group's Redis                                     |
+| `CANYONOS_REDIS_PASSWORD`                              | The password the workflow group's Redis requires               |
+| `CANYONOS_TLS_CA_CERT`, `CANYONOS_TLS_CERT`, `CANYONOS_TLS_KEY` | On Docker, the workflow group CA's certificate and this replica's own certificate and key, base64 PEM |
 | `CANYONOS_AGENT_HOST`, `CANYONOS_AGENT_PORT`           | Where this replica serves calls                            |
 | `CANYONOS_REPLICA_ID`                                  | This replica's ID                                          |
-| `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from `deployment.yaml`                     |
-| `CANYONOS_LOGS_ENABLED`                                | `logs` from `deployment.yaml`                              |
+| `CANYONOS_POLL_INTERVAL`                               | `poll_interval` from `workflow_group.yaml`                     |
+| `CANYONOS_LOGS_ENABLED`                                | `logs` from `workflow_group.yaml`                              |
 | `CANYONOS_SHUTDOWN_GRACE_SECONDS`                      | How long a draining replica has to finish                  |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`                | Send model calls through the [LLM Gateway](LLM_GATEWAY.md) |
 | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` | Trust the gateway's certificates                           |
 | `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`                     | Send boto3 Bedrock calls to the gateway                    |
 
 A Redis client in your code that defaults to `localhost` reaches the container's own
-loopback, not the deployment's Redis. Build it from `CANYONOS_REDIS_HOST`,
+loopback, not the workflow group's Redis. Build it from `CANYONOS_REDIS_HOST`,
 `CANYONOS_REDIS_PORT` and `CANYONOS_REDIS_PASSWORD`. On Docker that Redis takes only
 TLS with a client certificate: before your code loads, the controller writes this
 replica's certificate to files and sets `CANYONOS_REDIS_TLS=true`,

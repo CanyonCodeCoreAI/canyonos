@@ -1,4 +1,4 @@
-# Kubernetes deployment
+# Kubernetes workflow group
 
 This guide runs a workflow on a Kubernetes cluster, either a local one to try it or your
 own. It is for the cluster admin who installs CanyonOS once, and for developers who
@@ -10,10 +10,10 @@ the workflow, and the cluster builds the agents' images, pushes them to your reg
 and starts them. Nothing else on the cluster changes. How the operator works is in
 [Operator](../architecture/OPERATOR.md).
 
-A deployment is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` runs from
-the deployment folder, which holds `deployment.yaml`, and takes the project folders to
-deploy. The whole deployment is one CanyonProject. With `deploy_mode: toy`, each
-project's agents build into one image and run as one CanyonAgent.
+A workflow group is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` runs from
+the workflow group folder, which holds `workflow_group.yaml`, and takes the workflow folders to
+deploy. The whole workflow group is one CanyonProject. With `deploy_mode: toy`, each
+workflow's agents build into one image and run as one CanyonAgent.
 
 ## What you need
 
@@ -130,7 +130,7 @@ What CanyonOS asks of your cluster:
 
 ## Point a workflow at the cluster
 
-Put `target: kubernetes` at the top of the deployment folder's `deployment.yaml`, and a
+Put `target: kubernetes` at the top of the workflow group folder's `workflow_group.yaml`, and a
 `kubernetes:` block under it, as [Configuration](#configuration) shows.
 
 ## Deploy and run
@@ -153,22 +153,22 @@ commands to call it. Every command uses the workflow's `target`.
 The CLI needs no Docker for this. `canyonos deploy`:
 
 1. Creates the namespace if it's missing, labeled as made by CanyonOS.
-2. Turns the deployment's `.env` into a Secret for the Global Controller, and each
-   project's `.env` into a Secret for that project's agents, unless `env_secret` names
+2. Turns the workflow group's `.env` into a Secret for the Global Controller, and each
+   workflow's `.env` into a Secret for that workflow's agents, unless `env_secret` names
    your own.
 3. Asks the operator for a build (a CanyonBuild), with the sha256 of this machine's API
-   key in `spec.auth.apiKeyHash` (never the key itself), and uploads `deployment.yaml` and each project folder
+   key in `spec.auth.apiKeyHash` (never the key itself), and uploads `workflow_group.yaml` and each workflow folder
    to the build's pod through a port-forward. `.env` and every other `.env*` file,
    `.git`, `.venv`, `node_modules` and `__pycache__` are never uploaded.
 4. The build builds each agent's image on the cluster's builder, pushes it by digest,
-   and applies the deployment's objects from its config, its CanyonProject carrying
+   and applies the workflow group's objects from its config, its CanyonProject carrying
    that hash in `spec.auth.apiKeyHash`. The operator hands it to the Global Controller
    from the Secret `canyonos-api-key`. A redeploy of unchanged code restarts nothing.
 5. Waits until the operator reports the workflow and every agent ready, then forwards
    the endpoint to this machine and opens the dashboard.
 
-The first deploy writes a `deployment_id` into `deployment.yaml`; commit it, so telemetry
-stays under one project across deploys and targets. The workflow's CanyonProject is
+The first deploy writes a `workflow_group_id` into `workflow_group.yaml`; commit it, so telemetry
+stays under one workflow across deploys and targets. The workflow's CanyonProject is
 named after its folder and the start of that ID (`helloworld-4eeed6f3`), so two folders
 of the same name never share one in a namespace.
 
@@ -212,9 +212,9 @@ kubernetes:
   registry: registry.example.com/acme # where images are pushed, and nodes pull from
 ```
 
-`${VAR}` in the block is filled in from the deployment's `.env`, which also holds the only
-values the build and the Global Controller see. A `${VAR}` in a project's config is
-filled in from that file too, not from the project's own `.env`.
+`${VAR}` in the block is filled in from the workflow group's `.env`, which also holds the only
+values the build and the Global Controller see. A `${VAR}` in a workflow's config is
+filled in from that file too, not from the workflow's own `.env`.
 
 Optional settings:
 
@@ -339,11 +339,11 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 
 ## Stop and clean up
 
-| Command                 | What it removes                                                                                                                                                                                                       | What stays                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the deployment's ConfigMap, its `.env` Secrets, and each database's disk   |
-| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secrets                                                                                                                                                        | The namespace, each database's disk, and everything on this machine but the port-forwards |
-| `canyonos cluster down` | The local kind cluster, and the port-forwards to it                                                                                                                                                                   | The registry and the images in it, unless you pass `--all`                                |
+| Command                 | What it removes                                                                                                                                                                                                       | What stays                                                                                  |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `canyonos stop`         | The workflow's CanyonProject, and with it the endpoint, agents, Global Controller and Redis with its disk. The endpoint's port-forward on this machine, and the dashboard's when no other workflow here is forwarded. | The namespace, the workflow group's ConfigMap, its `.env` Secrets, and each database's disk |
+| `canyonos clean`        | What `stop` removes, then the ConfigMap and the `.env` Secrets                                                                                                                                                        | The namespace, each database's disk, and everything on this machine but the port-forwards   |
+| `canyonos cluster down` | The local kind cluster, and the port-forwards to it                                                                                                                                                                   | The registry and the images in it, unless you pass `--all`                                  |
 
 - **Order:** `stop` takes the endpoint down first, so no new request arrives, then each
   agent, taken out of routing before its pods stop, and Redis and the Global Controller

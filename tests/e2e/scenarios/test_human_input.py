@@ -24,13 +24,13 @@ from ..harness import (
     finished,
     http,
     poll,
-    project_dir,
-    project_redis,
+    workflow_dir,
+    workflow_group_redis,
     stage,
-    stop_project,
+    stop_workflow_group,
     submit,
 )
-from ..projects import load_project
+from ..workflows import load_workflow
 
 CLEANUP_TIMEOUT = 240
 DASHBOARD_DATABASE = "canyonos-dashboard-db"
@@ -58,23 +58,23 @@ def human_input_deploy(recorder, images, tmp_path_factory):
     """A minimal real workflow whose ordinary input() is handled by CanyonOS."""
     directory = stage(
         recorder,
-        load_project("helloworld"),
+        load_workflow("helloworld"),
         tmp_path_factory.mktemp("human-input"),
         {},
     )
-    project = project_dir(directory)
-    (project / "agents" / "workflow.py").write_text(WORKFLOW)
+    folder = workflow_dir(directory)
+    (folder / "agents" / "workflow.py").write_text(WORKFLOW)
     try:
         canyonos(
-            recorder, ["deploy", str(project)], cwd=directory, timeout=DEPLOY_TIMEOUT
+            recorder, ["deploy", str(folder)], cwd=directory, timeout=DEPLOY_TIMEOUT
         )
         yield HumanInputDeploy(
             directory=directory,
             endpoint=deployed_endpoint(recorder, directory),
-            store=project_redis(recorder, directory),
+            store=workflow_group_redis(recorder, directory),
         )
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
         assert stop is None or stop.code == 0, stop.output[-2000:]
 
 
@@ -178,7 +178,7 @@ def test_chat_finds_adds_switches_and_deletes_workflows_and_answers_questions(
             assert shown in call.output, call.output
             assert re.search(r"request [0-9a-f]{32} · ", call.output), call.output
 
-    # In the deployment's folder its workflow is there without a curl; the answer is
+    # In the workflow group's folder its workflow is there without a curl; the answer is
     # fixed with the arrow, Delete and Home keys.
     chat(
         human_input_deploy.directory,

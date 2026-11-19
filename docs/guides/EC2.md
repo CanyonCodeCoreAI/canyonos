@@ -1,4 +1,4 @@
-# EC2 deployment
+# EC2 workflow group
 
 An EC2 deploy runs your agents on EC2 machines that CanyonOS launches, while the rest of
 the workflow stays on the machine that runs `canyonos deploy`. You need an AWS account.
@@ -6,17 +6,17 @@ the workflow stays on the machine that runs `canyonos deploy`. You need an AWS a
 | Machine               | What runs on it                                                                            | Lifetime                                                                     |
 | --------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | The deploying machine | `canyonos deploy`, the Global Controller, the endpoint and the dashboard                   | Keep it running while the workflow is live. `canyonos provision` creates one |
-| Agent machines        | Your agents' replicas, and a Redis of their own that requires the deployment's password    | Launched by `canyonos deploy`, terminated by `canyonos stop`                 |
+| Agent machines        | Your agents' replicas, and a Redis of their own that requires the workflow group's password    | Launched by `canyonos deploy`, terminated by `canyonos stop`                 |
 
-The top-level `provider` in `deployment.yaml` decides how agents get machines:
+The top-level `provider` in `workflow_group.yaml` decides how agents get machines:
 
 | `provider`   | Agent machines                                                                                                                                                                                                                                                   |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ec2-assign` | One machine per replica, of the type `ec2-assign.machine_type` gives its agent. A replica never shares its machine                                                                                                                                               |
 | `ec2-pool`   | A fixed pool, with as many of each type as `ec2-pool.machine_type` lists. Each replica goes on the least loaded machine, by its agent's `resources`. A pool never refuses a replica: when the `resources` add up to more than the pool has, they share it evenly |
 
-EC2 runs on the `docker` target, so if the deployment points at Kubernetes, set
-`target: docker` in `deployment.yaml` first; see
+EC2 runs on the `docker` target, so if the workflow group points at Kubernetes, set
+`target: docker` in `workflow_group.yaml` first; see
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys).
 
 ## Quick start
@@ -40,7 +40,7 @@ ssh -i ~/.ssh/<key>.pem ubuntu@<address>
 cloud-init status --wait              # wait for the install to finish
 cd ~/helloworld-ec2-assign
 canyonos deploy helloworld --api-key <your api key>   # choose 1. Deploy
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+curl -X POST http://127.0.0.1:8080/<workflow_id> \
   -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "World"}'
 curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
@@ -85,14 +85,14 @@ provisioning:
 - runs a boot script that adds 2 GiB of swap if there is none, installs Docker, Compose
   and `zstd`, and installs your CLI's CanyonOS release, so the machine's CLI and images
   match yours;
-- prints the commands to copy a project over and sign in.
+- prints the commands to copy a workflow over and sign in.
 
 If a run fails, or you back out after confirming, provisioning removes what that run
 created. It keeps the `canyonos-controller` role and any default VPC it made, which are
 free and reused next time, and asks before removing a key pair it created.
 
 Agent machines launch into the deploying machine's region, subnet and security group,
-so `deployment.yaml` only needs their machine types. Outside `us-east-1`, they also
+so `workflow_group.yaml` only needs their machine types. Outside `us-east-1`, they also
 need `ami_id`, and provisioning warns about it; see [Configuration](#configuration).
 From a development checkout, see
 [Run a checkout on an EC2 machine](../contributing/DEVELOPMENT.md#run-a-checkout-on-an-ec2-machine).
@@ -113,7 +113,7 @@ scp -i ~/.ssh/<key>.pem -r examples/helloworld-ec2-assign ubuntu@<address>:~/
 ssh -i ~/.ssh/<key>.pem ubuntu@<address>
 ```
 
-On the deploying machine, wait for the install, check Docker, and stay in the deployment
+On the deploying machine, wait for the install, check Docker, and stay in the workflow group
 folder for the remaining steps:
 
 ```bash
@@ -124,7 +124,7 @@ cd ~/helloworld-ec2-assign
 
 ### 2. Choose how agents get machines
 
-Set `provider` and its section in `deployment.yaml`. `machine_type` is the only
+Set `provider` and its section in `workflow_group.yaml`. `machine_type` is the only
 required key.
 
 <div class="tabs" markdown>
@@ -132,7 +132,7 @@ required key.
 <div class="tab" data-label="ec2-assign" markdown>
 
 Each replica gets a machine of its own. `machine_type` gives every agent its EC2
-machine type, and must list every agent, named `<project>.<agent>`. Hello World already
+machine type, and must list every agent, named `<workflow>.<agent>`. Hello World already
 has:
 
 ```yaml
@@ -186,7 +186,7 @@ On the deploying machine, with the port the deploy printed (`8080` unless it was
 and the API key you deployed with:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+curl -X POST http://127.0.0.1:8080/<workflow_id> \
   -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "World"}'
 curl -H "Authorization: Bearer <your api key>" \
@@ -284,8 +284,8 @@ into AWS on first use, so the AMI doesn't need it in advance.
 - **Default:** `~/.ssh/canyonos_ec2` inside the Global Controller's container, where
   CanyonOS creates an ed25519 key when there is none.
 - **A key you set** must already exist, with permissions `600` or `400`. The Global
-  Controller sees only its copy of your projects, so put the key in a project folder,
-  such as `.ssh/my-key` beside `config/`, and give its path as `<project>/.ssh/my-key`.
+  Controller sees only its copy of your workflows, so put the key in a workflow folder,
+  such as `.ssh/my-key` beside `config/`, and give its path as `<workflow>/.ssh/my-key`.
   Hidden folders never reach an agent image.
 
 ## Set up AWS yourself
@@ -374,7 +374,7 @@ and allow the host port mapped to the endpoint container's `50051`: for
   calls it.
 - **`host.docker.internal`:** inside a replica, this is the agent machine it runs on,
   not the deploying machine.
-- **`.env`:** each replica gets its project's `.env`, as it does locally. It is copied
+- **`.env`:** each replica gets its workflow's `.env`, as it does locally. It is copied
   over SSH to a private temporary folder on the agent machine and deleted once the
   container starts; see [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for).
 - **LLM Gateway:** each container runs its own gateway, as it does locally; see

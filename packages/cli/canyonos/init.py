@@ -57,7 +57,7 @@ GC_CONTAINER_PORT = 8000
 # Hands the container the secret its API then requires as a Bearer token.
 GC_SECRET_ENV = "CANYONOS_CONTROLLER_SECRET"
 
-# The deployment's workspace volume (`deployment.workspace_volume()`) is mounted here.
+# The workflow group's workspace volume (`deployment.workspace_volume()`) is mounted here.
 # Files are uploaded through the container's API, not mounted live, so host-side
 # edits don't reach a running build. `canyonos stop` removes the volume.
 GC_WORKSPACE_PATH = "/workspace"
@@ -263,7 +263,7 @@ def _port_reachable(port, headers, attempts=50, delay=0.1):
     not that traffic actually flows. Confirm the container is actually reachable before trusting it.
     """
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1/deployments", headers=headers
+        f"http://127.0.0.1:{port}/v1/workflow-groups", headers=headers
     )
     for _ in range(attempts):
         try:
@@ -276,7 +276,7 @@ def _port_reachable(port, headers, attempts=50, delay=0.1):
 
 def _named_container(name=None):
     """(id, running) for the container holding exactly this name, or (None, False).
-    The name defaults to this deployment's Global Controller container."""
+    The name defaults to this workflow group's Global Controller container."""
     name = name or deployment.gc_container_name()
     try:
         result = run_docker(
@@ -295,7 +295,7 @@ def _named_container(name=None):
 
 
 def _free_container_name():
-    """Remove a leftover container squatting on the deployment's Global Controller name.
+    """Remove a leftover container squatting on the workflow group's Global Controller name.
 
     A fixed --name only works if nothing else holds it, and two things leave a
     dead holder behind: a crashed run whose state file is gone, and a failed
@@ -324,8 +324,8 @@ def _free_container_name():
 
 
 def _create_workspace_volume():
-    """Create the deployment's workspace volume up front, so it carries the
-    deployment's label and shows in its Docker group; a volume that already exists is
+    """Create the workflow group's workspace volume up front, so it carries the
+    workflow group's label and shows in its Docker group; a volume that already exists is
     reused."""
     volume = deployment.workspace_volume()
     run_docker(
@@ -345,7 +345,7 @@ def _run_container(
     reserved=frozenset(),
     auth_env=(),
 ):
-    """Start this deployment's Global Controller container, published on 127.0.0.1 at
+    """Start this workflow group's Global Controller container, published on 127.0.0.1 at
     `port`, or at the next free port after it that isn't `reserved`, and tell it
     Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
     port it had last deploy. `auth_env` are the `docker run` options that hand it the
@@ -433,11 +433,11 @@ def _run_container(
             # A bare name copies the host's value when set, so agent images match its CPU.
             "-e",
             "CANYONOS_DOCKER_PLATFORM",
-            # Names and labels every container the GC launches with this deployment.
+            # Names and labels every container the GC launches with this workflow group.
             "-e",
             f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
             "-e",
-            f"CANYONOS_DEPLOYMENT_ID={read_config(deployment_config_path())['deployment_id']}",
+            f"CANYONOS_WORKFLOW_GROUP_ID={read_config(deployment_config_path())['workflow_group_id']}",
             *auth_env,
             "-e",
             GC_SECRET_ENV,
@@ -519,10 +519,10 @@ def _save_state(
                     "docker_socket": docker_socket,
                     "redis_port": redis_port,
                     "api_port": api_port,
-                    "deployment_id": read_config(deployment_config_path()).get(
-                        "deployment_id"
+                    "workflow_group_id": read_config(deployment_config_path()).get(
+                        "workflow_group_id"
                     ),
-                    "project_dir": os.getcwd(),
+                    "workflow_group_dir": os.getcwd(),
                     "auth_disabled": auth_disabled,
                     "headers": headers,
                 },
@@ -541,7 +541,7 @@ def _save_state(
 
 
 def load_state(state_path=None):
-    """Read this deployment's Global Controller container and port from its state
+    """Read this workflow group's Global Controller container and port from its state
     file under `~/.canyonos/deployments`, or from the state file at `state_path`. On
     Kubernetes, return this folder's state from `kubernetes_state` instead."""
     if state_path is None and deployment.configured_target() == "kubernetes":
@@ -620,13 +620,13 @@ def remember_api_port(api_port):
 
 def _can_reuse_container(state, image, auth_env):
     """True when the Global Controller container `state` records is running from
-    `image` with this deployment's id, the Redis port the config asks for and the
+    `image` with this workflow group's id, the Redis port the config asks for and the
     API key hash `auth_env` hands it, so a deploy can upload to it instead of
     replacing it."""
     if (
         not state
-        or state.get("deployment_id")
-        != read_config(deployment_config_path())["deployment_id"]
+        or state.get("workflow_group_id")
+        != read_config(deployment_config_path())["workflow_group_id"]
         or local_redis_port(existing_config_path())
         not in (None, state.get("redis_port"))
     ):
@@ -660,7 +660,7 @@ def _can_reuse_container(state, image, auth_env):
 
 
 def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
-    """Keep this deployment's Global Controller container when it runs `image` with
+    """Keep this workflow group's Global Controller container when it runs `image` with
     the config's Redis port and `auth_env`; otherwise replace it with a fresh one from
     `image` and save its ID and port for later commands. Run at the start of `canyonos
     deploy`. A new container is published on the last deploy's port or 8000, or the
@@ -697,7 +697,7 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
                 "CanyonOS picks a free port."
             )
         # A taken `redis.port` is left to the Global Controller, which reuses this
-        # deployment's own Redis when a crashed deploy left it running there.
+        # workflow group's own Redis when a crashed deploy left it running there.
         redis_port = local_redis_port(config_path)
         if redis_port is None:
             preferred_redis = saved.get("redis_port") or DEFAULT_REDIS_PORT

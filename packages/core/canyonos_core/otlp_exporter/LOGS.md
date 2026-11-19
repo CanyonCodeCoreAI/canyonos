@@ -3,7 +3,7 @@
 The log signal ships per-future log records -- captured while a future runs -- as OTel
 LogRecords correlated to their parent trace/span. This doc covers only the log-specific parts.
 
-There are two specific paths that logs go through, based on severity. Any log marked as an "error" or greater goes through its own path, and is always logged. On the other side, any other logs (genral logs, warnings) are optional (default=True), where if you set `logs: false` in deployment.yaml, you will not receive any of these logs. 
+There are two specific paths that logs go through, based on severity. Any log marked as an "error" or greater goes through its own path, and is always logged. On the other side, any other logs (genral logs, warnings) are optional (default=True), where if you set `logs: false` in workflow_group.yaml, you will not receive any of these logs. 
 
 Note: If network bandwidth becomes an issue, set logging to False. Logs are bulky.
 
@@ -37,7 +37,8 @@ through unchanged).
 | `log_id` (PK) | `{future_id}:{index}` -- deterministic, so a GC re-poll upserts instead of duplicating. |
 | `future_id` | Owning future → OTel `span_id`. |
 | `session_id` | Request id → OTel `trace_id`. |
-| `project_id` | Deployment/project id. |
+| `workflow_group_id` | Workflow group id → Resource `canyonos.workflow_group.id`. |
+| `workflow_id` | Id of the workflow the agent belongs to → Resource `canyonos.workflow.id`; NULL for the Global Controller's own logs. |
 | `agent_id` | Executing replica id. |
 | `observed_at` | Unix seconds; the delete column. |
 | `severity_number` | OTel `SeverityNumber`. |

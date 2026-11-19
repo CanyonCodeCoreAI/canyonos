@@ -42,8 +42,8 @@ cp packages/web/.env.example packages/web/.env
 | API end-to-end       | `bun run api:test:e2e`                                             | Postgres (`bun run docker:up`); resets the `canyonos_test` database                                                                                                                                  |
 | Dashboard end-to-end | `bun run ui:test:e2e`                                              | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite, or reuses running ones                                                                                             |
 | CLI end-to-end       | `bun run cli:test:e2e`                                             | Linux or macOS, and a Core image for the deploy case; see `packages/cli/tests/e2e/README.md`                                                                                                         |
-| Deploy               | `uv run pytest tests/e2e/cases --project=helloworld`               | Docker; builds the images from this checkout, deploys the project and runs the E2E cases against it                                                                                                  |
-| Deploy scenarios     | `uv run pytest tests/e2e/scenarios`                                | Docker; checks `canyonos validate`, the `new-app` starter, two projects in a deployment and on a dashboard, questions to a person, `stop` and `clean`, and the governance rules, which need AWS keys |
+| Deploy               | `uv run pytest tests/e2e/cases --workflow=helloworld`              | Docker; builds the images from this checkout, deploys the workflow and runs the E2E cases against it                                                                                                  |
+| Deploy scenarios     | `uv run pytest tests/e2e/scenarios`                                | Docker; checks `canyonos validate`, the `new-app` starter, two workflows in a workflow group and on a dashboard, questions to a person, `stop` and `clean`, and the governance rules, which need AWS keys |
 | EC2 pool             | `tests/e2e/ec2_pool.sh`                                            | AWS access to run machines; manual, no workflow runs it                                                                                                                                              |
 | Dashboard images     | `bun run canyonos:smoke`                                           | The images in `CANYONOS_API_IMAGE` and `CANYONOS_WEB_IMAGE` (default `canyonos-api:smoke`, `canyonos-web:smoke`)                                                                                     |
 | CLI usage API        | `bun run cli:usage:test:e2e`, `bun run cli:usage:test:cli-e2e`     | Docker; each starts its own moto server                                                                                                                                                              |
@@ -52,7 +52,7 @@ cp packages/web/.env.example packages/web/.env
 | Operator             | `make manifests generate fmt vet test lint`                        | Go 1.26 or later, or the `golang:1.27.0` container; see [Operator](#operator)                                                                                                                        |
 
 [`tests/e2e/README.md`](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/tests/e2e/README.md)
-lists the projects, their secrets and how to add a case.
+lists the workflows, their secrets and how to add a case.
 
 ## Kubernetes
 

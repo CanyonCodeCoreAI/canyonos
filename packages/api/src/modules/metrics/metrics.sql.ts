@@ -4,11 +4,17 @@
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
-import { otelSpans } from '@api/db/schema';
+import { otelSpans, workflows } from '@api/db/schema';
 import { withinRange } from '@core/time-range';
 import type { TimeRange } from '@core/time-range';
 
-import { GEN_AI, PROJECT_ID_ATTRIBUTE, RUNTIME_ATTRIBUTES, STATUS_CODE } from './metrics.contract';
+import {
+  GEN_AI,
+  RUNTIME_ATTRIBUTES,
+  STATUS_CODE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from './metrics.contract';
 
 const attrText = (alias: string, key: string): string => `(${alias}.attributes ->> '${key}')`;
 
@@ -20,7 +26,7 @@ const attrNumber = (alias: string, key: string): string =>
 export const spanFailed = (alias: string): string =>
   `(${alias}.status_code = '${STATUS_CODE.ERROR}')`;
 
-export const spanProjectId = (alias: string): string => attrText(alias, PROJECT_ID_ATTRIBUTE);
+export const spanWorkflowId = (alias: string): string => attrText(alias, WORKFLOW_ID_ATTRIBUTE);
 
 // The receiver stores event attributes flat, so `exception.type` is one quoted key, not a path.
 export const spanErrorType = (alias: string): string =>
@@ -102,23 +108,34 @@ export const spanInput = (alias: string): string => `nullif(btrim(${alias}.input
 
 export const spanOutput = (alias: string): string => `nullif(btrim(${alias}.output::text), '')`;
 
-export const projectSpans = (project_id: string, range: TimeRange): SQL => sql`
+export const workflowSpans = (workflow_id: string, range: TimeRange): SQL => sql`
   select s.*
   from ${otelSpans} s
-  where ${sql.raw(spanProjectId('s'))} = ${project_id}
+  where ${sql.raw(spanWorkflowId('s'))} = ${workflow_id}
     and ${withinRange('s.start_time_unix_nano', range)}`;
 
-export const allProjectSpans = (project_id: string): SQL => sql`
+/** The id of the workflow group the workflow runs in, as a text subquery. */
+export const workflowGroupId = (workflow_id: string): SQL =>
+  sql`(select ${workflows.workflow_group_id}::text from ${workflows} where ${workflows.id} = ${workflow_id})`;
+
+/** The spans of every workflow in the workflow's group. */
+export const workflowGroupSpans = (workflow_id: string, range: TimeRange): SQL => sql`
   select s.*
   from ${otelSpans} s
-  where ${sql.raw(spanProjectId('s'))} = ${project_id}`;
+  where ${sql.raw(attrText('s', WORKFLOW_GROUP_ID_ATTRIBUTE))} = ${workflowGroupId(workflow_id)}
+    and ${withinRange('s.start_time_unix_nano', range)}`;
+
+export const allWorkflowSpans = (workflow_id: string): SQL => sql`
+  select s.*
+  from ${otelSpans} s
+  where ${sql.raw(spanWorkflowId('s'))} = ${workflow_id}`;
 
 const requestSpans = (in_scope: (alias: string) => SQL, range: TimeRange): SQL => sql`
   select s.*
   from (
     select s.*,
       min(s.start_time_unix_nano) over (
-        partition by ${sql.raw(spanProjectId('s'))}, s.trace_id
+        partition by ${sql.raw(spanWorkflowId('s'))}, s.trace_id
       ) as request_start_unix_nano
     from ${otelSpans} s
     where ${in_scope('s')}
@@ -134,13 +151,13 @@ const requestSpans = (in_scope: (alias: string) => SQL, range: TimeRange): SQL =
  * starts in, whole, so its spans after `to` come along. Each span carries that start as
  * `request_start_unix_nano`.
  */
-export const projectRequestSpans = (project_id: string, range: TimeRange): SQL =>
-  requestSpans((alias) => sql`${sql.raw(spanProjectId(alias))} = ${project_id}`, range);
+export const workflowRequestSpans = (workflow_id: string, range: TimeRange): SQL =>
+  requestSpans((alias) => sql`${sql.raw(spanWorkflowId(alias))} = ${workflow_id}`, range);
 
-/** `projectRequestSpans` for every project at once. */
+/** `workflowRequestSpans` for every workflow at once. */
 export const fleetRequestSpans = (range: TimeRange): SQL =>
-  requestSpans((alias) => sql`${sql.raw(spanProjectId(alias))} is not null`, range);
+  requestSpans((alias) => sql`${sql.raw(spanWorkflowId(alias))} is not null`, range);
 
-/** The start of the request a `projectRequestSpans` row belongs to. */
+/** The start of the request a `workflowRequestSpans` row belongs to. */
 export const requestStart = (alias: string): string =>
   `to_timestamp(${alias}.request_start_unix_nano / 1e9)`;

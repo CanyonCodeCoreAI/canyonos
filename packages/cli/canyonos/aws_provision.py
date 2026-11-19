@@ -1311,25 +1311,25 @@ class _AwsProvision:
         if self.dev:
             ui.say(
                 f"This checkout is in ~/{dev_machine.REMOTE_CHECKOUT} on it, with the "
-                "examples. Copy another project to it with:"
+                "examples. Copy another workflow to it with:"
             )
         else:
             ui.say(
                 f"It installs Docker and CanyonOS {release_tag(env.VERSION)}, the "
                 "same version as this CLI, over the next few minutes. "
-                "Copy your project to it:"
+                "Copy your workflow to it:"
             )
-        ui.command(f"scp -i {key} -r <project folder> {SSH_USER}@{address}:~/")
+        ui.command(f"scp -i {key} -r <workflow folder> {SSH_USER}@{address}:~/")
         ui.say("Then sign in, wait for the install, and deploy:")
         ui.command(f"ssh -i {key} {SSH_USER}@{address}")
         ui.command(
             "cloud-init status --wait && "
-            "canyonos deploy <project folder> --folder deployment"
+            "canyonos deploy <workflow folder> --workflow-group group"
         )
         ui.blank()
         ui.hint(
             "To run agents on EC2, set `provider: ec2-assign` and give each agent a "
-            "machine type under `ec2-assign: machine_type:` in deployment.yaml, "
+            "machine type under `ec2-assign: machine_type:` in workflow_group.yaml, "
             "or `provider: ec2-pool` with a pool under `ec2-pool: machine_type:`. They launch "
             "into this machine's subnet and security group."
         )

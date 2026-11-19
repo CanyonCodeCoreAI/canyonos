@@ -8,7 +8,9 @@ export const STATUS_CODE = {
   ERROR: 'STATUS_CODE_ERROR',
 } as const;
 
-export const PROJECT_ID_ATTRIBUTE = 'canyon.project.id';
+// Spans carry their workflow's id, and that of the workflow group it runs in.
+export const WORKFLOW_ID_ATTRIBUTE = 'canyonos.workflow.id';
+export const WORKFLOW_GROUP_ID_ATTRIBUTE = 'canyonos.workflow_group.id';
 
 export const GEN_AI = {
   AGENT_ID: 'gen_ai.agent.id',

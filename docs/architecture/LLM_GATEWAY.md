@@ -24,7 +24,7 @@ All under `packages/core/canyonos_core/llm_gateway/`:
 | `routing.py`                    | The 5-second config refresh, and the allow-list and cap decision  |
 | `llms.py`                       | Loads `llms:config`                                               |
 | `pricing.py`, `llm_prices.json` | `LLM_HOSTS`, token prices and call cost                           |
-| `prompts.py`                    | The live prompt version per `<project>.<agent>.<function>`        |
+| `prompts.py`                    | The live prompt version per `<workflow>.<agent>.<function>`       |
 | `hooks.py`                      | Usage extraction, and the telemetry each response writes to Redis |
 | `proxy.py`                      | The mitmproxy addon on `127.0.0.1:8082` that catches LLM calls    |
 
@@ -111,13 +111,13 @@ Spend rules can switch a model. The gateway evaluates them itself (`governance.m
 
 ## Prompts
 
-A prompt is a live version per `<project>.<agent>.<function>`. The gateway swaps the system prompt in flight, so agent code never holds it.
+A prompt is a live version per `<workflow>.<agent>.<function>`. The gateway swaps the system prompt in flight, so agent code never holds it.
 
-- The source is each project's `config/prompts.yaml`. The Global Controller stores them as `prompts:yaml`, each prompt keyed `<project>.<agent>.<function>`, and seeds `prompts:config` from it only when that key is empty.
+- The source is each workflow's `config/prompts.yaml`. The Global Controller stores them as `prompts:yaml`, each prompt keyed `<workflow>.<agent>.<function>`, and seeds `prompts:config` from it only when that key is empty.
 - The dashboard API stores versions and the live flag in Postgres, and writes each prompt's live version to `prompts:config`.
 - On each poll, the Global Controller copies `prompts:config` to the other machines' Redis.
 - The gateway reloads `prompts:config` every 5 seconds.
-- The Local Controller sets the current agent and function before running it, so `gateway_headers` adds `x-canyonos-agent` and `x-canyonos-function` to the call. The gateway looks up `<project>.<agent>.<function>` and puts the live text where that provider takes its system prompt.
+- The Local Controller sets the current agent and function before running it, so `gateway_headers` adds `x-canyonos-agent` and `x-canyonos-function` to the call. The gateway looks up `<workflow>.<agent>.<function>` and puts the live text where that provider takes its system prompt.
 
 The rules a user sees are in [Prompt management](../guides/PROMPTS.md).
 
@@ -135,7 +135,7 @@ The gateway ties each call to the future that made it:
 
 ## Changing it
 
-- The end-to-end projects with model calls, and the governance scenario, cover the gateway. See [Testing](../contributing/TESTING.md#end-to-end-tests).
+- The end-to-end workflows with model calls, and the governance scenario, cover the gateway. See [Testing](../contributing/TESTING.md#end-to-end-tests).
 - A new dependency goes into `agent_base/Dockerfile`, not the agent's requirements.
 - A new provider needs an entry in the provider registry, its paths in `hooks.LLM_PATHS`, its hosts in `LLM_HOSTS`, and a usage parser in `hooks.py`.
 - `llm_gateway/README.md` covers running the gateway on its own. Its environment settings are in `config.py`.

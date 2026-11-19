@@ -11,12 +11,12 @@ import {
   spanCost,
   spanDurationMs,
   spanFailed,
-  spanProjectId,
   spanTotalTokens,
+  spanWorkflowId,
 } from '../metrics/metrics.sql';
 
-export interface FleetProjectRow {
-  readonly project_id: string;
+export interface FleetWorkflowRow {
+  readonly workflow_id: string;
   readonly name: string;
   readonly created_at: string;
   readonly request_count: number;
@@ -28,12 +28,12 @@ export interface FleetProjectRow {
 }
 
 export const resources_repo = {
-  // Count span IDs so the left-join row keeps zero-activity projects at zero.
-  async fleet_projects(range: TimeRange): Promise<FleetProjectRow[]> {
+  // Count span IDs so the left-join row keeps zero-activity workflows at zero.
+  async fleet_workflows(range: TimeRange): Promise<FleetWorkflowRow[]> {
     const rows = await db.execute(sql`
       with scoped as (${fleetRequestSpans(range)})
       select
-        p.id::text as project_id,
+        p.id::text as workflow_id,
         p.name,
         p.created_at::text as created_at,
         count(distinct s.trace_id)::int as request_count,
@@ -42,11 +42,11 @@ export const resources_repo = {
         coalesce(sum(${sql.raw(spanTotalTokens('s'))}), 0)::float8 as tokens,
         coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(20, 10)::text as total_cost,
         avg(${sql.raw(spanDurationMs('s'))})::float8 as avg_latency_ms
-      from projects p
-      left join scoped s on ${sql.raw(spanProjectId('s'))} = p.id::text
+      from workflows p
+      left join scoped s on ${sql.raw(spanWorkflowId('s'))} = p.id::text
       group by p.id, p.name, p.created_at
       order by p.created_at, p.id
     `);
-    return rows as unknown as FleetProjectRow[];
+    return rows as unknown as FleetWorkflowRow[];
   },
 };

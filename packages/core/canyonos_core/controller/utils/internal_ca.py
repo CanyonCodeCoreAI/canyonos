@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The deployment's certificate authority, as the Global Controller container holds it.
+"""The workflow group's certificate authority, as the Global Controller container holds it.
 
-`canyonos deploy` makes the CA on a deployment's first deploy, keeps it under
-`~/.canyonos/deployments/<deployment>/ca/` and hands it to the Global Controller
+`canyonos deploy` makes the CA on a workflow group's first deploy, keeps it under
+`~/.canyonos/deployments/<workflow group>/ca/` and hands it to the Global Controller
 container in `CANYONOS_TLS_CA_CERT` and `CANYONOS_TLS_CA_KEY`. The Global Controller and
 the reconciler sign a certificate for every container they start (Redis, the metrics
 collector, each replica) and hand it over as an env file, so the CA's key never leaves
@@ -36,7 +36,7 @@ CERTIFICATE_DAYS = 825
 
 
 def available(environ=None):
-    """True when this container holds the deployment's CA, so what it starts gets
+    """True when this container holds the workflow group's CA, so what it starts gets
     certificates."""
     env = os.environ if environ is None else environ
     return bool(env.get(internal_tls.CA_CERT_ENV) and env.get(CA_KEY_ENV))
@@ -57,7 +57,7 @@ def _ca():
 
 
 def sign(names):
-    """A new key and a certificate for it, signed by the deployment's CA, valid as a
+    """A new key and a certificate for it, signed by the workflow group's CA, valid as a
     server and as a client for the DNS `names` and this container's loopback. Returns
     both as PEM bytes."""
     ca_cert, ca_key = _ca()

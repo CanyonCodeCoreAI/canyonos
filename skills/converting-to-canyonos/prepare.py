@@ -101,7 +101,7 @@ def _copy_source(import_root: Path, destination: Path, artifact_root: Path) -> N
 
 
 def _ensure_gitignore(artifact_root: Path) -> "Path | None":
-    """Keep the artifact out of the project's history.
+    """Keep the artifact out of the workflow's git history.
 
     Returns the file written, or None when the artifact is already ignored or
     nothing above it is a git work tree.

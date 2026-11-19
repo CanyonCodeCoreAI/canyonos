@@ -3,11 +3,11 @@
 
 name: E2E
 
-# Deploys the projects under tests/e2e/projects with the CLI and images from this
+# Deploys the workflows under tests/e2e/workflows with the CLI and images from this
 # checkout, runs tests/e2e/cases against each one, and runs tests/e2e/scenarios.
-# A pull request and a push to main run every project not marked release_only.
-# Before a release, run it by hand with `release` to add those projects too.
-# The paths are everything the CLI, the three images and the projects are built from.
+# A pull request and a push to main run every workflow not marked release_only.
+# Before a release, run it by hand with `release` to add those workflows too.
+# The paths are everything the CLI, the three images and the workflows are built from.
 
 on:
   pull_request:
@@ -51,8 +51,8 @@ on:
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:
-      projects:
-        description: "`release` for every project, `pr` for the pull request set, or project names separated by spaces."
+      workflows:
+        description: "`release` for every workflow, `pr` for the pull request set, or workflow names separated by spaces."
         required: false
         default: release
         type: string
@@ -67,7 +67,7 @@ permissions:
   contents: read
 
 jobs:
-  projects:
+  workflows:
     # Fork and Dependabot PRs get no secrets, and without the model keys the runs
     # cannot be real.
     if: >-
@@ -89,19 +89,19 @@ jobs:
           enable-cache: true
       - id: list
         env:
-          PROJECTS: ${{ inputs.projects || 'pr' }}
+          WORKFLOWS: ${{ inputs.workflows || 'pr' }}
         run: |
-          echo "matrix=$(uv run --frozen python tests/e2e/projects.py $PROJECTS)" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(uv run --frozen python tests/e2e/workflows.py $WORKFLOWS)" >> "$GITHUB_OUTPUT"
           echo "scenarios=$(cd tests/e2e/scenarios && basename -s .py test_*.py | jq -nRc '[inputs]')" >> "$GITHUB_OUTPUT"
 
-  project:
-    needs: projects
+  workflow:
+    needs: workflows
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        project: ${{ fromJson(needs.projects.outputs.matrix) }}
+        workflow: ${{ fromJson(needs.workflows.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,32 +134,32 @@ jobs:
           tags: canyonos-web:ci
           cache-from: type=gha,scope=canyonos-web
 
-      - name: Run the cases for ${{ matrix.project }}
+      - name: Run the cases for ${{ matrix.workflow }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PROJECT: ${{ matrix.project }}
-          ARTIFACTS: ${{ runner.temp }}/e2e/${{ matrix.project }}
+          WORKFLOW: ${{ matrix.workflow }}
+          ARTIFACTS: ${{ runner.temp }}/e2e/${{ matrix.workflow }}
         run: |
           mkdir -p "$ARTIFACTS"
           timeout -s INT 110m uv run --frozen pytest tests/e2e/cases \
-            --project="$PROJECT" --artifacts-dir="$ARTIFACTS" \
+            --workflow="$WORKFLOW" --artifacts-dir="$ARTIFACTS" \
             --junitxml="$ARTIFACTS/junit.xml" -o junit_family=xunit2 \
             -p no:cacheprovider -v
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-${{ matrix.project }}
+          name: e2e-${{ matrix.workflow }}
           path: ${{ runner.temp }}/e2e
           retention-days: 14
 
   python:
     name: Agents on Python ${{ matrix.python }}
-    # The same rule as `projects`.
+    # The same rule as `workflows`.
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -168,7 +168,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The top entry is the default agents get without a .python-version, which `project` runs too:
+        # The top entry is the default agents get without a .python-version, which `workflow` runs too:
         # NEWEST_IMAGE_PYTHON_MINOR in packages/core/canyonos_core/stub_generator.py. Bump the two together.
         python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
@@ -209,14 +209,14 @@ jobs:
           CANYONOS_WEB_IMAGE: canyonos-web:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          # Also what the project's check expects both agents to run on.
+          # Also what the workflow's check expects both agents to run on.
           E2E_AGENT_PYTHON: ${{ matrix.python }}
           ARTIFACTS: ${{ runner.temp }}/python-${{ matrix.python }}
         run: |
           echo "$E2E_AGENT_PYTHON" > examples/helloworld/helloworld/.python-version
           mkdir -p "$ARTIFACTS"
           timeout -s INT 35m uv run --frozen pytest tests/e2e/cases \
-            --project=context-propagation --artifacts-dir="$ARTIFACTS" \
+            --workflow=context-propagation --artifacts-dir="$ARTIFACTS" \
             -p no:cacheprovider -v
 
       - if: always()
@@ -227,19 +227,19 @@ jobs:
           retention-days: 14
 
   scenarios:
-    # The same rule as `projects`. A run by hand with project names runs only those
-    # projects; `pr`, `release` or nothing runs the scenarios too.
-    needs: projects
+    # The same rule as `workflows`. A run by hand with workflow names runs only those
+    # workflows; `pr`, `release` or nothing runs the scenarios too.
+    needs: workflows
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.projects))
+      (github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.workflows))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        scenario: ${{ fromJson(needs.projects.outputs.scenarios) }}
+        scenario: ${{ fromJson(needs.workflows.outputs.scenarios) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -294,10 +294,10 @@ jobs:
           retention-days: 14
 
   report:
-    # Every project the matrix listed, and the scenarios when they ran, must have
+    # Every workflow the matrix listed, and the scenarios when they ran, must have
     # results: one cut short before uploading any is reported as failed.
-    needs: [projects, project, scenarios]
-    if: always() && (needs.project.result != 'skipped' || needs.scenarios.result != 'skipped')
+    needs: [workflows, workflow, scenarios]
+    if: always() && (needs.workflow.result != 'skipped' || needs.scenarios.result != 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -314,11 +314,11 @@ jobs:
       - name: Write report.md
         env:
           TITLE: "E2E: ${{ github.sha }}, run ${{ github.run_number }}"
-          PROJECTS: ${{ join(fromJson(needs.projects.outputs.matrix || '[]'), ' ') }}
-          SCENARIOS: ${{ needs.scenarios.result != 'skipped' && format('scenarios-{0}', join(fromJson(needs.projects.outputs.scenarios || '[]'), ' scenarios-')) || '' }}
+          WORKFLOWS: ${{ join(fromJson(needs.workflows.outputs.matrix || '[]'), ' ') }}
+          SCENARIOS: ${{ needs.scenarios.result != 'skipped' && format('scenarios-{0}', join(fromJson(needs.workflows.outputs.scenarios || '[]'), ' scenarios-')) || '' }}
         run: |
           mkdir -p artifacts
           # shellcheck disable=SC2086
           python3 tests/e2e/report.py artifacts report.md --title "$TITLE" \
-            --expect $PROJECTS $SCENARIOS
+            --expect $WORKFLOWS $SCENARIOS
           head -c 1000000 report.md >> "$GITHUB_STEP_SUMMARY"

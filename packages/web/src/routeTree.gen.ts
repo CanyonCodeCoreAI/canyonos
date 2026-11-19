@@ -14,17 +14,17 @@ import { Route as BrandRouteImport } from './routes/_brand'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as BrandLoginRouteImport } from './routes/_brand/login'
-import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
-import { Route as AuthenticatedProjectsProject_idRouteImport } from './routes/_authenticated/projects/$project_id'
-import { Route as AuthenticatedProjectsProject_idIndexRouteImport } from './routes/_authenticated/projects/$project_id/index'
-import { Route as AuthenticatedProjectsProject_idErrorsRouteImport } from './routes/_authenticated/projects/$project_id/errors'
-import { Route as AuthenticatedProjectsProject_idGovernanceRouteImport } from './routes/_authenticated/projects/$project_id/governance'
-import { Route as AuthenticatedProjectsProject_idLogsRouteImport } from './routes/_authenticated/projects/$project_id/logs'
-import { Route as AuthenticatedProjectsProject_idMetricsRouteImport } from './routes/_authenticated/projects/$project_id/metrics'
-import { Route as AuthenticatedProjectsProject_idMonitoringRouteImport } from './routes/_authenticated/projects/$project_id/monitoring'
-import { Route as AuthenticatedProjectsProject_idPromptsRouteImport } from './routes/_authenticated/projects/$project_id/prompts'
-import { Route as AuthenticatedProjectsProject_idScalingRouteImport } from './routes/_authenticated/projects/$project_id/scaling'
-import { Route as AuthenticatedProjectsProject_idStatusRouteImport } from './routes/_authenticated/projects/$project_id/status'
+import { Route as AuthenticatedWorkflowsIndexRouteImport } from './routes/_authenticated/workflows/index'
+import { Route as AuthenticatedWorkflowsWorkflow_idRouteImport } from './routes/_authenticated/workflows/$workflow_id'
+import { Route as AuthenticatedWorkflowsWorkflow_idIndexRouteImport } from './routes/_authenticated/workflows/$workflow_id/index'
+import { Route as AuthenticatedWorkflowsWorkflow_idErrorsRouteImport } from './routes/_authenticated/workflows/$workflow_id/errors'
+import { Route as AuthenticatedWorkflowsWorkflow_idGovernanceRouteImport } from './routes/_authenticated/workflows/$workflow_id/governance'
+import { Route as AuthenticatedWorkflowsWorkflow_idLogsRouteImport } from './routes/_authenticated/workflows/$workflow_id/logs'
+import { Route as AuthenticatedWorkflowsWorkflow_idMetricsRouteImport } from './routes/_authenticated/workflows/$workflow_id/metrics'
+import { Route as AuthenticatedWorkflowsWorkflow_idMonitoringRouteImport } from './routes/_authenticated/workflows/$workflow_id/monitoring'
+import { Route as AuthenticatedWorkflowsWorkflow_idPromptsRouteImport } from './routes/_authenticated/workflows/$workflow_id/prompts'
+import { Route as AuthenticatedWorkflowsWorkflow_idScalingRouteImport } from './routes/_authenticated/workflows/$workflow_id/scaling'
+import { Route as AuthenticatedWorkflowsWorkflow_idStatusRouteImport } from './routes/_authenticated/workflows/$workflow_id/status'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -49,103 +49,103 @@ const BrandLoginRoute = BrandLoginRouteImport.update({
   path: '/login',
   getParentRoute: () => BrandRoute,
 } as any)
-const AuthenticatedProjectsIndexRoute =
-  AuthenticatedProjectsIndexRouteImport.update({
-    id: '/projects/',
-    path: '/projects/',
+const AuthenticatedWorkflowsIndexRoute =
+  AuthenticatedWorkflowsIndexRouteImport.update({
+    id: '/workflows/',
+    path: '/workflows/',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedProjectsProject_idRoute =
-  AuthenticatedProjectsProject_idRouteImport.update({
-    id: '/projects/$project_id',
-    path: '/projects/$project_id',
+const AuthenticatedWorkflowsWorkflow_idRoute =
+  AuthenticatedWorkflowsWorkflow_idRouteImport.update({
+    id: '/workflows/$workflow_id',
+    path: '/workflows/$workflow_id',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedProjectsProject_idIndexRoute =
-  AuthenticatedProjectsProject_idIndexRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idIndexRoute =
+  AuthenticatedWorkflowsWorkflow_idIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idErrorsRoute =
-  AuthenticatedProjectsProject_idErrorsRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idErrorsRoute =
+  AuthenticatedWorkflowsWorkflow_idErrorsRouteImport.update({
     id: '/errors',
     path: '/errors',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idGovernanceRoute =
-  AuthenticatedProjectsProject_idGovernanceRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idGovernanceRoute =
+  AuthenticatedWorkflowsWorkflow_idGovernanceRouteImport.update({
     id: '/governance',
     path: '/governance',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idLogsRoute =
-  AuthenticatedProjectsProject_idLogsRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idLogsRoute =
+  AuthenticatedWorkflowsWorkflow_idLogsRouteImport.update({
     id: '/logs',
     path: '/logs',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idMetricsRoute =
-  AuthenticatedProjectsProject_idMetricsRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idMetricsRoute =
+  AuthenticatedWorkflowsWorkflow_idMetricsRouteImport.update({
     id: '/metrics',
     path: '/metrics',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idMonitoringRoute =
-  AuthenticatedProjectsProject_idMonitoringRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idMonitoringRoute =
+  AuthenticatedWorkflowsWorkflow_idMonitoringRouteImport.update({
     id: '/monitoring',
     path: '/monitoring',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idPromptsRoute =
-  AuthenticatedProjectsProject_idPromptsRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idPromptsRoute =
+  AuthenticatedWorkflowsWorkflow_idPromptsRouteImport.update({
     id: '/prompts',
     path: '/prompts',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idScalingRoute =
-  AuthenticatedProjectsProject_idScalingRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idScalingRoute =
+  AuthenticatedWorkflowsWorkflow_idScalingRouteImport.update({
     id: '/scaling',
     path: '/scaling',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
-const AuthenticatedProjectsProject_idStatusRoute =
-  AuthenticatedProjectsProject_idStatusRouteImport.update({
+const AuthenticatedWorkflowsWorkflow_idStatusRoute =
+  AuthenticatedWorkflowsWorkflow_idStatusRouteImport.update({
     id: '/status',
     path: '/status',
-    getParentRoute: () => AuthenticatedProjectsProject_idRoute,
+    getParentRoute: () => AuthenticatedWorkflowsWorkflow_idRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/register': typeof RegisterRoute
   '/login': typeof BrandLoginRoute
-  '/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
-  '/projects/': typeof AuthenticatedProjectsIndexRoute
-  '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
-  '/projects/$project_id/governance': typeof AuthenticatedProjectsProject_idGovernanceRoute
-  '/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
-  '/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
-  '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
-  '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
-  '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
-  '/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
-  '/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
+  '/workflows/$workflow_id': typeof AuthenticatedWorkflowsWorkflow_idRouteWithChildren
+  '/workflows/': typeof AuthenticatedWorkflowsIndexRoute
+  '/workflows/$workflow_id/errors': typeof AuthenticatedWorkflowsWorkflow_idErrorsRoute
+  '/workflows/$workflow_id/governance': typeof AuthenticatedWorkflowsWorkflow_idGovernanceRoute
+  '/workflows/$workflow_id/logs': typeof AuthenticatedWorkflowsWorkflow_idLogsRoute
+  '/workflows/$workflow_id/metrics': typeof AuthenticatedWorkflowsWorkflow_idMetricsRoute
+  '/workflows/$workflow_id/monitoring': typeof AuthenticatedWorkflowsWorkflow_idMonitoringRoute
+  '/workflows/$workflow_id/prompts': typeof AuthenticatedWorkflowsWorkflow_idPromptsRoute
+  '/workflows/$workflow_id/scaling': typeof AuthenticatedWorkflowsWorkflow_idScalingRoute
+  '/workflows/$workflow_id/status': typeof AuthenticatedWorkflowsWorkflow_idStatusRoute
+  '/workflows/$workflow_id/': typeof AuthenticatedWorkflowsWorkflow_idIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/register': typeof RegisterRoute
   '/login': typeof BrandLoginRoute
-  '/projects': typeof AuthenticatedProjectsIndexRoute
-  '/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
-  '/projects/$project_id/governance': typeof AuthenticatedProjectsProject_idGovernanceRoute
-  '/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
-  '/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
-  '/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
-  '/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
-  '/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
-  '/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
-  '/projects/$project_id': typeof AuthenticatedProjectsProject_idIndexRoute
+  '/workflows': typeof AuthenticatedWorkflowsIndexRoute
+  '/workflows/$workflow_id/errors': typeof AuthenticatedWorkflowsWorkflow_idErrorsRoute
+  '/workflows/$workflow_id/governance': typeof AuthenticatedWorkflowsWorkflow_idGovernanceRoute
+  '/workflows/$workflow_id/logs': typeof AuthenticatedWorkflowsWorkflow_idLogsRoute
+  '/workflows/$workflow_id/metrics': typeof AuthenticatedWorkflowsWorkflow_idMetricsRoute
+  '/workflows/$workflow_id/monitoring': typeof AuthenticatedWorkflowsWorkflow_idMonitoringRoute
+  '/workflows/$workflow_id/prompts': typeof AuthenticatedWorkflowsWorkflow_idPromptsRoute
+  '/workflows/$workflow_id/scaling': typeof AuthenticatedWorkflowsWorkflow_idScalingRoute
+  '/workflows/$workflow_id/status': typeof AuthenticatedWorkflowsWorkflow_idStatusRoute
+  '/workflows/$workflow_id': typeof AuthenticatedWorkflowsWorkflow_idIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -154,17 +154,17 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/_brand/login': typeof BrandLoginRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
-  '/_authenticated/projects/$project_id': typeof AuthenticatedProjectsProject_idRouteWithChildren
-  '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
-  '/_authenticated/projects/$project_id/errors': typeof AuthenticatedProjectsProject_idErrorsRoute
-  '/_authenticated/projects/$project_id/governance': typeof AuthenticatedProjectsProject_idGovernanceRoute
-  '/_authenticated/projects/$project_id/logs': typeof AuthenticatedProjectsProject_idLogsRoute
-  '/_authenticated/projects/$project_id/metrics': typeof AuthenticatedProjectsProject_idMetricsRoute
-  '/_authenticated/projects/$project_id/monitoring': typeof AuthenticatedProjectsProject_idMonitoringRoute
-  '/_authenticated/projects/$project_id/prompts': typeof AuthenticatedProjectsProject_idPromptsRoute
-  '/_authenticated/projects/$project_id/scaling': typeof AuthenticatedProjectsProject_idScalingRoute
-  '/_authenticated/projects/$project_id/status': typeof AuthenticatedProjectsProject_idStatusRoute
-  '/_authenticated/projects/$project_id/': typeof AuthenticatedProjectsProject_idIndexRoute
+  '/_authenticated/workflows/$workflow_id': typeof AuthenticatedWorkflowsWorkflow_idRouteWithChildren
+  '/_authenticated/workflows/': typeof AuthenticatedWorkflowsIndexRoute
+  '/_authenticated/workflows/$workflow_id/errors': typeof AuthenticatedWorkflowsWorkflow_idErrorsRoute
+  '/_authenticated/workflows/$workflow_id/governance': typeof AuthenticatedWorkflowsWorkflow_idGovernanceRoute
+  '/_authenticated/workflows/$workflow_id/logs': typeof AuthenticatedWorkflowsWorkflow_idLogsRoute
+  '/_authenticated/workflows/$workflow_id/metrics': typeof AuthenticatedWorkflowsWorkflow_idMetricsRoute
+  '/_authenticated/workflows/$workflow_id/monitoring': typeof AuthenticatedWorkflowsWorkflow_idMonitoringRoute
+  '/_authenticated/workflows/$workflow_id/prompts': typeof AuthenticatedWorkflowsWorkflow_idPromptsRoute
+  '/_authenticated/workflows/$workflow_id/scaling': typeof AuthenticatedWorkflowsWorkflow_idScalingRoute
+  '/_authenticated/workflows/$workflow_id/status': typeof AuthenticatedWorkflowsWorkflow_idStatusRoute
+  '/_authenticated/workflows/$workflow_id/': typeof AuthenticatedWorkflowsWorkflow_idIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -172,32 +172,32 @@ export interface FileRouteTypes {
     | '/'
     | '/register'
     | '/login'
-    | '/projects/$project_id'
-    | '/projects/'
-    | '/projects/$project_id/errors'
-    | '/projects/$project_id/governance'
-    | '/projects/$project_id/logs'
-    | '/projects/$project_id/metrics'
-    | '/projects/$project_id/monitoring'
-    | '/projects/$project_id/prompts'
-    | '/projects/$project_id/scaling'
-    | '/projects/$project_id/status'
-    | '/projects/$project_id/'
+    | '/workflows/$workflow_id'
+    | '/workflows/'
+    | '/workflows/$workflow_id/errors'
+    | '/workflows/$workflow_id/governance'
+    | '/workflows/$workflow_id/logs'
+    | '/workflows/$workflow_id/metrics'
+    | '/workflows/$workflow_id/monitoring'
+    | '/workflows/$workflow_id/prompts'
+    | '/workflows/$workflow_id/scaling'
+    | '/workflows/$workflow_id/status'
+    | '/workflows/$workflow_id/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/register'
     | '/login'
-    | '/projects'
-    | '/projects/$project_id/errors'
-    | '/projects/$project_id/governance'
-    | '/projects/$project_id/logs'
-    | '/projects/$project_id/metrics'
-    | '/projects/$project_id/monitoring'
-    | '/projects/$project_id/prompts'
-    | '/projects/$project_id/scaling'
-    | '/projects/$project_id/status'
-    | '/projects/$project_id'
+    | '/workflows'
+    | '/workflows/$workflow_id/errors'
+    | '/workflows/$workflow_id/governance'
+    | '/workflows/$workflow_id/logs'
+    | '/workflows/$workflow_id/metrics'
+    | '/workflows/$workflow_id/monitoring'
+    | '/workflows/$workflow_id/prompts'
+    | '/workflows/$workflow_id/scaling'
+    | '/workflows/$workflow_id/status'
+    | '/workflows/$workflow_id'
   id:
     | '__root__'
     | '/_authenticated'
@@ -205,17 +205,17 @@ export interface FileRouteTypes {
     | '/register'
     | '/_brand/login'
     | '/_authenticated/'
-    | '/_authenticated/projects/$project_id'
-    | '/_authenticated/projects/'
-    | '/_authenticated/projects/$project_id/errors'
-    | '/_authenticated/projects/$project_id/governance'
-    | '/_authenticated/projects/$project_id/logs'
-    | '/_authenticated/projects/$project_id/metrics'
-    | '/_authenticated/projects/$project_id/monitoring'
-    | '/_authenticated/projects/$project_id/prompts'
-    | '/_authenticated/projects/$project_id/scaling'
-    | '/_authenticated/projects/$project_id/status'
-    | '/_authenticated/projects/$project_id/'
+    | '/_authenticated/workflows/$workflow_id'
+    | '/_authenticated/workflows/'
+    | '/_authenticated/workflows/$workflow_id/errors'
+    | '/_authenticated/workflows/$workflow_id/governance'
+    | '/_authenticated/workflows/$workflow_id/logs'
+    | '/_authenticated/workflows/$workflow_id/metrics'
+    | '/_authenticated/workflows/$workflow_id/monitoring'
+    | '/_authenticated/workflows/$workflow_id/prompts'
+    | '/_authenticated/workflows/$workflow_id/scaling'
+    | '/_authenticated/workflows/$workflow_id/status'
+    | '/_authenticated/workflows/$workflow_id/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -261,136 +261,136 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrandLoginRouteImport
       parentRoute: typeof BrandRoute
     }
-    '/_authenticated/projects/': {
-      id: '/_authenticated/projects/'
-      path: '/projects'
-      fullPath: '/projects/'
-      preLoaderRoute: typeof AuthenticatedProjectsIndexRouteImport
+    '/_authenticated/workflows/': {
+      id: '/_authenticated/workflows/'
+      path: '/workflows'
+      fullPath: '/workflows/'
+      preLoaderRoute: typeof AuthenticatedWorkflowsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/projects/$project_id': {
-      id: '/_authenticated/projects/$project_id'
-      path: '/projects/$project_id'
-      fullPath: '/projects/$project_id'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idRouteImport
+    '/_authenticated/workflows/$workflow_id': {
+      id: '/_authenticated/workflows/$workflow_id'
+      path: '/workflows/$workflow_id'
+      fullPath: '/workflows/$workflow_id'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/projects/$project_id/': {
-      id: '/_authenticated/projects/$project_id/'
+    '/_authenticated/workflows/$workflow_id/': {
+      id: '/_authenticated/workflows/$workflow_id/'
       path: '/'
-      fullPath: '/projects/$project_id/'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idIndexRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idIndexRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/errors': {
-      id: '/_authenticated/projects/$project_id/errors'
+    '/_authenticated/workflows/$workflow_id/errors': {
+      id: '/_authenticated/workflows/$workflow_id/errors'
       path: '/errors'
-      fullPath: '/projects/$project_id/errors'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idErrorsRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/errors'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idErrorsRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/governance': {
-      id: '/_authenticated/projects/$project_id/governance'
+    '/_authenticated/workflows/$workflow_id/governance': {
+      id: '/_authenticated/workflows/$workflow_id/governance'
       path: '/governance'
-      fullPath: '/projects/$project_id/governance'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idGovernanceRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/governance'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idGovernanceRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/logs': {
-      id: '/_authenticated/projects/$project_id/logs'
+    '/_authenticated/workflows/$workflow_id/logs': {
+      id: '/_authenticated/workflows/$workflow_id/logs'
       path: '/logs'
-      fullPath: '/projects/$project_id/logs'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idLogsRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/logs'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idLogsRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/metrics': {
-      id: '/_authenticated/projects/$project_id/metrics'
+    '/_authenticated/workflows/$workflow_id/metrics': {
+      id: '/_authenticated/workflows/$workflow_id/metrics'
       path: '/metrics'
-      fullPath: '/projects/$project_id/metrics'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idMetricsRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/metrics'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idMetricsRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/monitoring': {
-      id: '/_authenticated/projects/$project_id/monitoring'
+    '/_authenticated/workflows/$workflow_id/monitoring': {
+      id: '/_authenticated/workflows/$workflow_id/monitoring'
       path: '/monitoring'
-      fullPath: '/projects/$project_id/monitoring'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idMonitoringRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/monitoring'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idMonitoringRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/prompts': {
-      id: '/_authenticated/projects/$project_id/prompts'
+    '/_authenticated/workflows/$workflow_id/prompts': {
+      id: '/_authenticated/workflows/$workflow_id/prompts'
       path: '/prompts'
-      fullPath: '/projects/$project_id/prompts'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idPromptsRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/prompts'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idPromptsRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/scaling': {
-      id: '/_authenticated/projects/$project_id/scaling'
+    '/_authenticated/workflows/$workflow_id/scaling': {
+      id: '/_authenticated/workflows/$workflow_id/scaling'
       path: '/scaling'
-      fullPath: '/projects/$project_id/scaling'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idScalingRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/scaling'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idScalingRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
-    '/_authenticated/projects/$project_id/status': {
-      id: '/_authenticated/projects/$project_id/status'
+    '/_authenticated/workflows/$workflow_id/status': {
+      id: '/_authenticated/workflows/$workflow_id/status'
       path: '/status'
-      fullPath: '/projects/$project_id/status'
-      preLoaderRoute: typeof AuthenticatedProjectsProject_idStatusRouteImport
-      parentRoute: typeof AuthenticatedProjectsProject_idRoute
+      fullPath: '/workflows/$workflow_id/status'
+      preLoaderRoute: typeof AuthenticatedWorkflowsWorkflow_idStatusRouteImport
+      parentRoute: typeof AuthenticatedWorkflowsWorkflow_idRoute
     }
   }
 }
 
-interface AuthenticatedProjectsProject_idRouteChildren {
-  AuthenticatedProjectsProject_idErrorsRoute: typeof AuthenticatedProjectsProject_idErrorsRoute
-  AuthenticatedProjectsProject_idGovernanceRoute: typeof AuthenticatedProjectsProject_idGovernanceRoute
-  AuthenticatedProjectsProject_idLogsRoute: typeof AuthenticatedProjectsProject_idLogsRoute
-  AuthenticatedProjectsProject_idMetricsRoute: typeof AuthenticatedProjectsProject_idMetricsRoute
-  AuthenticatedProjectsProject_idMonitoringRoute: typeof AuthenticatedProjectsProject_idMonitoringRoute
-  AuthenticatedProjectsProject_idPromptsRoute: typeof AuthenticatedProjectsProject_idPromptsRoute
-  AuthenticatedProjectsProject_idScalingRoute: typeof AuthenticatedProjectsProject_idScalingRoute
-  AuthenticatedProjectsProject_idStatusRoute: typeof AuthenticatedProjectsProject_idStatusRoute
-  AuthenticatedProjectsProject_idIndexRoute: typeof AuthenticatedProjectsProject_idIndexRoute
+interface AuthenticatedWorkflowsWorkflow_idRouteChildren {
+  AuthenticatedWorkflowsWorkflow_idErrorsRoute: typeof AuthenticatedWorkflowsWorkflow_idErrorsRoute
+  AuthenticatedWorkflowsWorkflow_idGovernanceRoute: typeof AuthenticatedWorkflowsWorkflow_idGovernanceRoute
+  AuthenticatedWorkflowsWorkflow_idLogsRoute: typeof AuthenticatedWorkflowsWorkflow_idLogsRoute
+  AuthenticatedWorkflowsWorkflow_idMetricsRoute: typeof AuthenticatedWorkflowsWorkflow_idMetricsRoute
+  AuthenticatedWorkflowsWorkflow_idMonitoringRoute: typeof AuthenticatedWorkflowsWorkflow_idMonitoringRoute
+  AuthenticatedWorkflowsWorkflow_idPromptsRoute: typeof AuthenticatedWorkflowsWorkflow_idPromptsRoute
+  AuthenticatedWorkflowsWorkflow_idScalingRoute: typeof AuthenticatedWorkflowsWorkflow_idScalingRoute
+  AuthenticatedWorkflowsWorkflow_idStatusRoute: typeof AuthenticatedWorkflowsWorkflow_idStatusRoute
+  AuthenticatedWorkflowsWorkflow_idIndexRoute: typeof AuthenticatedWorkflowsWorkflow_idIndexRoute
 }
 
-const AuthenticatedProjectsProject_idRouteChildren: AuthenticatedProjectsProject_idRouteChildren =
+const AuthenticatedWorkflowsWorkflow_idRouteChildren: AuthenticatedWorkflowsWorkflow_idRouteChildren =
   {
-    AuthenticatedProjectsProject_idErrorsRoute:
-      AuthenticatedProjectsProject_idErrorsRoute,
-    AuthenticatedProjectsProject_idGovernanceRoute:
-      AuthenticatedProjectsProject_idGovernanceRoute,
-    AuthenticatedProjectsProject_idLogsRoute:
-      AuthenticatedProjectsProject_idLogsRoute,
-    AuthenticatedProjectsProject_idMetricsRoute:
-      AuthenticatedProjectsProject_idMetricsRoute,
-    AuthenticatedProjectsProject_idMonitoringRoute:
-      AuthenticatedProjectsProject_idMonitoringRoute,
-    AuthenticatedProjectsProject_idPromptsRoute:
-      AuthenticatedProjectsProject_idPromptsRoute,
-    AuthenticatedProjectsProject_idScalingRoute:
-      AuthenticatedProjectsProject_idScalingRoute,
-    AuthenticatedProjectsProject_idStatusRoute:
-      AuthenticatedProjectsProject_idStatusRoute,
-    AuthenticatedProjectsProject_idIndexRoute:
-      AuthenticatedProjectsProject_idIndexRoute,
+    AuthenticatedWorkflowsWorkflow_idErrorsRoute:
+      AuthenticatedWorkflowsWorkflow_idErrorsRoute,
+    AuthenticatedWorkflowsWorkflow_idGovernanceRoute:
+      AuthenticatedWorkflowsWorkflow_idGovernanceRoute,
+    AuthenticatedWorkflowsWorkflow_idLogsRoute:
+      AuthenticatedWorkflowsWorkflow_idLogsRoute,
+    AuthenticatedWorkflowsWorkflow_idMetricsRoute:
+      AuthenticatedWorkflowsWorkflow_idMetricsRoute,
+    AuthenticatedWorkflowsWorkflow_idMonitoringRoute:
+      AuthenticatedWorkflowsWorkflow_idMonitoringRoute,
+    AuthenticatedWorkflowsWorkflow_idPromptsRoute:
+      AuthenticatedWorkflowsWorkflow_idPromptsRoute,
+    AuthenticatedWorkflowsWorkflow_idScalingRoute:
+      AuthenticatedWorkflowsWorkflow_idScalingRoute,
+    AuthenticatedWorkflowsWorkflow_idStatusRoute:
+      AuthenticatedWorkflowsWorkflow_idStatusRoute,
+    AuthenticatedWorkflowsWorkflow_idIndexRoute:
+      AuthenticatedWorkflowsWorkflow_idIndexRoute,
   }
 
-const AuthenticatedProjectsProject_idRouteWithChildren =
-  AuthenticatedProjectsProject_idRoute._addFileChildren(
-    AuthenticatedProjectsProject_idRouteChildren,
+const AuthenticatedWorkflowsWorkflow_idRouteWithChildren =
+  AuthenticatedWorkflowsWorkflow_idRoute._addFileChildren(
+    AuthenticatedWorkflowsWorkflow_idRouteChildren,
   )
 
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
-  AuthenticatedProjectsProject_idRoute: typeof AuthenticatedProjectsProject_idRouteWithChildren
-  AuthenticatedProjectsIndexRoute: typeof AuthenticatedProjectsIndexRoute
+  AuthenticatedWorkflowsWorkflow_idRoute: typeof AuthenticatedWorkflowsWorkflow_idRouteWithChildren
+  AuthenticatedWorkflowsIndexRoute: typeof AuthenticatedWorkflowsIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
-  AuthenticatedProjectsProject_idRoute:
-    AuthenticatedProjectsProject_idRouteWithChildren,
-  AuthenticatedProjectsIndexRoute: AuthenticatedProjectsIndexRoute,
+  AuthenticatedWorkflowsWorkflow_idRoute:
+    AuthenticatedWorkflowsWorkflow_idRouteWithChildren,
+  AuthenticatedWorkflowsIndexRoute: AuthenticatedWorkflowsIndexRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

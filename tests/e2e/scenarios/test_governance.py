@@ -39,15 +39,15 @@ from ..harness import (
     http,
     manifest,
     poll,
-    project_dir,
-    project_redis,
-    project_root,
+    workflow_dir,
+    workflow_group_redis,
+    workflow_root,
     qualified,
     stage,
     submit,
-    stop_project,
+    stop_workflow_group,
 )
-from ..projects import load_check, load_project
+from ..workflows import load_check, load_workflow
 
 pytestmark = pytest.mark.steps
 
@@ -63,19 +63,20 @@ CRASH_TIMEOUT = 180
 REFRESH_MARGIN = 2
 # How far the controller container's clock may lag the host's when it stamps `since`.
 CLOCK_SKEW = 5
-# The PR every case sends, held here rather than read from project.yaml, whose query
+# The PR every case sends, held here rather than read from workflow.yaml, whose query
 # the cases of other checks may reshape; TEXT_QUERY is the title-then-diff text
 # Workflow.review parses when `canyonos test` sends it.
 QUERY = {"title": "Add retry", "diff": "+def retry(): ..."}
 TEXT_QUERY = f"{QUERY['title']}\n{QUERY['diff']}"
 SINCE_FORMAT = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
-# The staged project's folder; the deployment names its agents `pr_review.<agent>`,
-# in Redis, the stored rules and every refusal.
-PROJECT = "pr_review"
-RUNNER = f"{PROJECT}.TestRunnerAgent"
-REVIEWER = f"{PROJECT}.ReviewAgent"
-MERGER = f"{PROJECT}.MergeAgent"
-WORKFLOW = f"{PROJECT}.Workflow"
+# Staged with a fixed workflow_id, so the workflow's name and its agents' names are known.
+FOLDER = "pr_review"
+WORKFLOW_ID = "0b5e7d2a-9c41-4f6e-8a3b-1d2c3e4f5a6b"
+NAME = f"{FOLDER}-{WORKFLOW_ID[:8]}"
+RUNNER = f"{NAME}.TestRunnerAgent"
+REVIEWER = f"{NAME}.ReviewAgent"
+MERGER = f"{NAME}.MergeAgent"
+WORKFLOW = f"{NAME}.Workflow"
 CONFIG_KEY = "governance:config"
 SPEND_KEY = "governance:spend"
 UP_KEY = "routing_table:up"
@@ -90,11 +91,11 @@ SPEND_OVER_DENY = 8
 
 @dataclass
 class Governed:
-    """The deployed pr_review project, its deployment and project folders, its
+    """The deployed pr_review workflow, its workflow group and workflow folders, its
     Redis, the rules the deploy seeded, and what the cases learn from each other."""
 
     dir: Path
-    project_dir: Path
+    workflow_dir: Path
     endpoint: Endpoint
     store: redis.Redis
     switch_model: str
@@ -239,7 +240,7 @@ def _epoch(since: str) -> float:
 
 @pytest.fixture(scope="module")
 def check():
-    return load_check(load_project("pr_review"))
+    return load_check(load_workflow("pr_review"))
 
 
 @pytest.fixture(scope="module")
@@ -247,17 +248,20 @@ def governed(recorder, images, tmp_path_factory):
     """pr_review staged with the real AWS keys and deployed without the dashboard;
     the cases start once the reconciler counts every agent up. Stopped afterwards,
     whatever the cases did to it."""
-    project = load_project("pr_review")
+    workflow = load_workflow("pr_review")
     switch_model = os.environ.get("BEDROCK_SWITCH_MODEL_ID") or DEFAULT_SWITCH_MODEL
     directory = stage(
         recorder,
-        project,
+        workflow,
         tmp_path_factory.mktemp("governance"),
-        {**secrets_of(project), "BEDROCK_SWITCH_MODEL_ID": switch_model},
+        {**secrets_of(workflow), "BEDROCK_SWITCH_MODEL_ID": switch_model},
     )
-    folder = project_dir(directory)
+    folder = workflow_dir(directory)
+    group_config = directory / "workflow_group.yaml"
+    settings = yaml.safe_load(group_config.read_text())
+    settings["workflows"] = {NAME: {"workflow_id": WORKFLOW_ID, "path": FOLDER}}
+    group_config.write_text(yaml.safe_dump(settings))
     agents = {qualified(folder, spec["name"]) for spec in manifest(folder)["agents"]}
-    settings = yaml.safe_load((directory / "deployment.yaml").read_text())
     deployed_at = time.time()
     try:
         canyonos(
@@ -266,7 +270,7 @@ def governed(recorder, images, tmp_path_factory):
             cwd=directory,
             timeout=DEPLOY_TIMEOUT,
         )
-        store = project_redis(recorder, directory)
+        store = workflow_group_redis(recorder, directory)
         poll(
             lambda: agents <= store.smembers(UP_KEY),
             timeout=UP_TIMEOUT,
@@ -276,7 +280,7 @@ def governed(recorder, images, tmp_path_factory):
         seed_raw = store.get(CONFIG_KEY)
         yield Governed(
             dir=directory,
-            project_dir=folder,
+            workflow_dir=folder,
             endpoint=deployed_endpoint(recorder, directory),
             store=store,
             switch_model=switch_model,
@@ -286,7 +290,7 @@ def governed(recorder, images, tmp_path_factory):
             seed=_parse_rules(seed_raw),
         )
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
     assert stop is None or stop.code == 0, stop.output[-2000:]
 
 
@@ -318,13 +322,13 @@ def test_the_query_passes_with_every_requirement_up(recorder, governed, check):
 
 def test_deploy_seeds_the_rules_from_governance_yaml(governed):
     """Every rule of the staged governance.yaml, as written, with its placeholder
-    expanded from the project's .env, every agent named as the deployment names it,
+    expanded from the workflow's .env, every agent named as the workflow group names it,
     and ReviewAgent's spend counted since the deploy."""
     agents = _seeded(governed)
-    path = project_root(governed.project_dir) / "config" / "governance.yaml"
+    path = workflow_root(governed.workflow_dir) / "config" / "governance.yaml"
     from_yaml = yaml.safe_load(path.read_text())["agents"]
-    assert set(agents) == {f"{PROJECT}.{name}" for name in from_yaml}, agents
-    requires = [f"{PROJECT}.{name}" for name in from_yaml["MergeAgent"]["requires"]]
+    assert set(agents) == {f"{NAME}.{name}" for name in from_yaml}, agents
+    requires = [f"{NAME}.{name}" for name in from_yaml["MergeAgent"]["requires"]]
     assert agents[MERGER] == {"requires": requires}, agents[MERGER]
     rule = from_yaml["ReviewAgent"]["spend"]["rules"][0]
     assert rule["action"]["model"] == "${BEDROCK_SWITCH_MODEL_ID}", rule
@@ -464,7 +468,7 @@ def test_a_reload_keeps_the_rules_edited_in_redis(recorder, governed):
     ReviewAgent keeps the deny rule written to Redis. The new agent appearing is
     what shows the reload ran at all."""
     store = governed.store
-    path = project_root(governed.project_dir) / "config" / "governance.yaml"
+    path = workflow_root(governed.workflow_dir) / "config" / "governance.yaml"
     original = path.read_text()
     document = yaml.safe_load(original)
     document["agents"]["MergeAgent"]["requires"] = ["TestRunnerAgent", "ReviewAgent"]
@@ -473,7 +477,7 @@ def test_a_reload_keeps_the_rules_edited_in_redis(recorder, governed):
     try:
         canyonos(
             recorder,
-            ["sync", str(governed.project_dir)],
+            ["sync", str(governed.workflow_dir)],
             cwd=governed.dir,
             timeout=SYNC_TIMEOUT,
         )
@@ -502,13 +506,13 @@ def test_a_crash_looping_requirement_counts_as_down(recorder, governed):
     _write_rules(store, _seeded(governed))
     store.set(SPEND_KEY, json.dumps({}))
     _stop_runner(governed)
-    env_path = governed.project_dir / ".env"
+    env_path = governed.workflow_dir / ".env"
     original = env_path.read_text()
     env_path.write_text(f"{original.rstrip()}\nTESTRUNNER_BROKEN=1\n")
     try:
         canyonos(
             recorder,
-            ["sync", str(governed.project_dir)],
+            ["sync", str(governed.workflow_dir)],
             cwd=governed.dir,
             timeout=SYNC_TIMEOUT,
         )

@@ -16,7 +16,7 @@ import { Payload } from '@/modules/monitoring/components/payload';
 import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
 import { formatTokens } from '@/modules/monitoring/monitoring.format';
 import { llmCallsQueryOptions } from '@/modules/monitoring/monitoring.queries';
-import { formatMoneyValue } from '@/modules/projects/projects.format';
+import { formatMoneyValue } from '@/modules/workflows/workflows.format';
 import type { RangeSelection } from '@/modules/core/time-range';
 
 const CALL_LIMIT = 200;
@@ -27,12 +27,12 @@ const formatDuration = (ms: number | null) =>
 const formatCost = (value: number | null) => (value === null ? '—' : formatMoneyValue(value));
 
 interface LlmCallListProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
 }
 
-export function LlmCallList({ project_id, range }: LlmCallListProps) {
-  const query = useQuery(llmCallsQueryOptions(project_id, { range, limit: CALL_LIMIT }));
+export function LlmCallList({ workflow_id, range }: LlmCallListProps) {
+  const query = useQuery(llmCallsQueryOptions(workflow_id, { range, limit: CALL_LIMIT }));
 
   if (query.error) {
     return (
@@ -68,7 +68,7 @@ export function LlmCallList({ project_id, range }: LlmCallListProps) {
           </tr>
         </thead>
         {query.data.calls.map((call, index) => (
-          <LlmCallRow key={call.span_id} call={call} index={index} project_id={project_id} />
+          <LlmCallRow key={call.span_id} call={call} index={index} workflow_id={workflow_id} />
         ))}
       </table>
     </Card>
@@ -78,11 +78,11 @@ export function LlmCallList({ project_id, range }: LlmCallListProps) {
 function LlmCallRow({
   call,
   index,
-  project_id,
+  workflow_id,
 }: {
   readonly call: MonitoringLlmCall;
   readonly index: number;
-  readonly project_id: string;
+  readonly workflow_id: string;
 }) {
   return (
     <Collapsible asChild>
@@ -117,8 +117,8 @@ function LlmCallRow({
           <tr>
             <td colSpan={8} className="bg-foreground/[0.02] px-4 py-3">
               <Link
-                to="/projects/$project_id/monitoring"
-                params={{ project_id }}
+                to="/workflows/$workflow_id/monitoring"
+                params={{ workflow_id }}
                 search={(previous) => ({ ...previous, view: 'traces', trace: call.trace_id })}
                 className="text-link mb-3 inline-flex items-center gap-1"
                 data-testid={`llm-row-open-trace-${index}`}

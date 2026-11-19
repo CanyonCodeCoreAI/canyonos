@@ -1,9 +1,9 @@
 # Cloud Provider Logic
 
 Backend implementations for where CanyonOS runs an agent's container. The top-level
-`provider:` in `deployment.yaml` picks one for the whole deployment: `local`, `ec2-pool` or `ec2-assign`.
+`provider:` in `workflow_group.yaml` picks one for the whole workflow group: `local`, `ec2-pool` or `ec2-assign`.
 
-The providers differ in where each agent container runs: local runs on the deployment host, while EC2 launches a separate EC2 machine.
+The providers differ in where each agent container runs: local runs on the workflow group host, while EC2 launches a separate EC2 machine.
 
 ## Providers
 
@@ -57,7 +57,7 @@ when the config drops it, or at stop.
 
 `published_address` is the replica's published `host:port`. Only a replica that callers on
 other machines reach is published: one on another machine, the endpoint when the
-deployment's provider isn't `local` (its agents call it back at `CANYONOS_PRIVATE_IP`), and
+workflow group's provider isn't `local` (its agents call it back at `CANYONOS_PRIVATE_IP`), and
 a database on its `db_port`. Any other replica on the
 Global Controller's machine publishes nothing, so its `host_port` is its container port
 and its `published_address` is its `address`, as a pod's is on Kubernetes.
@@ -73,11 +73,11 @@ record counts as finished once it has `address`.
 
 Every provider also has a schema module (`_schema.py`; ec2-pool's is `_schema_pool.py`
 and ec2-assign's `_schema_assign.py`, as they share the `EC2/` package), which the manifest schema checks
-`deployment.yaml` against. It must not import `_provider.py`, since the CLI reads it:
+`workflow_group.yaml` against. It must not import `_provider.py`, since the CLI reads it:
 
 | Name | Holds |
 | --- | --- |
-| `SECTION` | The provider's top-level section name, or `None`. Required when it is the deployment's `provider` |
+| `SECTION` | The provider's top-level section name, or `None`. Required when it is the workflow group's `provider` |
 | `SECTION_KEYS` | That section's keys |
 | `RETIRED_KEYS` | Keys the section no longer takes, each with the message saying what to do instead |
 | `MACHINE_TYPES` | The section key mapping each machine type to how many to start, or `None` for this machine only |

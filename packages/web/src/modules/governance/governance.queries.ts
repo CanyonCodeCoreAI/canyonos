@@ -7,13 +7,16 @@ import type { AgentRules, GovernanceResponse } from '@canyonos/api/governance';
 
 import { toast } from '@repo/ui/shadcn/sonner';
 import { apiCall, forgeAuthApi } from '@/api';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import {
+  dashboardPollInterval,
+  workflowQueryKeys,
+} from '@/modules/workflows/workflows.query-cache';
 
 const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.project_not_running':
-    'This deployment is not running, so its governance rules cannot be read. Deploy it, then retry.',
+  'canyonos.workflow_not_running':
+    'This workflow is not running, so its governance rules cannot be read. Deploy it, then retry.',
   'canyonos.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'governance.config_invalid':
@@ -31,27 +34,27 @@ export function governanceErrorMessage(
 }
 
 // Polled: this is where the operator watches an agent go down or a cap trip.
-export const governanceQueryOptions = (project_id: string) =>
+export const governanceQueryOptions = (workflow_id: string) =>
   queryOptions({
-    queryKey: projectQueryKeys.governance(project_id),
+    queryKey: workflowQueryKeys.governance(workflow_id),
     queryFn: () =>
-      apiCall<GovernanceResponse>(() => forgeAuthApi.projects[project_id]!.governance.get()),
+      apiCall<GovernanceResponse>(() => forgeAuthApi.workflows[workflow_id]!.governance.get()),
     retry: false,
     refetchInterval: dashboardPollInterval,
   });
 
-function useInvalidateGovernance(project_id: string) {
+function useInvalidateGovernance(workflow_id: string) {
   const query_client = useQueryClient();
   return () =>
-    query_client.invalidateQueries({ queryKey: projectQueryKeys.governance(project_id) });
+    query_client.invalidateQueries({ queryKey: workflowQueryKeys.governance(workflow_id) });
 }
 
-export function useSaveAgentRules(project_id: string, agent: string) {
-  const invalidate = useInvalidateGovernance(project_id);
+export function useSaveAgentRules(workflow_id: string, agent: string) {
+  const invalidate = useInvalidateGovernance(workflow_id);
   return useMutation({
     mutationFn: (rules: AgentRules) =>
       apiCall<GovernanceResponse>(() =>
-        forgeAuthApi.projects[project_id]!.governance.agents[agent]!.put(rules)
+        forgeAuthApi.workflows[workflow_id]!.governance.agents[agent]!.put(rules)
       ),
     onSuccess: () => {
       toast.success("Governance rules saved. They apply on the controller's next poll.", TOAST);
@@ -60,12 +63,12 @@ export function useSaveAgentRules(project_id: string, agent: string) {
   });
 }
 
-export function useSetStopped(project_id: string, agent: string) {
-  const invalidate = useInvalidateGovernance(project_id);
+export function useSetStopped(workflow_id: string, agent: string) {
+  const invalidate = useInvalidateGovernance(workflow_id);
   return useMutation({
     mutationFn: (stopped: boolean) =>
       apiCall<GovernanceResponse>(() =>
-        forgeAuthApi.projects[project_id]!.governance.agents[agent]!.stopped.put({ stopped })
+        forgeAuthApi.workflows[workflow_id]!.governance.agents[agent]!.stopped.put({ stopped })
       ),
     onSuccess: (_response, stopped) => {
       toast.success(

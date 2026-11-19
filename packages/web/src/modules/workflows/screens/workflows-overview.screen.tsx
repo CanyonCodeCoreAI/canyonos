@@ -1,0 +1,232 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
+import { ChevronRightIcon, FolderIcon } from 'lucide-react';
+import type { UseQueryResult } from '@tanstack/react-query';
+
+import type { FleetWorkflow } from '@canyonos/api/resources';
+import type { WorkflowSummary } from '@canyonos/api/workflows';
+
+import { SectionLabel } from '@repo/ui/components/section-label';
+import { Card } from '@repo/ui/shadcn/card';
+import { Skeleton } from '@repo/ui/shadcn/skeleton';
+import { EmptyState } from '@/modules/core/components/EmptyState';
+import { QueryError } from '@/modules/core/components/QueryError';
+import { formatCount, formatMoneyValue } from '@/modules/workflows/workflows.format';
+import {
+  fleetOverviewQueryOptions,
+  workflowsQueryOptions,
+} from '@/modules/workflows/workflows.queries';
+
+const OVERVIEW_RANGE = { preset: '30d' } as const;
+
+const SKELETON_KEYS = ['a', 'b', 'c', 'd', 'e'] as const;
+const ENTER = 'animate-in fade-in-0 slide-in-from-bottom-1 fill-mode-both ease-snappy duration-300';
+const LIST_CARD = 'scroll-area min-h-0 overflow-y-auto';
+
+type Greeting = 'morning' | 'afternoon' | 'evening';
+
+function greetingForHour(hour: number): Greeting {
+  if (hour < 12) return 'morning';
+  if (hour < 18) return 'afternoon';
+  return 'evening';
+}
+
+function heroSummary(workflowCount: number | undefined): string {
+  if (workflowCount === undefined) return 'Every workflow on this machine.';
+  if (workflowCount === 0) return 'No workflows on this machine yet.';
+  return `${workflowCount} ${workflowCount === 1 ? 'workflow' : 'workflows'} on this machine.`;
+}
+
+const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
+  ['day', 86_400_000],
+  ['hour', 3_600_000],
+  ['minute', 60_000],
+];
+const relativeFormatter = new Intl.RelativeTimeFormat('en', { numeric: 'always', style: 'narrow' });
+
+// Compact relative time (e.g. "2h ago") for the row's last-activity metadata.
+function formatRelativeTime(iso: string): string {
+  const elapsed = Date.parse(iso) - Date.now();
+  if (Number.isNaN(elapsed)) return '';
+  for (const [unit, msPerUnit] of RELATIVE_UNITS) {
+    if (Math.abs(elapsed) >= msPerUnit) {
+      return relativeFormatter.format(Math.round(elapsed / msPerUnit), unit);
+    }
+  }
+  return 'just now';
+}
+
+export function WorkflowsOverviewScreen() {
+  const workflowsQuery = useQuery(workflowsQueryOptions());
+  const spend_query = useQuery(fleetOverviewQueryOptions({ range: OVERVIEW_RANGE }));
+
+  // Spend is decoration on a row that already reads without it, so a failed rollup drops the figures
+  // rather than failing the list.
+  const spend_by_workflow = new Map<string, FleetWorkflow>(
+    (spend_query.data?.workflows ?? []).map((entry) => [entry.id, entry])
+  );
+
+  const greeting = greetingForHour(new Date().getHours());
+
+  return (
+    <main
+      className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden px-8 pt-7 pb-8"
+      data-testid="workflows-overview"
+    >
+      <header
+        className={`${ENTER} flex shrink-0 flex-wrap items-end justify-between gap-5 [animation-delay:0ms]`}
+        data-testid="workflows-overview-hero"
+      >
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-foreground text-[1.75rem] leading-none font-bold tracking-tight text-balance">
+            Good {greeting}
+          </h1>
+          <p className="text-muted-foreground max-w-[38rem] text-sm leading-relaxed text-pretty">
+            {heroSummary(workflowsQuery.data?.length)}
+          </p>
+        </div>
+      </header>
+
+      <section className={`${ENTER} flex min-h-0 flex-1 flex-col gap-3 [animation-delay:140ms]`}>
+        <SectionLabel>Your workflows</SectionLabel>
+        <WorkflowsList workflowsQuery={workflowsQuery} spendByWorkflow={spend_by_workflow} />
+      </section>
+    </main>
+  );
+}
+
+function WorkflowsList({
+  workflowsQuery,
+  spendByWorkflow,
+}: {
+  readonly workflowsQuery: UseQueryResult<WorkflowSummary[]>;
+  readonly spendByWorkflow: Map<string, FleetWorkflow>;
+}) {
+  if (workflowsQuery.isPending) {
+    return (
+      <Card className={LIST_CARD} data-testid="workflows-overview-loading" aria-busy>
+        <ul className="divide-border divide-y">
+          {SKELETON_KEYS.map((key) => (
+            <li key={key} className="flex items-center gap-4 px-5 py-4">
+              <Skeleton className="size-9 shrink-0 rounded-lg" />
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <Skeleton className="h-3.5 w-40" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+              <Skeleton className="h-5 w-20 rounded-md" />
+            </li>
+          ))}
+        </ul>
+      </Card>
+    );
+  }
+
+  if (workflowsQuery.error) {
+    return (
+      <QueryError
+        test_id="workflows-overview-error"
+        message="We couldn't load your workflows."
+        onRetry={() => void workflowsQuery.refetch()}
+      />
+    );
+  }
+
+  if (workflowsQuery.data.length === 0) return <NoWorkflowsYet />;
+
+  return (
+    <Card className={LIST_CARD} data-testid="workflows-overview-list">
+      <ul className="divide-border divide-y">
+        {workflowsQuery.data.map((workflow) => (
+          <WorkflowOverviewRow
+            key={workflow.id}
+            workflow={workflow}
+            spend={spendByWorkflow.get(workflow.id)}
+          />
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** The whole row is one link to the workflow dashboard, stretched over it with an ::after overlay. */
+function WorkflowOverviewRow({
+  workflow,
+  spend,
+}: {
+  readonly workflow: WorkflowSummary;
+  /** Trailing-30-day spend for this workflow. Absent while the fleet rollup is still loading. */
+  readonly spend: FleetWorkflow | undefined;
+}) {
+  return (
+    <li className="group has-[a:focus-visible]:ring-ring hover:bg-muted/40 relative flex items-center gap-3 px-5 py-4 transition-colors has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-inset sm:gap-4">
+      <Link
+        to="/workflows/$workflow_id/status"
+        params={{ workflow_id: workflow.id }}
+        data-testid={`workflows-overview-workflow-${workflow.id}`}
+        aria-label={workflow.name}
+        title={workflow.name}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-md after:absolute after:inset-0 after:z-[1] after:content-[''] focus-visible:outline-none"
+      >
+        <span className="bg-muted flex size-9 shrink-0 items-center justify-center rounded-lg">
+          <FolderIcon className="text-muted-foreground size-4" strokeWidth={1.9} aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-foreground truncate text-sm font-semibold">{workflow.name}</span>
+          <RowSpend spend={spend} />
+        </span>
+      </Link>
+
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <span className="text-muted-foreground hidden font-mono text-xs tabular-nums sm:inline">
+          {formatRelativeTime(workflow.updated_at)}
+        </span>
+        <ChevronRightIcon
+          className="text-muted-foreground/60 ease-snappy size-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5"
+          strokeWidth={2}
+          aria-hidden
+        />
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The ribbon's figures, on their own line: the row's right-hand side is already full, and these read
+ * as a set rather than as more row metadata.
+ */
+function RowSpend({ spend }: { readonly spend: FleetWorkflow | undefined }) {
+  if (!spend) return null;
+
+  return (
+    <span className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-xs tabular-nums">
+      <RowMetric label="queries" value={formatCount(spend.requests)} />
+      <RowMetric label="spend" value={formatMoneyValue(spend.cost)} />
+      {spend.requests > 0 ? (
+        <RowMetric label="per query" value={formatMoneyValue(spend.cost / spend.requests)} />
+      ) : null}
+    </span>
+  );
+}
+
+/** One figure from the cost ribbon, sized for a list row rather than a card. */
+function RowMetric({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <span className="flex items-baseline gap-1">
+      <span className="text-foreground font-semibold">{value}</span>
+      <span className="font-sans">{label}</span>
+    </span>
+  );
+}
+
+function NoWorkflowsYet() {
+  return (
+    <div className="flex flex-1" data-testid="workflows-overview-empty">
+      <EmptyState>
+        <p>No workflows on this machine yet.</p>
+      </EmptyState>
+    </div>
+  );
+}

@@ -32,7 +32,7 @@ func validProject(name string) *canyonosv1alpha1.CanyonProject {
 			ProjectID: testProjectID,
 			ConfigRef: "canyonos-config",
 			Endpoint: canyonosv1alpha1.EndpointSpec{Routes: []canyonosv1alpha1.EndpointRoute{
-				{Project: "helloworld", Agent: "Workflow", Method: "main"},
+				{Workflow: "helloworld", Agent: "Workflow", Method: "main"},
 			}},
 		},
 	}

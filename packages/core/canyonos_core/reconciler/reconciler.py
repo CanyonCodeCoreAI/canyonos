@@ -213,7 +213,7 @@ class Reconciler(object):
 
     def _remove_without_draining(self, replica_id, replica, reason):
         """Remove a replica that can't drain, an unhealthy one or a database, or any of a
-        toy deployment's, at once, first copying an unhealthy one's last output into this log."""
+        toy workflow group's, at once, first copying an unhealthy one's last output into this log."""
         logger.info("Removing replica %s (%s)", replica_id, reason)
         if reason == "unhealthy":
             dump_container_log(
@@ -269,7 +269,7 @@ class Reconciler(object):
 
     def _drain_replica(self, replica_id, replica, reason):
         """Advance one step towards removing a replica, draining it first. One that can never
-        report idle, a database or one that stopped answering, and any of a toy deployment's,
+        report idle, a database or one that stopped answering, and any of a toy workflow group's,
         is removed at once. Returns True once removed."""
         # A stock database image has no controller to report idle.
         if (
@@ -320,7 +320,7 @@ class Reconciler(object):
 
     def _port_is_open(self, replica):
         """Whether something is listening at the replica's address, the one the Global
-        Controller calls: by name on the project's network, or at another machine's IP."""
+        Controller calls: by name on the workflow group's network, or at another machine's IP."""
         host, _, port = replica.get("address", "").rpartition(":")
         if not host or not port:
             return False
@@ -442,19 +442,19 @@ class Reconciler(object):
 
 
 def main(argv=None):
-    """Start the reconciler for the given deployment; it keeps each agent running its
-    desired number of replicas. Returns 1 if the deployment's folder is missing."""
+    """Start the reconciler for the given workflow group; it keeps each agent running its
+    desired number of replicas. Returns 1 if the workflow group's folder is missing."""
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
     parser = argparse.ArgumentParser(description="CanyonOS reconciliation loop.")
     parser.add_argument(
-        "-w", "--workspace", required=True, help="Path to the deployment's folder."
+        "-w", "--workspace", required=True, help="Path to the workflow group's folder."
     )
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.workspace):
-        logger.critical("Deployment folder not found at %s", args.workspace)
+        logger.critical("Workflow group folder not found at %s", args.workspace)
         return 1
 
     Reconciler(args.workspace).run()

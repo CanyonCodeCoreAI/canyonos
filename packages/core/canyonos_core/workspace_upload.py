@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Read a project archive the CLI uploads to the server's
-`PUT /deployment/projects/<name>`: list and fingerprint its entries, and remove from
-the workspace what the previous upload had and this one lacks."""
+"""Read a workflow archive the CLI uploads to the server's
+`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<name>`: list and fingerprint
+its entries, and remove from the workspace what the previous upload had and this one
+lacks."""
 
 import errno
 import hashlib
@@ -49,7 +50,7 @@ def archive_digests(archive, members):
 
 def fingerprints(digests):
     """Return SHA-256 digests over the files in `digests`: `config` for
-    `deployment.yaml`, the `.env` files and each project's `config/` files, which a
+    `workflow_group.yaml`, the `.env` files and each workflow's `config/` files, which a
     reload applies (replicas it starts read the new `.env`), and `code` for the rest,
     which needs a redeploy."""
     parts = {"code": hashlib.sha256(), "config": hashlib.sha256()}

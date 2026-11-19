@@ -1,7 +1,7 @@
-# Local deployment
+# Local workflow group
 
 A local deploy runs the whole workflow as Docker containers on the machine that runs
-`canyonos deploy`. It is the default, so a `deployment.yaml` that sets neither `target`
+`canyonos deploy`. It is the default, so a `workflow_group.yaml` that sets neither `target`
 nor `provider` deploys this way. This page covers what a deploy starts, the ports it
 opens, and how to check, change and stop it.
 
@@ -10,7 +10,7 @@ checks Docker.
 
 ## Where a workflow deploys
 
-Two settings in `deployment.yaml` decide where a workflow runs:
+Two settings in `workflow_group.yaml` decide where a workflow runs:
 
 - `target` picks what runs it: `docker`, CanyonOS on the machine that runs
   `canyonos deploy` (the default), or `kubernetes`, the CanyonOS operator on a cluster.
@@ -20,36 +20,36 @@ Two settings in `deployment.yaml` decide where a workflow runs:
 | Deploy to                   | `target`     | `provider`                 | Set it with                       |
 | --------------------------- | ------------ | -------------------------- | --------------------------------- |
 | Locally, with Docker        | `docker`     | `local`                    | Nothing; it's the default         |
-| [EC2](EC2.md)               | `docker`     | `ec2-pool` or `ec2-assign` | `provider` in `deployment.yaml`   |
-| [Kubernetes](KUBERNETES.md) | `kubernetes` | not used                   | `target` in `deployment.yaml`     |
+| [EC2](EC2.md)               | `docker`     | `ec2-pool` or `ec2-assign` | `provider` in `workflow_group.yaml`   |
+| [Kubernetes](KUBERNETES.md) | `kubernetes` | not used                   | `target` in `workflow_group.yaml`     |
 
-Kubernetes deploys don't support multi-folder deployments yet.
+Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ## Deploy
 
-From the folder above the project folder (for a converted workflow, the project folder
-holds `.canyon`), with a deployment folder of its own beside it:
+From the folder above the workflow folder (for a converted workflow, the workflow folder
+holds `.canyon`), with a workflow group folder of its own beside it:
 
 ```bash
-canyonos deploy my-project --folder my-deployment --api-key <your api key>
+canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>
 ```
 
-It makes the deployment folder and its `deployment.yaml` when there are none. Run the
-other commands, a redeploy included, from the deployment folder:
-`cd my-deployment && canyonos deploy ../my-project`.
+It makes the workflow group folder and its `workflow_group.yaml` when there are none. Run the
+other commands, a redeploy included, from the workflow group folder:
+`cd my-group && canyonos deploy ../my-workflow`.
 
 `--api-key` sets the key every request to the endpoint and the dashboard must carry. The
 CLI saves it to `~/.canyonos/api_key` and later deploys reuse it, so pass it once.
 Without a key, the deploy warns and anyone who reaches the endpoint can use it. See
 [API key](AUTHORIZATION.md).
 
-1. It checks each project: it warns about keys in `.env.example` that `.env` leaves
+1. It checks each workflow: it warns about keys in `.env.example` that `.env` leaves
    missing or empty, and stops on any problem `canyonos validate` finds.
 2. It shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
    **2. Configure an agent** to change them first.
 3. It builds an image per agent and starts the Global Controller, Redis, the agents'
    replicas, the endpoint and, if it isn't running yet, the [dashboard](DASHBOARD.md).
-   With `deploy_mode: toy`, each project's agents run in one replica with no image
+   With `deploy_mode: toy`, each workflow's agents run in one replica with no image
    build, and the dashboard doesn't start: run `canyonos serve` for it.
 4. At **Deploy is live** it prints the dashboard address, `curl` commands to send a
    request and get its result, with the `<your api key>` placeholder where the key
@@ -58,7 +58,7 @@ Without a key, the deploy warns and anyone who reaches the endpoint can use it. 
 
 | If                                                  | What happens                                                                                                 |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| You run `canyonos deploy` again                     | It replaces this deployment's previous deploy                                                                |
+| You run `canyonos deploy` again                     | It replaces this workflow group's previous deploy                                                                |
 | The deploy fails before the workflow is up          | It removes what it started                                                                                   |
 | You press Ctrl+C before the Global Controller is up | The same: it removes what it started                                                                         |
 | You press Ctrl+C after that                         | It only stops watching. The deploy carries on; `canyonos logs` follows it again and `canyonos stop` stops it |
@@ -72,7 +72,7 @@ Without a key, the deploy warns and anyone who reaches the endpoint can use it. 
 | Dashboard | `8081` | The next free port                                               |
 | Agents    | none   | The Global Controller reaches them over a private Docker network |
 
-A port you set in `deployment.yaml` is never moved: if it's taken, the deploy stops,
+A port you set in `workflow_group.yaml` is never moved: if it's taken, the deploy stops,
 or for `dashboard_port`, only the dashboard doesn't start. The deploy says when a port
 moved, and a redeploy tries the last deploy's ports first.
 [Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) lists every port and the
@@ -80,13 +80,13 @@ setting that fixes it.
 
 ## Run several workflows
 
-`canyonos deploy ../a ../b` runs both project folders in one deployment, with one
+`canyonos deploy ../a ../b` runs both workflow folders in one workflow group, with one
 Global Controller, Redis and endpoint, which serves each route at
-`POST /<project>/<agent>/<method>`. Each deployment folder deploys on its own, so
+`POST /<workflow_id>`. Each workflow group folder deploys on its own, so
 several can run at once and share one dashboard. Their containers and images are named
-`canyonos-<folder>-<id>-...`, such as `canyonos-my-deployment-1a2b3c4d-global-controller`,
-where `<folder>` is the deployment folder and `<id>` is the start of the `deployment_id`
-the first deploy writes into `deployment.yaml`.
+`canyonos-<folder>-<id>-...`, such as `canyonos-my-group-1a2b3c4d-global-controller`,
+where `<folder>` is the workflow group folder and `<id>` is the start of the `workflow_group_id`
+the first deploy writes into `workflow_group.yaml`.
 
 ## Check it
 
@@ -102,20 +102,20 @@ The [dashboard](DASHBOARD.md) shows each request, its traces, logs, errors and c
 ## Change it
 
 The deploy runs from a copy of the workflow, so an edit changes nothing until you apply
-it: `canyonos sync ../my-project` for files in `config/`, `canyonos deploy` for code
+it: `canyonos sync ../my-workflow` for files in `config/`, `canyonos deploy` for code
 and `.env`. See [Apply a change](CONFIGURE.md#apply-a-change).
 
 ## Stop
 
 ```bash
-canyonos stop     # remove this deployment's containers, keep its images for a quick redeploy
-canyonos clean    # stop, then remove the agent images; each project's .canyon stays
+canyonos stop     # remove this workflow group's containers, keep its images for a quick redeploy
+canyonos clean    # stop, then remove the agent images; each workflow's .canyon stays
 ```
 
-With more than one deployment, each lists them for you to pick, or takes a name:
-`canyonos stop my-deployment` works from any folder. The dashboard stops with the last
-running deployment and keeps its history. Neither command touches `.env`.
+With more than one workflow group, each lists them for you to pick, or takes a name:
+`canyonos stop my-group` works from any folder. The dashboard stops with the last
+running workflow group and keeps its history. Neither command touches `.env`.
 [Stop and clean up](CLI.md#stop-and-clean-up) has what each command removes, and
-`--all` for every deployment on the machine.
+`--all` for every workflow group on the machine.
 
 If something goes wrong, see [Troubleshooting](TROUBLESHOOTING.md).

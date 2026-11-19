@@ -83,8 +83,8 @@ def _ensure_ssh_key():
         if configured_path:
             raise ValueError(
                 f"EC2 SSH private key {configured_path} was not found. CanyonOS deploys "
-                "from a container that sees only the project folder, so put the key in "
-                "the project and give ssh_private_key_path relative to it, or leave it "
+                "from a container that sees only the workflow group folder, so put the key "
+                "there and give ssh_private_key_path relative to it, or leave it "
                 "unset to use a generated key."
             )
         _generate_default_key(key_path)
@@ -190,7 +190,7 @@ def _deploying_machine():
 
 
 def _section_name():
-    """The config section this deployment's EC2 settings are in: `ec2-assign:` for
+    """The config section this workflow group's EC2 settings are in: `ec2-assign:` for
     ec2-assign, else `ec2-pool:`."""
     provider = str(_controller.config.get("provider", ""))
     return "ec2-assign" if provider.casefold() == "ec2-assign" else "ec2-pool"
@@ -207,7 +207,7 @@ def _ec2_config():
         own_machine = _deploying_machine()
         if own_machine is None:
             raise RuntimeError(
-                f"deployment.yaml does not set {section}: "
+                f"workflow_group.yaml does not set {section}: "
                 f"{', '.join(missing)}, "
                 "and this machine's own can't be read from EC2 metadata. Set them, "
                 "or deploy from an EC2 machine such as one made by `canyonos provision`."
@@ -218,10 +218,10 @@ def _ec2_config():
 
 
 def _ensure_key_pair_imported(cfg, key_path, client):
-    """Import the controller's SSH public key as a per-project EC2 key pair, if it isn't already.
+    """Import the controller's SSH public key as a per-workflow-group EC2 key pair, if it isn't already.
 
-    Naming the key pair after the project id and a hash of the public key itself
-    (rather than one fixed name) keeps unrelated projects, and a key that gets
+    Naming the key pair after the workflow group id and a hash of the public key itself
+    (rather than one fixed name) keeps unrelated workflow groups, and a key that gets
     regenerated after the original file is lost, from colliding under the same
     AWS key pair name and silently drifting out of sync with it.
     """
@@ -231,7 +231,7 @@ def _ensure_key_pair_imported(cfg, key_path, client):
         text=True,
         check=True,
     ).stdout.encode()
-    deployment_id = _controller.config.get("deployment_id") or "default"
+    deployment_id = _controller.config.get("workflow_group_id") or "default"
     fingerprint = hashlib.sha256(public_key).hexdigest()[:8]
     key_name = f"canyonos-ec2-{deployment_id}-{fingerprint}"
     from botocore.exceptions import ClientError
@@ -263,7 +263,7 @@ def start_machine(machine_spec, launch_id):
         raise RuntimeError(
             "No AWS credentials found. CanyonOS deploys from a container that can't "
             "read your ~/.aws, so put AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in "
-            "the project's .env."
+            "the workflow group's .env."
         ) from None
     request = {
         "ImageId": cfg.get("ami_id", DEFAULT_AMI_ID),

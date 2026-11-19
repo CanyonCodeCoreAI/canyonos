@@ -4,7 +4,7 @@
 """Prompt management on a port with prompts.yaml: a version published and made
 live through the dashboard API is the one the LLM gateway sends with the next
 query's model call, and the dashboard records that version on the call. The
-previous version is made live again afterwards. Runs only for projects with the
+previous version is made live again afterwards. Runs only for workflows with the
 `prompts` trait whose queries finish in seconds."""
 
 from datetime import datetime, timedelta, timezone
@@ -28,7 +28,7 @@ def _versions_sent(recorder, deployed, redis_client, name):
     """Send the test query and return the prompt versions the gateway recorded on
     its calls named `name`, and the request id."""
     request_id, _ = result_of(
-        recorder, deployed.endpoint, deployed.query, timeout=deployed.project.timeout
+        recorder, deployed.endpoint, deployed.query, timeout=deployed.workflow.timeout
     )
     calls = poll(
         lambda: [c for c in calls_of(redis_client, request_id) if c.label == name],
@@ -42,7 +42,7 @@ def _versions_sent(recorder, deployed, redis_client, name):
 def _recorded_versions(deployed, request_id, name, since):
     """The prompt versions the dashboard recorded on the request's `name` blocks,
     looked up in the window from `since` to now."""
-    path = f"/projects/{deployed.project_id}/requests/{request_id}"
+    path = f"/workflows/{deployed.workflow_id}/requests/{request_id}"
 
     def blocks():
         window = urlencode(
@@ -64,7 +64,7 @@ def _recorded_versions(deployed, request_id, name, since):
 
 
 def test_live_prompt_version_reaches_the_model_call(recorder, deployed):
-    base = f"/projects/{deployed.project_id}/prompts"
+    base = f"/workflows/{deployed.workflow_id}/prompts"
     redis_client = store(recorder, deployed)
     prompts = deployed.api.get(base).json()
     assert prompts, "the port declares the prompts trait but lists no prompts"

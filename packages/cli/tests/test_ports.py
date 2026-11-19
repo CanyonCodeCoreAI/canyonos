@@ -40,8 +40,8 @@ def test_every_deployments_ports_are_claimed(home):
 
     claims = ports.claimed()
 
-    assert {claims[port] for port in (8000, 6379, 8080)} == {"deployment a-1"}
-    assert claims[8001] == "deployment b-2"
+    assert {claims[port] for port in (8000, 6379, 8080)} == {"workflow group a-1"}
+    assert claims[8001] == "workflow group b-2"
 
 
 def test_running_forwards_are_claimed_and_stale_ones_are_not(home):

@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+export interface WorkflowExpansionState {
+  readonly is_open: boolean;
+  readonly is_active: boolean;
+}
+
+export type WorkflowExpansionEvent =
+  | { readonly type: 'activation_changed'; readonly is_active: boolean }
+  | { readonly type: 'open_changed'; readonly is_open: boolean };
+
+export function createWorkflowExpansionState(is_active: boolean): WorkflowExpansionState {
+  return { is_open: is_active, is_active };
+}
+
+export function reduceWorkflowExpansion(
+  state: WorkflowExpansionState,
+  event: WorkflowExpansionEvent
+): WorkflowExpansionState {
+  if (event.type === 'open_changed') {
+    return { ...state, is_open: event.is_open };
+  }
+
+  if (event.is_active === state.is_active) return state;
+  return {
+    is_active: event.is_active,
+    is_open: event.is_active ? true : state.is_open,
+  };
+}

@@ -6,7 +6,7 @@ runs the `replicas` count set in the workflow config.
 
 ## Define the policy in a file
 
-Create `scaling.yaml` in the project's `config` folder:
+Create `scaling.yaml` in the workflow's `config` folder:
 
 ```yaml
 scaling:
@@ -30,19 +30,19 @@ scaling:
 | `requests_per_minute_per_replica` | Throughput     | Requests the agent completed per minute, divided by running replicas |
 | `queue_length_total`              | Queue length   | Requests waiting, across all of the agent's replicas                 |
 
-Each project has one policy, and it applies to each of its agents separately: each is
+Each workflow has one policy, and it applies to each of its agents separately: each is
 measured on its own load and gains or loses its own replicas. Database entries and the
 endpoint's container are never scaled. The policy takes effect on the next
 `canyonos sync` (Docker only) or `canyonos deploy`.
 
 A policy that breaks the rules in the table is skipped with a warning in the Global
-Controller's log, and none of the project's agents is scaled. The
+Controller's log, and none of the workflow's agents is scaled. The
 [portfolio example](https://github.com/CanyonCodeCoreAI/canyonos/blob/main/examples/portfolio/portfolio/config/scaling.yaml)
 has a full `scaling.yaml`.
 
 ### How scaling decides
 
-Each poll (`poll_interval` in `deployment.yaml`, 5 seconds by default), the Global
+Each poll (`poll_interval` in `workflow_group.yaml`, 5 seconds by default), the Global
 Controller measures every agent's load and keeps the last 4 measurements. Then, for each
 agent:
 
@@ -59,8 +59,8 @@ from when its last change is fully running.
 
 ## Change the policy while the workflow runs
 
-Open the deployment on the [dashboard](DASHBOARD.md) and go to **Scaling**, which has
-each project's policy. The page works only while the deployment is running. If a
+Open the workflow group on the [dashboard](DASHBOARD.md) and go to **Scaling**, which has
+each workflow's policy. The page works only while the workflow group is running. If a
 stored policy is invalid, the page says why.
 
 | Control                       | What it does                                                                                                                                 |
@@ -78,7 +78,7 @@ stored policy is invalid, the page says why.
 - On Docker and EC2, a reload or deploy also sets every agent back to the `replicas`
   count in the workflow config, and scaling starts again from there. On Kubernetes, a
   redeploy keeps each agent's live count; see
-  [Kubernetes deployment](KUBERNETES.md#scaling), which also explains why you should not
+  [Kubernetes workflow group](KUBERNETES.md#scaling), which also explains why you should not
   add a HorizontalPodAutoscaler.
 - An agent never scales to zero: nothing is measured at zero replicas, so
   `min_replicas` is at least 1.

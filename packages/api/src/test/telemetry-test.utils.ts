@@ -10,9 +10,10 @@ import { db } from '@api/db/client';
 import { otelSpans } from '@api/db/schema';
 import {
   GEN_AI,
-  PROJECT_ID_ATTRIBUTE,
   RUNTIME_ATTRIBUTES,
   STATUS_CODE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
 } from '@api/modules/metrics/metrics.contract';
 import { config } from '@core/env';
 
@@ -83,8 +84,13 @@ async function insert_span(span: SpanFixture, attributes: Record<string, unknown
   });
 }
 
-export async function write_project_span(project_id: string, span: SpanFixture): Promise<void> {
-  await insert_span(span, { [PROJECT_ID_ATTRIBUTE]: project_id });
+/** Writes a span of the workflow, the one workflow of a workflow group with its id (see
+ * create_test_workflow). */
+export async function write_workflow_span(workflow_id: string, span: SpanFixture): Promise<void> {
+  await insert_span(span, {
+    [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
+    [WORKFLOW_GROUP_ID_ATTRIBUTE]: workflow_id,
+  });
 }
 
 export async function write_unattributed_span(span: SpanFixture): Promise<void> {

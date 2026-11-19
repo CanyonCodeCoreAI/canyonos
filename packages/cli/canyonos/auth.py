@@ -70,8 +70,8 @@ def _save(key: str) -> None:
     ui.ok(KEY_SET)
     if replaced:
         ui.hint(
-            "The dashboard and this deployment use the new key; other running "
-            "deployments keep the old one until you redeploy them."
+            "The dashboard and this workflow group use the new key; other running "
+            "workflow groups keep the old one until you redeploy them."
         )
 
 

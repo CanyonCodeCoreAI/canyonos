@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The bundled Hello World, copied out of the package the way `canyonos quickstart`
-does it and then deployed for real, from its own deployment folder as the
+does it and then deployed for real, from its own workflow group folder as the
 quickstart types it.
 
 The unit tests check that `_fetch` writes the right filenames. They cannot catch a
@@ -68,7 +68,7 @@ OPEN_WARNING = (
 
 # The endpoint address out of `canyonos deploy`'s own summary. The port is picked
 # at deploy time, so it is read back rather than assumed.
-ENDPOINT = re.compile(rf"http://[\d.]+:\d+/{STARTER}/Workflow/main")
+ENDPOINT = re.compile(r"http://[\d.]+:\d+/[0-9a-f-]{36}")
 
 
 def _real_docker_config() -> tuple[str, str]:
@@ -149,7 +149,7 @@ needs_a_runtime = pytest.mark.skipif(
 
 @pytest.fixture
 def deployed_workflow(cli_case: CliCase) -> Iterator[tuple[CliCase, Path]]:
-    """The bundled workflow's deployment folder on disk, as the quickstart copies it,
+    """The bundled workflow group folder on disk, as the quickstart copies it,
     torn down after the test either way.
 
     The teardown is checked rather than attempted: containers and images this
@@ -229,9 +229,9 @@ def _run(case: CliCase, args: list[str], **options) -> str:
 def _deploy(
     case: CliCase, folder: Path, *args: str, env: Mapping[str, str] | None = None
 ) -> tuple[str, str]:
-    """Deploy the workflow from its deployment folder `folder`, as the quickstart
-    types it, naming its project, without the dashboard, which is shared across every
-    deployment on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
+    """Deploy the workflow from its workflow group folder `folder`, as the quickstart
+    types it, naming its workflow, without the dashboard, which is shared across every
+    workflow group on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
     it belongs), with `env` or the runtime's environment; return the endpoint it
     published and what it showed."""
     output = _run(
@@ -247,8 +247,10 @@ def _deploy(
 
 
 def _deployment_id(folder: Path) -> str:
-    """The `deployment_id` the deploy saved in the deployment folder `folder`."""
-    return yaml.safe_load((folder / "deployment.yaml").read_text())["deployment_id"]
+    """The `workflow_group_id` the deploy saved in the workflow group folder `folder`."""
+    return yaml.safe_load((folder / "workflow_group.yaml").read_text())[
+        "workflow_group_id"
+    ]
 
 
 def _store_api_key(case: CliCase, api_key: str) -> Path:
@@ -311,9 +313,9 @@ def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
 
     endpoint, output = _deploy(case, folder, "--api-key", NEXT_API_KEY)
 
-    assert "other running deployments keep the old one" in " ".join(output.split()), (
-        output
-    )
+    assert "other running workflow groups keep the old one" in " ".join(
+        output.split()
+    ), output
     _assert_refused(_post(endpoint, "CanyonOS", API_KEY), 401, "auth.invalid_key")
     answered = _answer(endpoint, "CanyonOS", NEXT_API_KEY)
     assert answered.get("status") == "done", answered
@@ -381,7 +383,7 @@ needs_docker = pytest.mark.skipif(
 
 # What stage 4 asks the user to type, by the phrase each command's prompt shows.
 # Only the part before the 80-column terminal wraps the line.
-DEPLOY_STEP = "deploy the workflow's project"
+DEPLOY_STEP = "deploy the workflow"
 PROMPT = "canyonos-quickstart \\$"
 STARTER_MENU = "Select a workflow to get started"
 RESOURCES_MENU = "Set the upper limit on what its replicas can use"

@@ -4,7 +4,7 @@
 import type { TimeRange } from '@core/time-range';
 
 import { resources_repo } from './resources.repo';
-import type { FleetProjectRow } from './resources.repo';
+import type { FleetWorkflowRow } from './resources.repo';
 import type { FleetKpi, FleetOverview, FleetResource } from './resources.types';
 
 const PALETTE_SIZE = 6;
@@ -63,12 +63,12 @@ function tokens_in_millions(tokens: number): number {
   return Number((tokens / TOKENS_PER_MILLION).toFixed(1));
 }
 
-export function build_overview(rows: readonly FleetProjectRow[], range: TimeRange): FleetOverview {
+export function build_overview(rows: readonly FleetWorkflowRow[], range: TimeRange): FleetOverview {
   const total_requests = rows.reduce((sum, row) => sum + row.request_count, 0);
   const total_cost = rows.reduce((sum, row) => sum + Number(row.total_cost), 0);
   const total_tokens = rows.reduce((sum, row) => sum + row.tokens, 0);
 
-  // Block-count-weighted; projects with no completed blocks (null average) drop out entirely.
+  // Block-count-weighted; workflows with no completed blocks (null average) drop out entirely.
   const latency_numerator = rows.reduce(
     (sum, row) => (row.avg_latency_ms === null ? sum : sum + row.avg_latency_ms * row.block_count),
     0
@@ -79,8 +79,8 @@ export function build_overview(rows: readonly FleetProjectRow[], range: TimeRang
   );
   const fleet_avg_latency_ms = latency_weight > 0 ? latency_numerator / latency_weight : 0;
 
-  const projects = rows.map((row, index) => ({
-    id: row.project_id,
+  const workflows = rows.map((row, index) => ({
+    id: row.workflow_id,
     name: row.name,
     color_index: index % PALETTE_SIZE,
     cost: Number(row.total_cost),
@@ -101,7 +101,7 @@ export function build_overview(rows: readonly FleetProjectRow[], range: TimeRang
     available: resource.available,
   }));
 
-  const active_projects = rows.filter((row) => row.request_count > 0).length;
+  const active_workflows = rows.filter((row) => row.request_count > 0).length;
   const range_label = format_span(range);
 
   const kpis: FleetKpi[] = [
@@ -113,11 +113,11 @@ export function build_overview(rows: readonly FleetProjectRow[], range: TimeRang
       tone: 'neutral',
     },
     {
-      id: 'active_projects',
-      label: 'Active deployments',
-      value: String(active_projects),
-      sub_label: `${projects.length} total`,
-      tone: active_projects > 0 ? 'positive' : 'neutral',
+      id: 'active_workflows',
+      label: 'Active workflows',
+      value: String(active_workflows),
+      sub_label: `${workflows.length} total`,
+      tone: active_workflows > 0 ? 'positive' : 'neutral',
     },
     {
       id: 'requests',
@@ -142,10 +142,10 @@ export function build_overview(rows: readonly FleetProjectRow[], range: TimeRang
     },
   ];
 
-  return { kpis, resources, projects, from: range.from, to: range.to };
+  return { kpis, resources, workflows, from: range.from, to: range.to };
 }
 
 export async function get_fleet_overview(range: TimeRange): Promise<FleetOverview> {
-  const rows = await resources_repo.fleet_projects(range);
+  const rows = await resources_repo.fleet_workflows(range);
   return build_overview(rows, range);
 }

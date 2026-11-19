@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos test`: send one prompt to each workflow the deployment running
+Logic for `canyonos test`: send one prompt to each workflow the workflow group running
 from this folder serves, with this machine's API key when one is set, and report
-what each answered. It deploys nothing: run `canyonos deploy <project folder>...`
+what each answered. It deploys nothing: run `canyonos deploy <workflow folder>...`
 first.
 """
 
@@ -66,7 +66,7 @@ def _await_result(base, request_id, timeout, sign):
         while time.time() < deadline:
             request = urllib.request.Request(url, headers=sign())
             try:
-                # The URL is always http:// to the deployment's own endpoint, never a
+                # The URL is always http:// to the workflow group's own endpoint, never a
                 # caller's scheme, which the rule cannot see.
                 # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 with urllib.request.urlopen(request, timeout=10) as resp:
@@ -131,13 +131,13 @@ def _parse_answer(text, kind):
 
 def _query(run, endpoint, timeout, queries, sign):
     """Send every route of the deployed endpoint a test query: the one given on the
-    command line, else its project's in `queries`, else DEFAULT_QUERY, each call with
+    command line, else its workflow's in `queries`, else DEFAULT_QUERY, each call with
     the header `sign` returns. Stores each result on the run; raises if one errors or
     times out."""
     run.begin("query", "Query the workflows")
     base = f"http://{endpoint['public_host']}:{endpoint['api_port']}"
     for route in endpoint["routes"]:
-        query = run.query or queries.get(route.get("project")) or DEFAULT_QUERY
+        query = run.query or queries.get(route.get("workflow")) or DEFAULT_QUERY
         run.endpoints.append(route["url"])
         run.queries.append(query)
         body = {name: query for name in route["arguments"]}
@@ -215,15 +215,15 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
 
 
 def _run_test(run, timeout=REQUEST_TIMEOUT):
-    """Query each workflow of the deployment running from this folder, with this
+    """Query each workflow of the workflow group running from this folder, with this
     machine's API key when one is set; on Kubernetes, through a port-forward to its
     endpoint."""
     existing_config_path()
     existing = existing_deploy()
     if existing is None:
         raise NoDeployError(
-            "No deployment is running from this folder. Run it from the deployment's "
-            "folder, the one `canyonos deploy --folder` made."
+            "No workflow group is running from this folder. Run it from the workflow "
+            "group's folder, the one `canyonos deploy --workflow-group` made."
         )
     endpoint = deployed_endpoint(existing)
     if deployment.configured_target() == "kubernetes":
@@ -309,7 +309,7 @@ def _payload(run):
 
 
 def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
-    """Run `canyonos test`: query each workflow of the running deployment with this
+    """Run `canyonos test`: query each workflow of the running workflow group with this
     machine's API key, report the results, and return the exit code."""
     run = _Run(prompt)
     ui.set_quiet(as_json)

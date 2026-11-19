@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The `kubernetes:` section of `workflow_config.yaml`: where `canyonos deploy
---target kubernetes` puts the project and how it fits the customer's cluster.
+--target kubernetes` puts the workflow group and how it fits the customer's cluster.
 
 Optional, and read only by that deploy: Docker and EC2 deploys ignore it. When it is
 there, its values are checked like any other section, and the agents' Kubernetes
 names (the same rule as the operator's) must not collide with each other or with the
-project's own objects.
+workflow group's own objects.
 """
 
 import re
@@ -44,7 +44,7 @@ REDIS_KEYS = frozenset(
 )
 ENDPOINT_KEYS = frozenset({"host", "ingress_class", "tls_secret", "url"})
 
-# The project's own objects in its namespace; no agent may be named like them.
+# The workflow group's own objects in its namespace; no agent may be named like them.
 RESERVED_NAMES = frozenset(
     {"endpoint", "canyonos-endpoint", "canyonos-redis", "canyonos-gc"}
 )
@@ -60,7 +60,7 @@ _URL = re.compile(r"^https?://[^\s/?#]+(/[^\s?#]*)?$")
 
 @dataclass(frozen=True)
 class KubernetesRedis:
-    """The project's Redis on Kubernetes: one the operator runs (storage), or the
+    """The workflow group's Redis on Kubernetes: one the operator runs (storage), or the
     customer's own (host)."""
 
     storage: str = "1Gi"
@@ -242,7 +242,7 @@ def _databases(collector, block, node):
 
 
 def _agent_names(collector, node):
-    """Each agent's Kubernetes name must be its own and not one of the project's.
+    """Each agent's Kubernetes name must be its own and not one of the workflow group's.
     Read from the entries as written, so a broken entry elsewhere shifts nothing."""
     taken = {}
     entries = node.get("agents") if isinstance(node.get("agents"), list) else []
@@ -264,7 +264,7 @@ def _agent_names(collector, node):
                 entry,
                 "name",
                 f"agents[{index}].name",
-                f"becomes the Kubernetes name {name!r}, which the project itself uses; rename the agent",
+                f"becomes the Kubernetes name {name!r}, which the workflow group itself uses; rename the agent",
             )
         elif name in taken:
             collector.add(

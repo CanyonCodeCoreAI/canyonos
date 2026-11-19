@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The CanyonOS endpoint: serves the deployment's agent methods over HTTP.
+"""The CanyonOS endpoint: serves the workflow group's agent methods over HTTP.
 
-`POST /<project>/<agent>/<method>` queues a root call to one of its routes and answers
+`POST /<workflow>/<agent>/<method>` queues a root call to one of its routes and answers
 with its request id;
 `POST /answer/<request_id>` answers that request's oldest waiting question; and
 `GET /status/<request_id>` reports the call's result once it is done, or the
@@ -23,25 +23,32 @@ ENDPOINT_PORT = 8080
 # CPUs the endpoint's container gets; it runs one gunicorn worker per CPU.
 ENDPOINT_CPUS = 2
 
-# The name of the endpoint's replica spec; agents are named `<project>.<agent>`, so
+# The name of the endpoint's replica spec; agents are named `<workflow>.<agent>`, so
 # none can take it.
 ENDPOINT_AGENT_NAME = "endpoint"
 
 # The dashboard API reads the endpoint's address here.
 ADDRESS_KEY = "endpoint:address"
 
-# The Global Controller writes the project_id here, the audience the endpoint
-# accepts tokens for.
+# The Global Controller writes the workflow group's id and its workflows here.
 IDENTITY_KEY = "controller:identity"
 
 
 def route_path(route):
-    """The path a route is served at: `/<project>/<agent>/<method>`."""
-    return f"/{route['project']}/{route['agent']}/{route['method']}"
+    """The path a route is served at: `/<workflow_id>`, or, for a workflow group that gave
+    its workflows none, `/<workflow>/<agent>/<method>` (see agent_path)."""
+    if route.get("workflow_id"):
+        return f"/{route['workflow_id']}"
+    return agent_path(route)
+
+
+def agent_path(route):
+    """The path a route is also served at: `/<workflow>/<agent>/<method>`."""
+    return f"/{route['workflow']}/{route['agent']}/{route['method']}"
 
 
 def endpoint_routes(config):
-    """Return the `endpoint.routes` of a deployment's raw config, each with its
+    """Return the `endpoint.routes` of a workflow group's raw config, each with its
     method's argument names from its `functions:` entry, as the endpoint container
     serves them."""
     functions = {
@@ -52,12 +59,13 @@ def endpoint_routes(config):
     }
     routes = []
     for route in config["endpoint"]["routes"]:
-        agent_name = qualified_name(route["project"], route["agent"])
+        agent_name = qualified_name(route["workflow"], route["agent"])
         function = functions.get((agent_name, route["method"]), {})
         arguments = function.get("arguments") or []
         routes.append(
             {
-                "project": route["project"],
+                "workflow": route["workflow"],
+                "workflow_id": route.get("workflow_id"),
                 "agent": route["agent"],
                 "method": route["method"],
                 "arguments": [argument["name"] for argument in arguments],
@@ -68,7 +76,7 @@ def endpoint_routes(config):
 
 def endpoint_record(manifest, published_port):
     """Return where callers reach the endpoint of a validated manifest: its public host
-    and port, and per route the project, agent and method it serves, that method's
+    and port, and per route the workflow, agent and method it serves, that method's
     argument names from its `functions:` entry, and its URL. The Global Controller publishes
     it at ADDRESS_KEY.
 
@@ -89,11 +97,12 @@ def endpoint_record(manifest, published_port):
         base_url = f"http://{public_host}:{api_port}"
     routes = []
     for route in endpoint.routes:
-        agent_name = qualified_name(route.project, route.agent)
+        agent_name = qualified_name(route.workflow, route.agent)
         agent_spec = next(a for a in manifest.agents if a.name == agent_name)
         function = next(f for f in agent_spec.functions if f.name == route.method)
         record = {
-            "project": route.project,
+            "workflow": route.workflow,
+            "workflow_id": route.workflow_id,
             "agent": route.agent,
             "method": route.method,
             "arguments": [argument.name for argument in function.arguments],

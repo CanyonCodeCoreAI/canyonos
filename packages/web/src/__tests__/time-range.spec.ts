@@ -7,15 +7,15 @@ import type { Page } from '@playwright/test';
 import type { RequestListItem, RequestTrace } from '@canyonos/api/requests';
 
 import { authenticate } from './helpers/auth';
-import { apiBaseUrl, fulfillJson } from './helpers/projects';
-import { PROJECT, stubProjectDashboard, stubProjectsList } from './helpers/session';
+import { stubWorkflowDashboard, stubWorkflowsList, WORKFLOW } from './helpers/session';
+import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 
 test.use({ timezoneId: 'UTC' });
 
 test.describe('the range control on the logs page', () => {
-  const LOGS_PATH = `/projects/${PROJECT.id}/logs`;
+  const LOGS_PATH = `/workflows/${WORKFLOW.id}/logs`;
   const NOW = new Date('2026-10-06T12:00:00.000Z');
   const DAY_MS = 86_400_000;
 
@@ -25,14 +25,14 @@ test.describe('the range control on the logs page', () => {
     await page.route(
       (url) =>
         url.origin === apiOrigin &&
-        url.pathname.startsWith(`/projects/${PROJECT.id}/monitoring/logs`),
+        url.pathname.startsWith(`/workflows/${WORKFLOW.id}/monitoring/logs`),
       (route) => {
         const url = new URL(route.request().url());
         const range = { from: url.searchParams.get('from')!, to: url.searchParams.get('to')! };
         if (url.pathname.endsWith('/sources'))
-          return fulfillJson(route, { project_id: PROJECT.id, ...range, sources: [] });
+          return fulfillJson(route, { workflow_id: WORKFLOW.id, ...range, sources: [] });
         ranges.push(range);
-        return fulfillJson(route, { project_id: PROJECT.id, ...range, logs: [] });
+        return fulfillJson(route, { workflow_id: WORKFLOW.id, ...range, logs: [] });
       }
     );
     return ranges;
@@ -43,8 +43,8 @@ test.describe('the range control on the logs page', () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.setFixedTime(NOW);
     await authenticate(page);
-    await stubProjectsList(page, [PROJECT]);
-    await stubProjectDashboard(page, PROJECT);
+    await stubWorkflowsList(page, [WORKFLOW]);
+    await stubWorkflowDashboard(page, WORKFLOW);
   });
 
   test('a preset sends a range of its length ending now', async ({ page }) => {
@@ -56,7 +56,7 @@ test.describe('the range control on the logs page', () => {
     expect(Date.parse(ranges.at(-1)!.to)).toBe(NOW.getTime());
 
     await page
-      .getByTestId('project-window-toggle')
+      .getByTestId('workflow-window-toggle')
       .getByRole('radio', { name: '24 hours' })
       .click();
     await expect.poll(() => spanMs(ranges.at(-1)!)).toBe(DAY_MS);
@@ -84,7 +84,7 @@ test.describe('the range control on the logs page', () => {
     expect(new URL(page.url()).searchParams.get('to')).toBe('2026-10-02T09:30:59.999Z');
     await expect(page.getByTestId('time-range-custom')).toContainText('Oct 1');
     await expect(
-      page.getByTestId('project-window-toggle').getByRole('radio', { checked: true })
+      page.getByTestId('workflow-window-toggle').getByRole('radio', { checked: true })
     ).toHaveCount(0);
   });
 
@@ -106,7 +106,7 @@ test.describe('the range control on the logs page', () => {
     await expect.poll(() => ranges.length).toBeGreaterThan(0);
 
     await page
-      .getByTestId('project-window-toggle')
+      .getByTestId('workflow-window-toggle')
       .getByRole('radio', { name: '15 minutes' })
       .click();
     await expect.poll(() => spanMs(ranges.at(-1)!)).toBe(15 * 60_000);
@@ -120,11 +120,11 @@ test.describe('the range control on the logs page', () => {
 
     const later = NOW.getTime() + 5 * 60_000;
     await page.clock.setFixedTime(later);
-    await page.getByTestId('project-window-toggle').getByRole('radio', { name: '7 days' }).click();
+    await page.getByTestId('workflow-window-toggle').getByRole('radio', { name: '7 days' }).click();
 
     await expect.poll(() => Date.parse(ranges.at(-1)!.to)).toBe(later);
     await expect(
-      page.getByTestId('project-window-toggle').getByRole('radio', { name: '7 days' })
+      page.getByTestId('workflow-window-toggle').getByRole('radio', { name: '7 days' })
     ).toHaveAttribute('data-state', 'on');
   });
 
@@ -168,8 +168,8 @@ test.describe('the range control on the logs page', () => {
   }
 });
 
-test.describe('the range control on the project overview', () => {
-  const OVERVIEW_PATH = `/projects/${PROJECT.id}`;
+test.describe('the range control on the workflow overview', () => {
+  const OVERVIEW_PATH = `/workflows/${WORKFLOW.id}`;
   const NOW = new Date('2026-10-06T12:00:03.200Z');
   const CUSTOM = { from: '2026-10-01T00:00:00.000Z', to: '2026-10-03T00:00:00.000Z' };
   const CUSTOM_SEARCH = `?from=${CUSTOM.from}&to=${CUSTOM.to}`;
@@ -191,7 +191,7 @@ test.describe('the range control on the project overview', () => {
   };
 
   const TRACE: RequestTrace = {
-    project_id: PROJECT.id,
+    workflow_id: WORKFLOW.id,
     session_id: REQUEST.session_id,
     status: 'completed',
     created_at: REQUEST.created_at,
@@ -259,8 +259,8 @@ test.describe('the range control on the project overview', () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.setFixedTime(NOW);
     await authenticate(page);
-    await stubProjectsList(page, [PROJECT]);
-    await stubProjectDashboard(page, PROJECT);
+    await stubWorkflowsList(page, [WORKFLOW]);
+    await stubWorkflowDashboard(page, WORKFLOW);
   });
 
   test('every section read on one tick asks for the same instant', async ({ page }) => {
@@ -293,13 +293,13 @@ test.describe('the range control on the project overview', () => {
     const reads = trackReads(page);
     await page.goto(OVERVIEW_PATH);
     await expect.poll(() => countReads(reads, '/metrics/kpis')).toBeGreaterThan(0);
-    const project_reads = countReads(reads, '');
+    const workflow_reads = countReads(reads, '');
     const kpi_reads = countReads(reads, '/metrics/kpis');
 
-    await page.getByTestId('project-window-toggle').getByRole('radio', { name: '7 days' }).click();
+    await page.getByTestId('workflow-window-toggle').getByRole('radio', { name: '7 days' }).click();
 
     await expect.poll(() => countReads(reads, '/metrics/kpis')).toBeGreaterThan(kpi_reads);
-    expect(countReads(reads, '')).toBe(project_reads);
+    expect(countReads(reads, '')).toBe(workflow_reads);
   });
 
   test('a query is compared against the medians of the range on screen', async ({ page }) => {
@@ -308,9 +308,9 @@ test.describe('the range control on the project overview', () => {
     await page.goto(`${OVERVIEW_PATH}${CUSTOM_SEARCH}`);
     await openQueryView(page);
 
-    await page.getByTestId(`project-query-${REQUEST.session_id}`).click();
+    await page.getByTestId(`workflow-query-${REQUEST.session_id}`).click();
 
-    await expect(page.getByTestId('project-query-drawer')).toBeVisible();
+    await expect(page.getByTestId('workflow-query-drawer')).toBeVisible();
     const trace_read = reads.find(
       (read) => read.path === `${OVERVIEW_PATH}/requests/${REQUEST.session_id}`
     );
@@ -323,7 +323,7 @@ test.describe('the range control on the project overview', () => {
       (route) => {
         const url = new URL(route.request().url());
         return fulfillJson(route, {
-          project_id: PROJECT.id,
+          workflow_id: WORKFLOW.id,
           generated_at: NOW.toISOString(),
           from: url.searchParams.get('from'),
           to: url.searchParams.get('to'),
@@ -348,7 +348,7 @@ test.describe('the range control on the project overview', () => {
     );
     await page.goto(`${OVERVIEW_PATH}?range=15m`);
 
-    await expect(page.getByTestId('project-timeseries-run-rate')).toContainText('/ hour');
+    await expect(page.getByTestId('workflow-timeseries-run-rate')).toContainText('/ hour');
   });
 
   test('a From later than the current time says why it cannot be applied', async ({ page }) => {

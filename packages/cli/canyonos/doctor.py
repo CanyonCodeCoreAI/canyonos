@@ -32,7 +32,7 @@ def _docker_daemon_fix():
     would run exactly that itself."""
     command = docker_start_command()
     if command:
-        return f"run `{' '.join(command)}` -- or just run `canyonos deploy <project folder>`, which starts it for you"
+        return f"run `{' '.join(command)}` -- or just run `canyonos deploy <workflow folder>`, which starts it for you"
     return "start your Docker runtime (on Linux: `sudo systemctl start docker`)"
 
 
@@ -119,7 +119,7 @@ def _guard(label, check):
 
 
 def _print_health(state):
-    """Print each check the Global Controller's /deployment/health ran on the running
+    """Print each check the Global Controller's health route ran on the running
     deploy, a ✓ or ✗ line with what it checked and, when it failed, the fix. True if
     all passed."""
     health = deploy_health(state)
@@ -173,7 +173,7 @@ def run_doctor():
             status = deploy_status(state)
         except (KeyError, OSError, ValueError) as e:
             ui.warn(
-                f"Could not read deploy status ({e}); assuming no deploy is running."
+                f"Could not read deploy status ({e}); assuming no workflow group is running."
             )
 
     if status and status.get("running"):
@@ -181,7 +181,9 @@ def run_doctor():
         return _print_post_deploy(state)
 
     if deployment.configured_target() == "kubernetes":
-        ui.say("No deploy running -- run `canyonos deploy <project folder>...`")
+        ui.say(
+            "No workflow group running -- run `canyonos deploy <workflow folder>...`"
+        )
         return True
-    ui.say("No deploy running -- pre-deploy checks:")
+    ui.say("No workflow group running -- pre-deploy checks:")
     return _run_checks(_pre_deploy_checks())

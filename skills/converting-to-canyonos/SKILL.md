@@ -1,8 +1,8 @@
 ---
 name: converting-to-canyonos
-description: Port a Python agent project to CanyonOS by preparing and validating a `.canyon`. Also use to deploy, inspect, or change a running CanyonOS project from the `canyonos` command line.
+description: Port a Python agent workflow to CanyonOS by preparing and validating a `.canyon`. Also use to deploy, inspect, or change a running CanyonOS workflow from the `canyonos` command line.
 ---
-# Port an agent project to CanyonOS
+# Port an agent workflow to CanyonOS
 
 ## Scope
 
@@ -10,7 +10,7 @@ description: Port a Python agent project to CanyonOS by preparing and validating
   require specific approval.
 - Preserve application behavior, providers, dependency constraints and layout.
   Import existing logic; do not duplicate it or repair unrelated source defects.
-- `.env` stays in the project folder, and `canyonos deploy` passes it to the
+- `.env` stays in the workflow folder, and `canyonos deploy` passes it to the
   agent replicas. Never read it or copy it; `prepare.py` leaves it out of
   `.canyon`. Add any credential names the code needs to `.canyon/.env.example`.
 - In unattended builds, use and report defaults. Stop with a blocker when a
@@ -18,7 +18,7 @@ description: Port a Python agent project to CanyonOS by preparing and validating
 
 ## 1. Prepare
 
-Choose the import root using [Project layout](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
+Choose the import root using [Workflow layout](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/BUILD_ARTIFACT.md)
 and [Images and dependencies](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/IMAGES_AND_DEPENDENCIES.md), then run:
 
 ```bash
@@ -67,27 +67,27 @@ external stores and concurrency controls; follow the
 - Declare the top-level `endpoint: routes:` list with one `{agent, method}` entry
   naming the agent the endpoint serves and its entry method. That method must be
   listed in the agent's `functions`, with the arguments the request body carries.
-  Preserve existing choices; batch unresolved deployment questions and use
+  Preserve existing choices; batch unresolved workflow group questions and use
   schema defaults when unanswered or unattended. Leave `resources` at schema
   defaults without asking.
 - Write only `agents:` and `endpoint: routes:` to the workflow config. `target`,
   `provider`, provider sections, `endpoint.api_port`, `redis`, `dashboard_port`,
-  `logs` and `otel` are deployment settings: they belong in the `deployment.yaml`
-  of the folder the project is deployed from, and the workflow config rejects them.
+  `logs` and `otel` are workflow group settings: they belong in the `workflow_group.yaml`
+  of the folder the workflow is deployed from, and the workflow config rejects them.
   Report any the source needs instead of writing them.
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
 - Local dashboard tracing needs no config. Report another chosen destination as an
   [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#oteldestinations)
-  for `deployment.yaml`, keeping its `local` entry.
+  for `workflow_group.yaml`, keeping its `local` entry.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, report the [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
-  for `deployment.yaml`, using developer-supplied identifiers. If unavailable,
+  for `workflow_group.yaml`, using developer-supplied identifiers. If unavailable,
   report that EC2 is not configured.
 - To deploy to Kubernetes, the developer runs `canyonos target kubernetes` in the
-  deployment folder, which writes `target` and the `kubernetes:` block to
-  `deployment.yaml`; say so in the report.
+  workflow group folder, which writes `target` and the `kubernetes:` block to
+  `workflow_group.yaml`; say so in the report.
 
 ## 4. Validate and stop
 
@@ -100,42 +100,42 @@ until exit 0, or report the blocker. Check changes against the allowed scope.
 
 Report the validation result, blockers, chosen defaults and required credential
 names in the developer's language. Link to [Commands](https://canyonos.readthedocs.io/en/latest/#commands)
-for next steps, including deploying with a deployment folder beside the project,
-`cd .. && canyonos deploy <project> --folder <project>-deployment`, then `canyonos test` from that
+for next steps, including deploying with a workflow group folder beside the workflow,
+`cd .. && canyonos deploy <workflow> --workflow-group <workflow>-group`, then `canyonos test` from that
 folder, which sends `.canyon/config/test_query.txt`.
 Claim success only after validation exits 0 with no open blocker.
 
 ## After the conversion: run the deploy
 
 Only once the conversion is reported and you are asked to run it, with no terminal
-attached. Deploy from the folder above the project; run the other commands from the
-deployment folder, `<project>-deployment`:
+attached. Deploy from the folder above the workflow; run the other commands from the
+workflow group folder, `<workflow>-group`:
 
-- `canyonos deploy <project> --folder <project>-deployment --serve false`: build and start
+- `canyonos deploy <workflow> --workflow-group <workflow>-group --serve false`: build and start
   it without the dashboard, using default resources instead of asking. It makes the
-  deployment folder and its `deployment.yaml` when there are none, and replaces this
-  deployment's earlier deploy.
+  workflow group folder and its `workflow_group.yaml` when there are none, and replaces this
+  workflow group's earlier deploy.
 - `canyonos status --json`: `running`, `endpoint`, `dashboard_url`, per agent the
   desired and running replicas and last launch error, each machine type's last
   start error, and `errors` for any part it could not read. Exits 1 if nothing runs.
-- `canyonos test --json`: send each route its project's `config/test_query.txt`, else
+- `canyonos test --json`: send each route its workflow's `config/test_query.txt`, else
   `hello`.
 - `canyonos logs --no-follow`: print the last 200 log lines and exit.
-- `canyonos logs <project>.<agent>`: print the last 200 lines of each of that agent's
-  replicas, or of one replica such as `<project>.IntentAgent-1a2b3c4d`; `--tail N` or
+- `canyonos logs <workflow>.<agent>`: print the last 200 lines of each of that agent's
+  replicas, or of one replica such as `<workflow>.IntentAgent-1a2b3c4d`; `--tail N` or
   `--tail all` for more.
 - Any change, config or code, takes effect only after another
-  `canyonos deploy ../<project>`.
-- `canyonos validate --json ../<project>`: recheck `.canyon` after an edit.
+  `canyonos deploy ../<workflow>`.
+- `canyonos validate --json ../<workflow>`: recheck `.canyon` after an edit.
 - `canyonos stop` removes the deploy. `canyonos clean` also removes the images on
-  Docker, and leaves `.canyon`; with `target: kubernetes` it removes only the project's ConfigMap
+  Docker, and leaves `.canyon`; with `target: kubernetes` it removes only the workflow group's ConfigMap
   and Secret in the cluster, and `.canyon` and the images stay.
 
 Every command exits non-zero on failure.
 
 ## Reporting a CanyonOS bug
 
-When a `canyonos` command fails because of CanyonOS itself, not the project, ask
+When a `canyonos` command fails because of CanyonOS itself, not the workflow, ask
 your user whether to report it. Only if they agree, run
 `canyonos feedback --yes "<what you ran, what you expected, what happened>"`.
 `--yes` stands for their agreement; never pass it without asking. Leave out

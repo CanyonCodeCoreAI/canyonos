@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 class Error(BaseModel):
     """
-    Every error answer; `findings` and `warnings` only come with `project_invalid`.
+    Every error answer; `findings` and `warnings` only come with
+    `workflow_invalid`.
     """
 
     error: str = Field(..., title="Error")
@@ -19,12 +20,12 @@ class Error(BaseModel):
     warnings: list[str] | None = Field(None, title="Warnings")
 
 
-class Deployment(BaseModel):
+class WorkflowGroup(BaseModel):
     """
-    `name` is what the deployment's `PUT` last sent, empty before one.
+    `name` is what the workflow group's `PUT` last sent, empty before one.
     """
 
-    deployment_id: str = Field(..., title="Deployment Id")
+    workflow_group_id: str = Field(..., title="Workflow Group Id")
     name: str = Field(..., title="Name")
 
 
@@ -37,19 +38,19 @@ class Uploaded(BaseModel):
     warnings: list[str] = Field(..., title="Warnings")
 
 
-class DeploymentBody(BaseModel):
+class WorkflowGroupBody(BaseModel):
     """
-    `config` is `deployment.yaml`'s text and `env` the `.env` beside it, null for
-    none. `projects`, when given, is every project the deployment has; the uploaded
-    projects it leaves out are removed. `api_key_hash`, when given, is the SHA-256 of the
-    deploy's API key, "" for none, used only on Kubernetes, where a change restarts the
-    deploy.
+    `config` is `workflow_group.yaml`'s text and `env` the `.env` beside it, null for
+    none. `workflows`, when given, is every workflow the workflow group has; the
+    uploaded workflows it leaves out are removed. `api_key_hash`, when given, is the
+    SHA-256 of the deploy's API key, "" for none, used only on Kubernetes, where a
+    change restarts the deploy.
     """
 
     name: str = Field(..., title="Name")
     config: str = Field(..., title="Config")
     env: str | None = Field(..., title="Env")
-    projects: list[str] | None = Field(None, title="Projects")
+    workflows: list[str] | None = Field(None, title="Workflows")
     api_key_hash: str | None = Field(None, title="Api Key Hash")
 
 
@@ -87,7 +88,8 @@ class LastApply(BaseModel):
 
 
 class Route(BaseModel):
-    project: str = Field(..., title="Project")
+    workflow: str = Field(..., title="Workflow")
+    workflow_id: str | None = Field(..., title="Workflow Id")
     agent: str = Field(..., title="Agent")
     method: str = Field(..., title="Method")
     arguments: list[str] = Field(..., title="Arguments")
@@ -108,7 +110,7 @@ class Check(BaseModel):
 
 class Fingerprints(BaseModel):
     """
-    Digests over a project's uploaded files: `config` over its `config/` files and
+    Digests over a workflow's uploaded files: `config` over its `config/` files and
     `.env`, which a reload applies, and `code` over the rest.
     """
 
@@ -116,7 +118,7 @@ class Fingerprints(BaseModel):
     config: str = Field(..., title="Config")
 
 
-class Project(BaseModel):
+class Workflow(BaseModel):
     """
     `test_query` is its `config/test_query.txt`, null when it has none.
     """
@@ -130,8 +132,8 @@ class ReplicaLogs(BaseModel):
     logs: dict[str, list[str]] = Field(..., title="Logs")
 
 
-class DashboardProject(BaseModel):
-    project_id: str = Field(..., title="Project Id")
+class DashboardWorkflow(BaseModel):
+    workflow_id: str = Field(..., title="Workflow Id")
     name: str = Field(..., title="Name")
 
 
@@ -143,8 +145,8 @@ class DashboardBody(BaseModel):
     url: str = Field(..., title="Url")
 
 
-class Deployments(BaseModel):
-    deployments: list[Deployment] = Field(..., title="Deployments")
+class WorkflowGroups(BaseModel):
+    workflow_groups: list[WorkflowGroup] = Field(..., title="Workflow Groups")
 
 
 class Endpoint(BaseModel):
@@ -158,15 +160,19 @@ class Health(BaseModel):
     checks: list[Check] = Field(..., title="Checks")
 
 
-class Projects(BaseModel):
-    projects: list[Project] = Field(..., title="Projects")
+class Workflows(BaseModel):
+    workflows: list[Workflow] = Field(..., title="Workflows")
+
+
+class DashboardWorkflows(BaseModel):
+    workflows: list[DashboardWorkflow] = Field(..., title="Workflows")
 
 
 class Status(BaseModel):
     """
-    `name` and `config` are what the deployment's `PUT` last sent, without the `.env`;
-    `running` is whether the deploy process is alive, so a failed deploy can still be
-    running while it stops itself.
+    `name` and `config` are what the workflow group's `PUT` last sent, without the
+    `.env`; `running` is whether the deploy process is alive, so a failed deploy can
+    still be running while it stops itself.
     """
 
     version: str = Field(..., title="Version")

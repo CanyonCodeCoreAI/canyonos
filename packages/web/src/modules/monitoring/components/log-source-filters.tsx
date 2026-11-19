@@ -18,7 +18,7 @@ export const ALL_SOURCES = 'all';
 const TRIGGER_CLASS = 'h-9 w-44 text-xs';
 
 interface LogSourceFiltersProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
   readonly agent: string;
   readonly replica: string;
@@ -27,14 +27,14 @@ interface LogSourceFiltersProps {
 }
 
 export function LogSourceFilters({
-  project_id,
+  workflow_id,
   range,
   agent,
   replica,
   onAgentChange,
   onReplicaChange,
 }: LogSourceFiltersProps) {
-  const query = useQuery(logSourcesQueryOptions(project_id, { range }));
+  const query = useQuery(logSourcesQueryOptions(workflow_id, { range }));
 
   const sources = query.data?.sources ?? [];
   const replicas =

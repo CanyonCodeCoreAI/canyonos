@@ -17,7 +17,7 @@ export const resourcesRoutes = new Elysia({ prefix: '/resources', name: 'resourc
     detail: {
       tags: ['Resources'],
       security: [{ bearerAuth: [] }],
-      summary: 'Fleet overview: per-deployment cost/requests/tokens over a time range',
+      summary: 'Fleet overview: per-workflow cost/requests/tokens over a time range',
       description: 'Counts the requests that started in the range, each whole.',
     },
   });

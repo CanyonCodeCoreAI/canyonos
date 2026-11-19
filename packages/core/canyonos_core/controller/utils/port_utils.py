@@ -57,7 +57,7 @@ _CLASHED_PORT = re.compile(r"(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]*\]):(\d+)
 DEFAULT_MAX_PORT_ATTEMPTS = 500
 
 # The ports the CLI hands the Global Controller as taken by the rest of CanyonOS
-# here (the dashboard, port-forwards, other projects, its own), comma-separated, so
+# here (the dashboard, port-forwards, other workflow groups, its own), comma-separated, so
 # a port it moves on a conflict skips them too.
 RESERVED_PORTS_ENV = "CANYONOS_RESERVED_PORTS"
 

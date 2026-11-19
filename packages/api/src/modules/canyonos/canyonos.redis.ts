@@ -7,7 +7,7 @@ import { config } from '@core/env';
 import { badGateway, notFound } from '@core/errors';
 import type { AppError } from '@core/errors';
 
-import { registered_projects } from './canyonos.registry';
+import { registered_workflows } from './canyonos.registry';
 import { canyonos_repo } from './canyonos.repo';
 import type { RedisClientTls } from './canyonos.types';
 
@@ -15,16 +15,16 @@ export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '::1']);
 
-/** The host the api reaches a project's Redis on. An api running on the host itself (its
+/** The host the api reaches a workflow's Redis on. An api running on the host itself (its
  * configured Redis on loopback, as with `bun run dashboard:dev`) cannot resolve the container
- * name a project stored, so it reaches the project's published port on loopback instead. */
+ * name a workflow stored, so it reaches the workflow's published port on loopback instead. */
 export function reachable_redis_host(stored_host: string | null): string {
   const configured = config.canyonos.redisHost;
   return stored_host === null || LOOPBACK_HOSTS.has(configured) ? configured : stored_host;
 }
 
-/** Where a project's Redis is and how to sign in to it: tls is true for TLS alone, or the
- * client certificate a Docker deployment's Redis takes. */
+/** Where a workflow's Redis is and how to sign in to it: tls is true for TLS alone, or the
+ * client certificate a Docker workflow group's Redis takes. */
 export interface RedisTarget {
   readonly host: string;
   readonly port: number;
@@ -117,13 +117,13 @@ async function refuses_sign_in(target: RedisTarget): Promise<boolean> {
   return SIGN_IN_REFUSED.test(await first_answer(target, command));
 }
 
-/** The error for a failed connect: the project's Redis refused its password, or it could not be
+/** The error for a failed connect: the workflow's Redis refused its password, or it could not be
  * reached. A connect that timed out is not asked again, since its address does not answer. */
 async function connect_failure(error: unknown, target: RedisTarget): Promise<AppError> {
   if (!(error instanceof ConnectTimedOut) && (await refuses_sign_in(target))) {
     return badGateway(
       'canyonos.redis_auth_failed',
-      "This deployment's Redis refused the password the dashboard holds for it. Deploy it again with `canyonos deploy` from its folder to register its current password.",
+      "This workflow group's Redis refused the password the dashboard holds for it. Deploy it again with `canyonos deploy` from its folder to register its current password.",
       { cause: error }
     );
   }
@@ -178,46 +178,50 @@ async function with_redis_target<T>(
   }
 }
 
-// Temporary: applied now so multi-project dashboards work without blocking the flow; revisit
-// with the project-key design in CAN-521 (the api should not hold per-project Redis addresses).
-/** Runs operation against the Redis project_id registered, or the configured one if it never did.
- * On Kubernetes a project is reached at its own Redis, signed in, while the operator lists it. */
+// Temporary: applied now so multi-workflow dashboards work without blocking the flow; revisit
+// with the workflow-key design in CAN-521 (the api should not hold per-workflow Redis addresses).
+/** Runs operation against the Redis workflow_id registered, or the configured one if it never did.
+ * On Kubernetes a workflow is reached at its own Redis, signed in, while the operator lists it. */
 export async function with_redis<T>(
-  project_id: string,
+  workflow_id: string,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
-  const listed = registered_projects().get(project_id);
+  const listed = registered_workflows().get(workflow_id);
   if (listed) return with_redis_target(listed.redis, operation);
-  if (config.canyonos.projectsFile) {
+  if (config.canyonos.workflowsFile) {
     // Deleted from the cluster, or not ready: there is no Redis of it to fall back to.
     throw notFound(
-      'canyonos.project_not_running',
-      "This deployment isn't running in the cluster. Deploy it again with `canyonos deploy --target kubernetes`."
+      'canyonos.workflow_not_running',
+      "This workflow isn't running in the cluster. Deploy it again with `canyonos deploy --target kubernetes`."
     );
   }
-  const project = await canyonos_repo.find_redis(project_id);
+  const workflow = await canyonos_repo.find_redis(workflow_id);
   return with_redis_at(
-    reachable_redis_host(project?.redis_host ?? null),
-    project?.redis_port ?? config.canyonos.redisPort,
-    project?.redis_password ?? '',
+    reachable_redis_host(workflow?.redis_host ?? null),
+    workflow?.redis_port ?? config.canyonos.redisPort,
+    workflow?.redis_password ?? '',
     operation,
-    project?.redis_tls
+    workflow?.redis_tls
   );
 }
 
-export async function project_running(redis: RedisClient, project_id: string): Promise<boolean> {
-  return (await redis.hget(CONTROLLER_IDENTITY_KEY, 'project_id')) === project_id;
+/** Each workflow's name, by its workflow_id, of the workflow group the controller on redis runs. */
+export async function running_workflows(redis: RedisClient): Promise<Record<string, string>> {
+  const workflows = await redis.hget(CONTROLLER_IDENTITY_KEY, 'workflows');
+  return JSON.parse(workflows ?? '{}') as Record<string, string>;
 }
 
-/** Throws not found unless the running controller belongs to project_id. */
-export async function assert_project_running(
+/** The name of the workflow workflow_id; throws not found unless the running controller runs it. */
+export async function assert_workflow_running(
   redis: RedisClient,
-  project_id: string
-): Promise<void> {
-  if (!(await project_running(redis, project_id))) {
+  workflow_id: string
+): Promise<string> {
+  const name = (await running_workflows(redis))[workflow_id];
+  if (name === undefined) {
     throw notFound(
-      'canyonos.project_not_running',
-      "This deployment isn't running. Deploy it again with `canyonos deploy` from its folder."
+      'canyonos.workflow_not_running',
+      "This workflow isn't running. Deploy it again with `canyonos deploy` from its folder."
     );
   }
+  return name;
 }

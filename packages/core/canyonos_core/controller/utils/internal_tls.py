@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""This container's certificate for the deployment's internal traffic.
+"""This container's certificate for the workflow group's internal traffic.
 
-On Docker, the Global Controller gives every container it starts the deployment CA's
+On Docker, the Global Controller gives every container it starts the workflow group CA's
 certificate and a certificate of the container's own, signed by that CA, in the
 variables below (base64 of the PEM). With them, Redis and the gRPC calls between
 controllers use mutual TLS; without them (EC2, Kubernetes) both stay plaintext.

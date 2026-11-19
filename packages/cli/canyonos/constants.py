@@ -20,7 +20,7 @@ DEFAULT_API_PORT = 8080
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_DASHBOARD_PORT = 8081
 DEFAULT_DASHBOARD_API_PORT = 3000
-# The dashboard's API by its container name, on the network each deployment shares
+# The dashboard's API by its container name, on the network each workflow group shares
 # with it.
 LOCAL_DASHBOARD_ENDPOINT = "http://canyonos-dashboard-api:3000"
 
@@ -32,37 +32,45 @@ _metadata_cache = {}
 
 
 CANYON_DIR = ".canyon"
-# A deployment's settings, in the folder `canyonos deploy` runs from.
-DEPLOYMENT_CONFIG = "deployment.yaml"
+# A workflow group's settings, in the folder `canyonos deploy` runs from.
+DEPLOYMENT_CONFIG = "workflow_group.yaml"
+# What a workflow group's config was called before; see deployment_config_path.
+OLD_DEPLOYMENT_CONFIG = "deployment.yaml"
 
 
-def project_folder(folder="."):
-    """Find the folder every file of the project in `folder` is read from: its
+def workflow_folder(folder="."):
+    """Find the folder every file of the workflow in `folder` is read from: its
     `.canyon` when it has one, else `folder` itself."""
     canyon = os.path.join(folder, CANYON_DIR)
     return canyon if os.path.isdir(canyon) else folder
 
 
-def project_root():
-    """`project_folder()` of the current directory."""
-    return project_folder()
+def workflow_root():
+    """`workflow_folder()` of the current directory."""
+    return workflow_folder()
 
 
-def project_config_path(root):
-    """Build the path of a project's `config/workflow_config.yaml` inside its root,
+def workflow_config_path(root):
+    """Build the path of a workflow's `config/workflow_config.yaml` inside its root,
     whether or not the file is there."""
     return os.path.join(root, "config", "workflow_config.yaml")
 
 
 def deployment_config_path():
-    """The deployment's `deployment.yaml`, in the folder `canyonos` runs from, whether
-    or not the file is there."""
+    """The workflow group's `workflow_group.yaml`, in the folder `canyonos` runs from,
+    whether or not the file is there. Raises when the folder still has it under its
+    old name."""
+    if not os.path.exists(DEPLOYMENT_CONFIG) and os.path.isfile(OLD_DEPLOYMENT_CONFIG):
+        raise RuntimeError(
+            f"{OLD_DEPLOYMENT_CONFIG} is now called {DEPLOYMENT_CONFIG}: rename it, "
+            "and its deployment_id to workflow_group_id."
+        )
     return DEPLOYMENT_CONFIG
 
 
-def project_env_path(folder="."):
-    """Name the `.env` in a project's folder; deploy passes its values to the
-    project's agent replicas."""
+def workflow_env_path(folder="."):
+    """Name the `.env` in a workflow's folder; deploy passes its values to the
+    workflow's agent replicas."""
     return os.path.join(folder, ".env")
 
 
@@ -71,8 +79,8 @@ def existing_config_path():
     config_path = deployment_config_path()
     if not os.path.isfile(config_path):
         raise RuntimeError(
-            f"No {config_path} here. Run `canyonos deploy <project folder>...` from "
-            "the folder that holds the deployment."
+            f"No {config_path} here. Run `canyonos deploy <workflow folder>...` from "
+            "the folder that holds the workflow group."
         )
     return config_path
 
@@ -220,7 +228,7 @@ def sends_to_dashboard(config_path):
 
 
 def container_path(relative):
-    """`relative`, a path under the project on this machine, as a Linux container
+    """`relative`, a path under the workflow on this machine, as a Linux container
     names it: with forward slashes, which this machine reads too, even on Windows."""
     return relative.replace(os.sep, "/")
 
@@ -250,7 +258,7 @@ def _text_layout(path):
 def round_trip_yaml():
     """Loader that preserves comments, key order, quoting and ${ENV} refs.
 
-    The indent settings match the project's YAML style, so edits don't reflow
+    The indent settings match the config files' YAML style, so edits don't reflow
     list indentation: block sequences stay indented under their key.
     """
     yaml_rt = YAML()

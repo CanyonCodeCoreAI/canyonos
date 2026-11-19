@@ -57,7 +57,7 @@ PROTOBUF_FLOOR = Requirement(
 UV_VERSION = "0.13.8"
 UV_IMAGE = f"ghcr.io/astral-sh/uv:{UV_VERSION}@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85"
 
-# A .python-version picks a 3.<minor> in this range, and a project without one gets
+# A .python-version picks a 3.<minor> in this range, and a workflow without one gets
 # the newest. The range is the `python` matrix of .github/workflows/e2e.yml and
 # .github/workflows/agent-base.yml; bump the three together.
 OLDEST_IMAGE_PYTHON_MINOR = 10
@@ -236,7 +236,7 @@ def _build_stub_class(agent_spec):
                 pass
             ...stub methods...
     """
-    # The agent's own class name; its calls name the agent `<project>.<agent>`.
+    # The agent's own class name; its calls name the agent `<workflow>.<agent>`.
     class_name = agent_spec.name.rsplit(".", 1)[-1]
     functions = agent_spec.functions
 
@@ -334,14 +334,14 @@ def _format_source(source):
     return "\n".join(formatted) + "\n"
 
 
-# What the sweep leaves out. These lists are hardcoded with no project override
+# What the sweep leaves out. These lists are hardcoded with no workflow override
 # because the build context is assembled by hand, so Docker's own ignore
 # mechanism never gets to run.
 
-# Directories canyonos deploy itself generates inside a project -- never swept.
+# Directories canyonos deploy itself generates inside a workflow -- never swept.
 _GENERATED_DIRS = {"docker_container", "stubs", "grpc_stubs"}
 
-# The project's config/ is read by the Global Controller from /workspace; agents get
+# The workflow's config/ is read by the Global Controller from /workspace; agents get
 # what they need from it through Redis, so no agent image carries it.
 _ROOT_SKIPPED_DIRS = _GENERATED_DIRS | {"config"}
 
@@ -349,7 +349,7 @@ _ROOT_SKIPPED_DIRS = _GENERATED_DIRS | {"config"}
 _SKIPPED_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
 
 # The generator writes these into the context itself, requirements.txt before
-# the copy runs -- a project file of the same name at the root would win.
+# the copy runs -- a workflow file of the same name at the root would win.
 RESERVED_CONTEXT_NAMES = frozenset(
     {
         "Dockerfile",
@@ -390,7 +390,7 @@ _UNREMARKABLE_HIDDEN = {
 
 
 def _is_unremarkable_hidden(name):
-    """Whether this hidden path is the tooling furniture every repo has, rather than project content."""
+    """Whether this hidden path is the tooling furniture every repo has, rather than workflow content."""
     return name in _UNREMARKABLE_HIDDEN or name.endswith("_cache")
 
 
@@ -422,26 +422,26 @@ def _format_path_sample(paths, limit=5):
     return shown
 
 
-def _sweep_project_files(project_dir, exclude_dir=None):
-    """Recursively collect (abs_src, rel_dst) for every project file under project_dir, preserving its directory structure.
+def _sweep_workflow_files(workflow_dir, exclude_dir=None):
+    """Recursively collect (abs_src, rel_dst) for every workflow file under workflow_dir, preserving its directory structure.
 
     Not only .py: source opens PDFs, prompts, and framework config at runtime,
     and a file missing from the image fails only once the agent is serving.
 
     Symlinks are never followed. A link to /etc or to a home directory would
-    copy files from outside the project into the image, so both the file and the
+    copy files from outside the workflow into the image, so both the file and the
     directory case are pruned here rather than left to `os.walk` defaulting to
     `followlinks=False` -- a security property should not rest on a default
     someone can flip.
 
     Every exclusion is reported except the ones that could never have held
     shippable content -- __pycache__, bytecode, the build's own output, and the
-    project's config/ folder, which the Global Controller reads and agents never
+    workflow's config/ folder, which the Global Controller reads and agents never
     open. A file that silently fails to arrive is the bug this sweep exists to fix, so
     dropping one quietly just moves it somewhere harder to find.
 
     `exclude_dir` is the build context being assembled, which sits under the
-    project root. Matching it by resolved path rather than name is what keeps
+    workflow root. Matching it by resolved path rather than name is what keeps
     this working for a caller that picks an output directory outside
     `_GENERATED_DIRS`.
     """
@@ -455,15 +455,15 @@ def _sweep_project_files(project_dir, exclude_dir=None):
     largest = (0, None)
     context_dir = os.path.realpath(exclude_dir) if exclude_dir else None
 
-    for root, dirs, files in os.walk(project_dir):
-        at_root = root == project_dir
+    for root, dirs, files in os.walk(workflow_dir):
+        at_root = root == workflow_dir
 
         kept_dirs = []
         for name in dirs:
             abs_dir = os.path.join(root, name)
             if context_dir and os.path.realpath(abs_dir) == context_dir:
                 continue
-            rel_dir = os.path.relpath(abs_dir, project_dir) + os.sep
+            rel_dir = os.path.relpath(abs_dir, workflow_dir) + os.sep
             if os.path.islink(abs_dir):
                 symlinks.append(rel_dir)
             elif name.startswith("."):
@@ -478,7 +478,7 @@ def _sweep_project_files(project_dir, exclude_dir=None):
 
         for fname in files:
             abs_src = os.path.join(root, fname)
-            rel_dst = os.path.relpath(abs_src, project_dir)
+            rel_dst = os.path.relpath(abs_src, workflow_dir)
             if fname.startswith("."):
                 if not _is_unremarkable_hidden(fname):
                     hidden.append(rel_dst)
@@ -524,13 +524,13 @@ def _sweep_project_files(project_dir, exclude_dir=None):
     for rel_dst in sorted(reserved):
         print(
             f"  Warning: the build context owns '{os.path.basename(rel_dst)}', so the "
-            f"project's own copy is not included in the image"
+            f"workflow's own copy is not included in the image"
         )
     if total_bytes > _LARGE_CONTEXT_BYTES:
         print(
             f"  Warning: sweeping {total_bytes // (1024 * 1024)} MB into this image, "
             f"largest is {largest[1]} at {largest[0] // (1024 * 1024)} MB. Everything "
-            f"under the project root ships unless it is hidden or generated."
+            f"under the workflow root ships unless it is hidden or generated."
         )
 
     return swept
@@ -602,7 +602,7 @@ def target_docker_platform(provider):
 
 def this_machine_platform():
     """This machine's Linux platform, e.g. `linux/arm64`. In a cluster build pod, the
-    architecture of the cluster's nodes: what a project naming no platform runs on."""
+    architecture of the cluster's nodes: what a workflow naming no platform runs on."""
     machine = platform.machine().lower()
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
     return f"linux/{arch}"
@@ -741,11 +741,11 @@ RUN --mount=type=cache,target=/root/.cache/uv --mount=from={UV_IMAGE},source=/uv
 """
 
 
-def agent_base_image(project_dir):
-    """The agent base image a project's agents run on: its `.python-version`'s Python, else the newest."""
+def agent_base_image(workflow_dir):
+    """The agent base image a workflow's agents run on: its `.python-version`'s Python, else the newest."""
     python_version = DEFAULT_IMAGE_PYTHON_VERSION
-    # Named from the deployment folder the build runs in, as the user sees it.
-    python_version_file = os.path.relpath(os.path.join(project_dir, ".python-version"))
+    # Named from the workflow group folder the build runs in, as the user sees it.
+    python_version_file = os.path.relpath(os.path.join(workflow_dir, ".python-version"))
     if os.path.isfile(python_version_file):
         try:
             with open(python_version_file, encoding="utf-8-sig") as f:
@@ -777,7 +777,7 @@ def generate_docker(
     output_dir=None,
     grpc_stubs_dir=None,
     stub_files=None,
-    project_dir=None,
+    workflow_dir=None,
     stub_entrypoints=None,
     requirements=None,
 ):
@@ -789,24 +789,24 @@ def generate_docker(
     for a toy bundle, the script its replica starts with instead of an image.
 
     Args:
-        agent_name:        The agent's name in the deployment, `<project>.<agent>`.
+        agent_name:        The agent's name in the workflow group, `<workflow>.<agent>`.
         agent_files:       {agent name: path to its real Python file} for each agent
                            its replica runs: the agent itself, or a toy bundle's agents.
         output_dir:        Optional output directory (default: docker_container/<AgentName>/).
         grpc_stubs_dir:    Optional path to compiled gRPC stubs (default: <repo_root>/grpc_stubs).
         stub_files:        Optional list of agent stub files to copy into the context.
-        project_dir:       Optional project root whose files are swept into the context.
+        workflow_dir:      Optional workflow root whose files are swept into the context.
         stub_entrypoints:  Optional {stub_basename: entrypoint} map for exact stub placement.
         requirements:   Optional list of extra pip packages this agent needs.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.join(script_dir, "..")
+    core_root = os.path.join(script_dir, "..")
 
     if output_dir is None:
-        output_dir = os.path.join(project_root, "docker_container", agent_name)
+        output_dir = os.path.join(core_root, "docker_container", agent_name)
 
     if grpc_stubs_dir is None:
-        grpc_stubs_dir = os.path.join(project_root, "grpc_stubs")
+        grpc_stubs_dir = os.path.join(core_root, "grpc_stubs")
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -819,10 +819,10 @@ def generate_docker(
     with open(os.path.join(output_dir, "requirements.txt"), "w") as f:
         f.write(requirements_txt)
 
-    # Sweep the whole project first; the explicit list below is copied on top.
+    # Sweep the whole workflow first; the explicit list below is copied on top.
     files_to_copy = []
-    if project_dir:
-        files_to_copy += _sweep_project_files(project_dir, exclude_dir=output_dir)
+    if workflow_dir:
+        files_to_copy += _sweep_workflow_files(workflow_dir, exclude_dir=output_dir)
 
     # Copy general agent files
     files_to_copy += [
@@ -863,7 +863,7 @@ def generate_docker(
         )
 
     # ---- Dockerfile ------------------------------------------------------
-    base_image = agent_base_image(project_dir)
+    base_image = agent_base_image(workflow_dir)
     dockerfile = f"""FROM {base_image}
 
 WORKDIR /app

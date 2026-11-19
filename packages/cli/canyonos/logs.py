@@ -25,11 +25,13 @@ def run_logs(follow=True, tail="200", agent=None):
     status = deploy_status(state)
     if status is None:
         raise NoDeployError(
-            "Nothing is running for this project. Run `canyonos stop` to clean up."
+            "Nothing is running for this workflow group. Run `canyonos stop` to clean up."
         )
 
     if not status.get("running"):
-        raise NoDeployError("No deploy is running. Run `canyonos deploy` first.")
+        raise NoDeployError(
+            "No workflow group is running. Run `canyonos deploy` first."
+        )
 
     if agent:
         replica_logs = deployed_logs(state, agent, tail)
@@ -52,5 +54,7 @@ def run_logs(follow=True, tail="200", agent=None):
             print(line, end="", flush=True)
     except KeyboardInterrupt:
         ui.blank()
-        ui.say("Stopped monitoring log stream. Run `canyonos stop` to stop the deploy.")
+        ui.say(
+            "Stopped monitoring log stream. Run `canyonos stop` to stop the workflow group."
+        )
     return True

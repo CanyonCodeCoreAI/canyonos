@@ -76,7 +76,7 @@ import {
 } from '@/modules/scaling/scaling-policy-card';
 import { scalingErrorMessage, scalingQueryOptions } from '@/modules/scaling/scaling.queries';
 
-const route = getRouteApi('/_authenticated/projects/$project_id/governance');
+const route = getRouteApi('/_authenticated/workflows/$workflow_id/governance');
 
 const REM_PX = 16;
 const COLUMN_STEP_PX = 18 * REM_PX;
@@ -350,22 +350,22 @@ const STATUS_COLOR =
 type Panel = 'policy';
 
 export function GovernanceScreen({
-  project_id,
+  workflow_id,
   agent,
   panel,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly agent: string | undefined;
   readonly panel: Panel | undefined;
 }) {
-  const query = useQuery(governanceQueryOptions(project_id));
+  const query = useQuery(governanceQueryOptions(workflow_id));
 
   return (
     <main
       className="flex min-h-0 flex-1 flex-col gap-5 p-7"
       data-testid="governance-screen"
       data-state={readState(query)}
-      data-project-id={project_id}
+      data-workflow-id={workflow_id}
     >
       <header className="flex flex-col gap-1.5">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight text-balance">
@@ -376,18 +376,18 @@ export function GovernanceScreen({
           or stop it; the scaling policy sets how every agent grows and shrinks.
         </p>
       </header>
-      <GovernanceBody project_id={project_id} query={query} agent={agent} panel={panel} />
+      <GovernanceBody workflow_id={workflow_id} query={query} agent={agent} panel={panel} />
     </main>
   );
 }
 
 function GovernanceBody({
-  project_id,
+  workflow_id,
   query,
   agent,
   panel,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly query: UseQueryResult<GovernanceResponse, Error>;
   readonly agent: string | undefined;
   readonly panel: Panel | undefined;
@@ -447,7 +447,7 @@ function GovernanceBody({
           role="toolbar"
           aria-label="Canvas"
         >
-          <PolicyLine project_id={project_id} />
+          <PolicyLine workflow_id={workflow_id} />
           <Button
             type="button"
             size="sm"
@@ -479,7 +479,7 @@ function GovernanceBody({
           </Button>
         </div>
         <AgentDrawer
-          project_id={project_id}
+          workflow_id={workflow_id}
           agents={agents}
           agent={
             panel === undefined ? agents.find((candidate) => candidate.name === agent) : undefined
@@ -488,7 +488,7 @@ function GovernanceBody({
           onClose={() => void navigate({ search: { agent: undefined } })}
         />
         <PolicySheet
-          project_id={project_id}
+          workflow_id={workflow_id}
           open={panel === 'policy'}
           container={canvasBox}
           onClose={() => void navigate({ search: { panel: undefined } })}
@@ -515,8 +515,8 @@ type ScalingRead = UseQueryResult<ScalingResponse, Error>;
 
 function policyLine(query: ScalingRead): string {
   if (query.data !== undefined) {
-    return Object.entries(query.data.projects)
-      .map(([project, policy]) => `${project}: ${policySummary(policy)}`)
+    return Object.entries(query.data.workflows)
+      .map(([workflow, policy]) => `${workflow}: ${policySummary(policy)}`)
       .join(' / ');
   }
   if (query.isError && !query.isFetching) return 'Policy unavailable';
@@ -524,8 +524,8 @@ function policyLine(query: ScalingRead): string {
 }
 
 /** The stored policy in one muted line beside its button, so it reads without opening. */
-function PolicyLine({ project_id }: { readonly project_id: string }) {
-  const query = useQuery(scalingQueryOptions(project_id));
+function PolicyLine({ workflow_id }: { readonly workflow_id: string }) {
+  const query = useQuery(scalingQueryOptions(workflow_id));
   return (
     <span
       className="text-muted-foreground px-2 text-xs whitespace-nowrap tabular-nums"
@@ -537,14 +537,14 @@ function PolicyLine({ project_id }: { readonly project_id: string }) {
   );
 }
 
-/** Each project's scaling policy, edited in the same sheet the agents open in. */
+/** Each workflow's scaling policy, edited in the same sheet the agents open in. */
 function PolicySheet({
-  project_id,
+  workflow_id,
   open,
   container,
   onClose,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly open: boolean;
   readonly container: HTMLElement | null;
   readonly onClose: () => void;
@@ -579,15 +579,15 @@ function PolicySheet({
           <CloseButton />
         </SheetHeader>
         <div className="px-6 py-5">
-          <PolicyBody project_id={project_id} />
+          <PolicyBody workflow_id={workflow_id} />
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-function PolicyBody({ project_id }: { readonly project_id: string }) {
-  const query = useQuery(scalingQueryOptions(project_id));
+function PolicyBody({ workflow_id }: { readonly workflow_id: string }) {
+  const query = useQuery(scalingQueryOptions(workflow_id));
   if (query.data === undefined && query.isError && !query.isFetching) {
     return (
       <QueryError
@@ -604,20 +604,19 @@ function PolicyBody({ project_id }: { readonly project_id: string }) {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex flex-col gap-6">
-        {Object.entries(query.data.projects).map(([project, policy]) => (
+        {Object.entries(query.data.workflows).map(([workflow, policy]) => (
           <section
-            key={project}
+            key={workflow}
             className="flex flex-col gap-3"
-            aria-label={project}
-            data-testid="governance-policy-project"
-            data-project={project}
+            aria-label={workflow}
+            data-testid="governance-policy-workflow"
+            data-workflow={workflow}
           >
-            <h3 className="text-foreground font-mono text-sm font-semibold">{project}</h3>
+            <h3 className="text-foreground font-mono text-sm font-semibold">{workflow}</h3>
             {/* Keyed on the stored policy: a save or delete re-reads it and remounts the card closed. */}
             <ScalingPolicyCard
               key={JSON.stringify(policy)}
-              project_id={project_id}
-              project={project}
+              workflow_id={workflow_id}
               policy={policy}
             />
           </section>
@@ -644,13 +643,13 @@ function CloseButton() {
 }
 
 function AgentDrawer({
-  project_id,
+  workflow_id,
   agents,
   agent,
   container,
   onClose,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly agents: readonly GovernanceAgent[];
   readonly agent: GovernanceAgent | undefined;
   readonly container: HTMLElement | null;
@@ -673,9 +672,9 @@ function AgentDrawer({
         data-testid="governance-drawer"
       >
         <TooltipProvider delayDuration={200}>
-          <AgentHeader project_id={project_id} agent={agent} />
+          <AgentHeader workflow_id={workflow_id} agent={agent} />
           <div className="flex flex-1 flex-col px-6 pt-5">
-            <RulesForm project_id={project_id} agents={agents} agent={agent} />
+            <RulesForm workflow_id={workflow_id} agents={agents} agent={agent} />
           </div>
         </TooltipProvider>
       </SheetContent>
@@ -698,13 +697,13 @@ function StatusPill({ status }: { readonly status: AgentStatus }) {
 
 /** The agent at a glance, with the one action that changes its replicas: stop or start it. */
 function AgentHeader({
-  project_id,
+  workflow_id,
   agent,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly agent: GovernanceAgent;
 }) {
-  const set = useSetStopped(project_id, agent.name);
+  const set = useSetStopped(workflow_id, agent.name);
   const stopped = agent.status === 'stopped';
   const warn = agent.scaling_policy_present && !stopped;
   const error = set.error
@@ -793,15 +792,15 @@ function toLocalInput(iso: string | undefined): string {
 }
 
 function RulesForm({
-  project_id,
+  workflow_id,
   agents,
   agent,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly agents: readonly GovernanceAgent[];
   readonly agent: GovernanceAgent;
 }) {
-  const save = useSaveAgentRules(project_id, agent.name);
+  const save = useSaveAgentRules(workflow_id, agent.name);
   // `since` is always a key: its date field registers it, and a key the stored rules lack would
   // read as an edit before any.
   const stored: AgentRules = {
@@ -1241,7 +1240,7 @@ function ActionFields({
   );
 }
 
-/** A pick from the models llms.yaml allows, or any model id when the project has no llms.yaml. */
+/** A pick from the models llms.yaml allows, or any model id when the workflow has no llms.yaml. */
 function ModelField({
   action,
   models,

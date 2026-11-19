@@ -4,7 +4,7 @@
 """Ways to break a copied port's manifest so `canyonos validate` has to reject it.
 
 Each mode names a method the agent does not have, so no stub can be generated,
-sets a retired key, sets a key that belongs in deployment.yaml, or points the
+sets a retired key, sets a key that belongs in workflow_group.yaml, or points the
 agent's entrypoint at an unset variable, and returns the text one finding's summary has to contain.
 """
 
@@ -26,8 +26,8 @@ def env_file(manifest, agent, function):
 def deployment_key(manifest, agent, function):
     manifest["poll_interval"] = 4
     return (
-        "poll_interval: is a deployment setting, shared by every project: set it in "
-        "deployment.yaml"
+        "poll_interval: is a workflow group setting, shared by every workflow: set it in "
+        "workflow_group.yaml"
     )
 
 

@@ -41,9 +41,9 @@ export CANYONOS_ENV=development
 export CANYONOS_CORE_IMAGE=local
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
 mkdir -p "$ARTIFACTS_DIR"
-# The pool app is the project `ec2pool`, deployed from a deployment folder beside it.
+# The pool app is the workflow `ec2pool`, deployed from a deployment folder beside it.
 STAGE_DIR="$(mktemp -d)"
-PROJECT_DIR="$STAGE_DIR/ec2pool"
+WORKFLOW_DIR="$STAGE_DIR/ec2pool"
 DEPLOYMENT_DIR="$STAGE_DIR/deployment"
 # Its own API key, which wins over ~/.canyonos/api_key and is never written to it.
 CANYONOS_API_KEY="e2e-$(openssl rand -hex 24)"
@@ -72,11 +72,11 @@ finish() {
 }
 trap finish EXIT
 
-step "Staging the pool app in $PROJECT_DIR"
-cp -R "$FIXTURE_DIR" "$PROJECT_DIR"
-rm "$PROJECT_DIR/pool.py"
+step "Staging the pool app in $WORKFLOW_DIR"
+cp -R "$FIXTURE_DIR" "$WORKFLOW_DIR"
+rm "$WORKFLOW_DIR/pool.py"
 mkdir "$DEPLOYMENT_DIR"
-mv "$PROJECT_DIR/deployment.yaml" "$DEPLOYMENT_DIR/deployment.yaml"
+mv "$WORKFLOW_DIR/workflow_group.yaml" "$DEPLOYMENT_DIR/workflow_group.yaml"
 # The controller reads the ec2-pool: block's ${EC2_*} values, and keys when given, from
 # the deployment's .env; without keys it uses this machine's role.
 printf 'EC2_REGION=%s\nEC2_SUBNET_ID=%s\nEC2_SECURITY_GROUP_ID=%s\nEC2_POOL_SMALL_TYPE=t3.small\n' \
@@ -94,25 +94,25 @@ docker build -q -f "$REPO_ROOT/packages/core/Dockerfile" -t canyonos-core:dev "$
 # each type to how many machines of it to start.
 while IFS='|' read -r case expected; do
   step "Checking the deployment: $case"
-  # The deployment as the Global Controller's workspace holds it: deployment.yaml and
-  # a folder per project.
+  # The deployment as the Global Controller's workspace holds it: workflow_group.yaml and
+  # a folder per workflow.
   workspace="$(mktemp -d)"
-  cp "$DEPLOYMENT_DIR/deployment.yaml" "$workspace/deployment.yaml"
-  cp -R "$PROJECT_DIR" "$workspace/ec2pool"
+  cp "$DEPLOYMENT_DIR/workflow_group.yaml" "$workspace/workflow_group.yaml"
+  cp -R "$WORKFLOW_DIR" "$workspace/ec2pool"
   out="$ARTIFACTS_DIR/check-${case// /-}.txt"
   uv run --project "$REPO_ROOT" python - "$workspace" "$case" >"$out" <<'PY'
 import os, sys, yaml
 from canyonos_core.schema import CONFIG_PATH, check_deployment
 from canyonos_core.schema.errors import render_violation
 workspace, case = sys.argv[1:]
-paths = [os.path.join(workspace, "deployment.yaml"), os.path.join(workspace, "ec2pool", CONFIG_PATH)]
-config, project = (yaml.safe_load(open(path)) for path in paths)
+paths = [os.path.join(workspace, "workflow_group.yaml"), os.path.join(workspace, "ec2pool", CONFIG_PATH)]
+config, workflow = (yaml.safe_load(open(path)) for path in paths)
 # Literal values, since the EC2_* variables are only in the deployment's .env.
 config["ec2-pool"].update(region="us-east-1", subnet_id="subnet-0", security_group_ids=["sg-0"])
 if case == "an agent sets provider":
-    project["agents"][0]["provider"] = "ec2-pool"
+    workflow["agents"][0]["provider"] = "ec2-pool"
 elif case == "an agent sets machine_type":
-    project["agents"][0]["machine_type"] = "t3.micro"
+    workflow["agents"][0]["machine_type"] = "t3.micro"
 elif case == "an unknown provider":
     config["provider"] = "aws"
 elif case == "ec2-pool without an ec2-pool block":
@@ -127,7 +127,7 @@ elif case == "provider left out":
     del config["provider"]
 elif case == "an ec2-pool block without machine_type":
     del config["ec2-pool"]["machine_type"]
-for path, document in zip(paths, (config, project)):
+for path, document in zip(paths, (config, workflow)):
     yaml.safe_dump(document, open(path, "w"), sort_keys=False)
 for violation in check_deployment(workspace)[1]:
     print(render_violation(violation))

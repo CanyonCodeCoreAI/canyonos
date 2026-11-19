@@ -12,16 +12,16 @@ from canyonos.auth import hash_api_key, machine_api_key, resolve_api_key
 from canyonos.constants import dashboard_port, deployment_config_path
 from canyonos.gc import deploy_status
 from canyonos.init import load_state
-from .dashboard_registration import RegistrationError, register_project
+from .dashboard_registration import RegistrationError, register_workflows
 from .dashboard_stack import ServeResult, _existing_dashboard_port, run_dashboard
 
 
-def _register_running_project() -> None:
-    """Register this folder's project with the dashboard when its controller is running.
+def _register_running_workflows() -> None:
+    """Register this folder's workflows with the dashboard when its controller is running.
 
-    Temporary: applied now so multi-project dashboards work without blocking the flow;
-    revisit with the project-key design in CAN-521 (the api should not hold
-    per-project Redis addresses).
+    Temporary: applied now so multi-workflow dashboards work without blocking the flow;
+    revisit with the workflow-key design in CAN-521 (the api should not hold
+    per-workflow Redis addresses).
 
     A folder with no readable deploy state or no running deploy has nothing to
     register, so it is skipped without a word. A failed registration only
@@ -35,16 +35,17 @@ def _register_running_project() -> None:
         return
 
     try:
-        registered = register_project(state)
+        registered = register_workflows(state)
     except RegistrationError as e:
-        ui.warn(f"Dashboard could not register this project: {e}")
+        ui.warn(f"Dashboard could not register this workflow group: {e}")
         ui.hint("Run `canyonos serve` again to retry.")
         return
-    ui.ok(f"Registered {registered.get('name', 'this project')} with the dashboard")
+    names = ", ".join(workflow["name"] for workflow in registered)
+    ui.ok(f"Registered {names} with the dashboard")
 
 
 def _warn_if_dashboard_port_ignored() -> None:
-    """Warn when the dashboard already runs on another port than this project's
+    """Warn when the dashboard already runs on another port than this workflow group's
     `dashboard_port`, which is then ignored."""
     configured_port = dashboard_port(deployment_config_path())
     running_port = _existing_dashboard_port()
@@ -82,7 +83,7 @@ def serve_dashboard(
 
     if result.ok:
         _warn_if_dashboard_port_ignored()
-        _register_running_project()
+        _register_running_workflows()
         return result
     if not report_failure:
         return result

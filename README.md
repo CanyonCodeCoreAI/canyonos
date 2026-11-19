@@ -14,7 +14,7 @@
 Maintained by [CanyonCode](https://canyoncode.ai/).
 
 ## Core Features
-- **Easy deployment**: Developers write agents in python locally without any special features. CanyonOS instruments the code to simplify and automate deployment.
+- **Easy deployment**: Developers write agents in python locally without any special features. CanyonOS instruments the code to simplify and automate workflow group.
 - **Complete Observability**: All metrics, logs, and traces from your runtime are collected and displayed, with OTel-compatability allowing connection to any OTel-compatable frontend. A Dashboard is included.
 - **Fully Asynchronous**: Asynchronous execution for scale is built in, without modifying your workflow.
 - **Non-invasive**: None of your existing code is changed. A new `.canyon` folder is created when building on top of a existing workflow.
@@ -31,14 +31,14 @@ Maintained by [CanyonCode](https://canyoncode.ai/).
 ## Requirements
 - Python 3+
 - [Docker](https://docs.docker.com/desktop/) with Compose v2
-- Agents run on Python 3.15 by default. For an earlier one (3.10 or later), add a `.python-version` file with that version, such as `3.12`, to your project folder.
-- _Optional_: A coding agent of your choice to convert an existing project
+- Agents run on Python 3.15 by default. For an earlier one (3.10 or later), add a `.python-version` file with that version, such as `3.12`, to your workflow folder.
+- _Optional_: A coding agent of your choice to convert an existing workflow
 
 ## Our Principles
 
 ### A workflow is a program that delivers an outcome, and each agent is a specialist it trusts with one step.
 
->> A **workflow** can be defined as a map or graph of **agents**. You can think of these as a group of distributed programs that accomplish a more complex task through coordinated effort. In CanyonOS, your workflow is represented by your project folder.
+>> A **workflow** can be defined as a map or graph of **agents**. You can think of these as a group of distributed programs that accomplish a more complex task through coordinated effort. In CanyonOS, your workflow is represented by your workflow folder.
 > 
 
 Your code says what the application does, and the config says how it runs: how many replicas, what resources, which models.
@@ -104,14 +104,14 @@ class Workflow:
         return {"answer": MyAgent().run(query=query)}
 ```
 
-Deploy it, giving the deployment a folder of its own beside it:
+Deploy it, giving the workflow group a folder of its own beside it:
 
 ```bash
 cd ..
-canyonos deploy my-proj --folder my-deployment
+canyonos deploy my-proj --workflow-group my-group
 ```
 
-For details on new projects, read: [building a new project](docs/guides/FROM_SCRATCH.md).
+For details on new workflows, read: [building a new workflow](docs/guides/FROM_SCRATCH.md).
 
 For configuration, read: [workflow configuration](docs/guides/WORKFLOW_CONFIG.md).
 
@@ -126,8 +126,8 @@ all.
 cd your-workflow
 canyonos convert
 cd ..
-canyonos deploy your-workflow --folder my-deployment --api-key <your api key>
-cd my-deployment
+canyonos deploy your-workflow --workflow-group my-group --api-key <your api key>
+cd my-group
 canyonos test "your query"
 ```
 

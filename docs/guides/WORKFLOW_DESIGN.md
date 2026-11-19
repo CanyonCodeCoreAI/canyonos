@@ -28,10 +28,10 @@ network, so split only when it buys you something. All agents share one `.env`.
 `canyonos new-app` writes a starter workflow;
 [Build a workflow from scratch](FROM_SCRATCH.md) walks through it.
 
-## Bring an existing project
+## Bring an existing workflow
 
 The optional helper, `canyonos convert`, uses your own coding agent to convert a copy of
-a LangChain or LangGraph project into `.canyon/` for you to check. See
+a LangChain or LangGraph workflow into `.canyon/` for you to check. See
 [What a workflow needs](WORKFLOW_REQUIREMENTS.md) and
 [Convert an existing workflow](CONVERT_WORKFLOW.md).
 

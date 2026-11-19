@@ -5,31 +5,31 @@ import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Page, Route } from '@playwright/test';
 
 import type { GovernanceAgent, GovernanceResponse } from '@canyonos/api/governance';
-import type { ProjectSummary } from '@canyonos/api/projects';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { ScalingPolicy, ScalingResponse, ScalingStatus } from '@canyonos/api/scaling';
+import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { authenticate, TEST_API_KEY } from './helpers/auth';
-import { apiBaseUrl, fulfillJson } from './helpers/projects';
 import { expectPath } from './helpers/session';
+import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const SEEDED_PROJECT_NAME = 'Canyon Code Demo Flow';
+const SEEDED_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
-/** The project the API's dev seed makes, found the way the dashboard lists it. */
-async function seededProject(request: APIRequestContext): Promise<ProjectSummary> {
-  const response = await request.get(`${apiBaseUrl}/projects`, {
+/** The workflow the API's dev seed makes, found the way the dashboard lists it. */
+async function seededWorkflow(request: APIRequestContext): Promise<WorkflowSummary> {
+  const response = await request.get(`${apiBaseUrl}/workflows`, {
     headers: { authorization: `Bearer ${TEST_API_KEY}` },
   });
-  const projects = (await response.json()) as ProjectSummary[];
-  return projects.find(({ name }) => name === SEEDED_PROJECT_NAME)!;
+  const workflows = (await response.json()) as WorkflowSummary[];
+  return workflows.find(({ name }) => name === SEEDED_WORKFLOW_NAME)!;
 }
 
 type ControllerAnswer = (route: Route) => unknown;
 
 /**
  * The API decides every call to `pathname`: its 401 reaches the page as it is. Past that
- * check the API asks the project's controller, which this suite does not run, so its answer stands
+ * check the API asks the workflow's controller, which this suite does not run, so its answer stands
  * in for the controller's. `statuses` keeps what the API said, to show it accepted the key.
  */
 async function answerPastAuth(
@@ -56,32 +56,32 @@ async function answerPastAuth(
 
 const refused = (status: number) => status === 401;
 
-let project: ProjectSummary;
+let workflow: WorkflowSummary;
 
 test.beforeAll(async ({ playwright }) => {
   const request = await playwright.request.newContext();
-  project = await seededProject(request);
+  workflow = await seededWorkflow(request);
   await request.dispose();
 });
 
 test('the API key saves a scaling policy through the API and sees it stored', async ({ page }) => {
   let stored: ScalingStatus = { status: 'none' };
-  const reads = await answerPastAuth(page, `/projects/${project.id}/scaling`, {
-    GET: (): ScalingResponse => ({ projects: { app: stored } }),
+  const reads = await answerPastAuth(page, `/workflows/${workflow.id}/scaling`, {
+    GET: (): ScalingResponse => ({ workflows: { app: stored } }),
   });
-  const writes = await answerPastAuth(page, `/projects/${project.id}/scaling/app`, {
+  const writes = await answerPastAuth(page, `/workflows/${workflow.id}/scaling`, {
     PUT: (route) => {
       const policy = route.request().postDataJSON() as ScalingPolicy;
       stored = { status: 'applied', policy };
       return policy;
     },
   });
-  await answerPastAuth(page, `/projects/${project.id}/scaling/agents`, {
+  await answerPastAuth(page, `/workflows/${workflow.id}/scaling/agents`, {
     GET: () => ({ agents: [] }),
   });
   await authenticate(page);
 
-  await page.goto(`/projects/${project.id}/scaling`);
+  await page.goto(`/workflows/${workflow.id}/scaling`);
   await expect(page.getByTestId('scaling-screen')).toHaveAttribute('data-state', 'ready');
   await page.getByTestId('scaling-policy-none').getByTestId('policy-add').click();
   await page.getByTestId('policy-max-replicas-increase').click();
@@ -94,7 +94,7 @@ test('the API key saves a scaling policy through the API and sees it stored', as
   expect(reads.length).toBeGreaterThanOrEqual(2);
   expect(writes).toHaveLength(1);
   expect([...reads, ...writes].some(refused)).toBe(false);
-  await expectPath(page, `/projects/${project.id}/scaling`);
+  await expectPath(page, `/workflows/${workflow.id}/scaling`);
 });
 
 const governanceAgent = (name: string, status: GovernanceAgent['status']): GovernanceAgent => ({
@@ -117,12 +117,12 @@ const governanceWith = (status: GovernanceAgent['status']): GovernanceResponse =
 
 test('the API key reads governance and stops an agent through the API', async ({ page }) => {
   let status: GovernanceAgent['status'] = 'up';
-  const reads = await answerPastAuth(page, `/projects/${project.id}/governance`, {
+  const reads = await answerPastAuth(page, `/workflows/${workflow.id}/governance`, {
     GET: () => governanceWith(status),
   });
   const writes = await answerPastAuth(
     page,
-    `/projects/${project.id}/governance/agents/PriceAgent/stopped`,
+    `/workflows/${workflow.id}/governance/agents/PriceAgent/stopped`,
     {
       PUT: (route) => {
         status = (route.request().postDataJSON() as { stopped: boolean }).stopped
@@ -132,12 +132,12 @@ test('the API key reads governance and stops an agent through the API', async ({
       },
     }
   );
-  await answerPastAuth(page, `/projects/${project.id}/scaling`, {
-    GET: (): ScalingResponse => ({ projects: { app: { status: 'none' } } }),
+  await answerPastAuth(page, `/workflows/${workflow.id}/scaling`, {
+    GET: (): ScalingResponse => ({ workflows: { app: { status: 'none' } } }),
   });
   await authenticate(page);
 
-  await page.goto(`/projects/${project.id}/governance?agent=PriceAgent`);
+  await page.goto(`/workflows/${workflow.id}/governance?agent=PriceAgent`);
   const drawer = page.getByTestId('governance-drawer');
   await expect(drawer.getByTestId('governance-drawer-status')).toHaveAttribute('data-status', 'up');
   await drawer.getByRole('button', { name: 'Stop agent' }).click();
@@ -168,9 +168,11 @@ test('the API key reads the prompts and makes an older version live through the 
   let prompt: Prompt = { name: 'summarize', live: V2, versions: [V2, V1] };
   const listing = (): PromptListItem[] => [{ name: prompt.name, live: prompt.live }];
   const calls = [
-    await answerPastAuth(page, `/projects/${project.id}/prompts`, { GET: listing }),
-    await answerPastAuth(page, `/projects/${project.id}/prompts/summarize`, { GET: () => prompt }),
-    await answerPastAuth(page, `/projects/${project.id}/prompts/summarize/live`, {
+    await answerPastAuth(page, `/workflows/${workflow.id}/prompts`, { GET: listing }),
+    await answerPastAuth(page, `/workflows/${workflow.id}/prompts/summarize`, {
+      GET: () => prompt,
+    }),
+    await answerPastAuth(page, `/workflows/${workflow.id}/prompts/summarize/live`, {
       PUT: (route) => {
         const { version } = route.request().postDataJSON() as { version: string };
         prompt = { ...prompt, live: prompt.versions.find((stored) => stored.version === version)! };
@@ -180,7 +182,7 @@ test('the API key reads the prompts and makes an older version live through the 
   ];
   await authenticate(page);
 
-  await page.goto(`/projects/${project.id}/prompts`);
+  await page.goto(`/workflows/${workflow.id}/prompts`);
   const card = page.locator('[data-testid="prompt-card"][data-name="summarize"]');
   await expect(card.getByTestId('prompt-live')).toHaveText('v2 live');
   await card.getByTestId('prompt-toggle').click();

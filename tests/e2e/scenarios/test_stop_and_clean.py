@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos stop` and `canyonos clean` pick the projects deployed on this machine
+"""`canyonos stop` and `canyonos clean` pick the workflow groups deployed on this machine
 from any folder, by name or ID as Docker picks containers, or in a menu. Two copies
 of helloworld deploy from folders both named `helloworld`, so only their IDs tell
 them apart. Without a terminal, a stop that would have to ask names both and stops
 neither, and the shared folder name is refused as ambiguous. In a terminal, `clean`
 lists both and cleans only the one ticked with space and confirmed with enter.
 `canyonos list` shows both running; once one is selected, `status` and `test`
-outside every folder act on it, while a folder's own deployment still wins, and a
-selected deployment that is gone makes `stop` fail rather than stop the other.
+outside every folder act on it, while a folder's own workflow group still wins, and a
+selected workflow group that is gone makes `stop` fail rather than stop the other.
 `canyonos dashboard` prints a link whose fragment carries the API key that signs
 the dashboard in. Once
-the other's Global Controller is gone, a stop with one project left acts without
+the other's Global Controller is gone, a stop with one workflow left acts without
 asking, reports it already gone and removes the Redis and replicas it left. Naming
-a project that is no longer deployed fails, and `clean` in its folder still finds
+a workflow group that is no longer deployed fails, and `clean` in its folder still finds
 it by ID. The cases are steps on one fleet: once one fails, the rest are skipped."""
 
 import json
@@ -36,11 +36,11 @@ from ..harness import (
     docker,
     http,
     poll,
-    project_containers,
-    project_dir,
+    workflow_group_containers,
+    workflow_dir,
     stage,
 )
-from ..projects import load_project
+from ..workflows import load_workflow
 
 pytestmark = pytest.mark.steps
 
@@ -58,8 +58,8 @@ CONTEXT = Path.home() / ".canyonos" / "context.json"
 
 @dataclass
 class Fleet:
-    """Each copy's deployment folder, deployment name (`helloworld-<id[:8]>`) and
-    deployment_id, and an empty folder to run commands from outside every project."""
+    """Each copy's workflow group folder, workflow group name (`helloworld-<id[:8]>`) and
+    deployment_id, and an empty folder to run commands from outside every workflow."""
 
     dirs: dict[str, Path]
     names: dict[str, str]
@@ -69,8 +69,8 @@ class Fleet:
 
 def _pin_ports(directory: Path) -> None:
     """Give the copy fixed ports, so the two deploys can't race for the same ones.
-    helloworld's deployment.yaml sets neither, so both blocks are added."""
-    path = directory / "deployment.yaml"
+    helloworld's workflow_group.yaml sets neither, so both blocks are added."""
+    path = directory / "workflow_group.yaml"
     text = path.read_text()
     assert not re.search(r"^(endpoint|redis):", text, flags=re.M), text
     path.write_text(
@@ -80,8 +80,8 @@ def _pin_ports(directory: Path) -> None:
     )
 
 
-def _running_projects(recorder) -> set[str]:
-    """The names of the projects whose Global Controller runs."""
+def _running_workflow_groups(recorder) -> set[str]:
+    """The names of the workflow groups whose Global Controller runs."""
     listing = docker(
         recorder,
         [
@@ -107,7 +107,7 @@ def _all_replicas_up(recorder, directory: Path) -> bool:
 
 
 def _records() -> list[str]:
-    """The projects with a deploy record, in the order the CLI lists them."""
+    """The workflow groups with a deploy record, in the order the CLI lists them."""
     deployments = Path.home() / ".canyonos" / "deployments"
     return sorted(path.parent.name for path in deployments.glob("*/state.json"))
 
@@ -127,7 +127,7 @@ def _images(recorder, name: str) -> list[str]:
 
 
 def _tear_down(recorder, fleet_dirs: dict[str, Path], parent: Path) -> None:
-    """Stop every project, then clean each copy's folder, whether the steps passed."""
+    """Stop every workflow, then clean each copy's folder, whether the steps passed."""
     stopped = canyonos(
         recorder, ["stop", "--all"], cwd=parent, timeout=600, check=False
     )
@@ -147,19 +147,19 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     request.addfinalizer(lambda: _tear_down(recorder, dirs, parent))
     for copy in COPIES:
         (parent / copy).mkdir()
-        dirs[copy] = stage(recorder, load_project("helloworld"), parent / copy, {})
+        dirs[copy] = stage(recorder, load_workflow("helloworld"), parent / copy, {})
     _pin_ports(dirs["second"])
     with ThreadPoolExecutor(max_workers=1) as pool:
         first = pool.submit(
             canyonos,
             recorder,
-            ["deploy", str(project_dir(dirs["first"])), "--json"],
+            ["deploy", str(workflow_dir(dirs["first"])), "--json"],
             cwd=dirs["first"],
             timeout=DEPLOY_TIMEOUT,
         )
         detached = canyonos_in_terminal(
             recorder,
-            ["deploy", str(project_dir(dirs["second"])), "--yes", "--detach"],
+            ["deploy", str(workflow_dir(dirs["second"])), "--yes", "--detach"],
             cwd=dirs["second"],
             answers=[],
         )
@@ -176,7 +176,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         copy: cli_value(
             recorder,
             dirs[copy],
-            "[deployment_name(), read_config(deployment_config_path())['deployment_id']]",
+            "[deployment_name(), read_config(deployment_config_path())['workflow_group_id']]",
             "from canyonos.deployment import deployment_name; "
             "from canyonos.constants import deployment_config_path, read_config",
         )
@@ -187,7 +187,9 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     return Fleet(
         dirs=dirs,
         names={copy: name for copy, (name, _) in identity.items()},
-        ids={copy: project_id for copy, (_, project_id) in identity.items()},
+        ids={
+            copy: workflow_group_id for copy, (_, workflow_group_id) in identity.items()
+        },
         outside=outside,
     )
 
@@ -195,7 +197,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
 def test_both_deploy_from_folders_of_the_same_name(recorder, fleet):
     assert {path.name for path in fleet.dirs.values()} == {"helloworld"}
     assert fleet.names["first"] != fleet.names["second"], fleet.names
-    assert set(fleet.names.values()) <= _running_projects(recorder)
+    assert set(fleet.names.values()) <= _running_workflow_groups(recorder)
     assert set(fleet.names.values()) <= set(_records())
 
 
@@ -207,17 +209,17 @@ def test_without_a_terminal_stop_names_both_and_stops_neither(recorder, fleet):
         assert fleet.ids[copy] in call.output, call.output
         assert str(fleet.dirs[copy]) in call.output, call.output
     assert "canyonos stop <name or ID>" in call.output, call.output
-    assert set(fleet.names.values()) <= _running_projects(recorder)
+    assert set(fleet.names.values()) <= _running_workflow_groups(recorder)
 
 
 def test_the_shared_folder_name_is_refused_as_ambiguous(recorder, fleet):
     call = canyonos(recorder, ["stop", "helloworld"], cwd=fleet.outside, check=False)
 
     assert call.code == 1, call.output
-    assert "matches 2 deployments" in call.output, call.output
+    assert "matches 2 workflow groups" in call.output, call.output
     for copy in COPIES:
         assert fleet.ids[copy] in call.output, call.output
-    assert set(fleet.names.values()) <= _running_projects(recorder)
+    assert set(fleet.names.values()) <= _running_workflow_groups(recorder)
 
 
 def _tested_ports(recorder, cwd: Path) -> set[int]:
@@ -270,7 +272,7 @@ def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_with_the_key(
     assert checked.json() == {"ok": True}, checked.output
 
 
-def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):
+def test_clean_in_a_terminal_cleans_only_the_ticked_workflow_group(recorder, fleet):
     second, first = fleet.names["second"], fleet.names["first"]
     skill = fleet.dirs["second"] / SKILL
     skill.parent.mkdir(parents=True)
@@ -282,17 +284,17 @@ def test_clean_in_a_terminal_cleans_only_the_ticked_project(recorder, fleet):
         recorder,
         ["clean"],
         cwd=fleet.outside,
-        answers=[("Select the deployments to clean", keys)],
+        answers=[("Select the workflow groups to clean", keys)],
     )
 
     for copy in COPIES:
         assert fleet.names[copy] in call.output, call.output
     assert f"{second} torn down" in call.output, call.output
-    assert not project_containers(recorder, f"canyonos-{second}", every=True)
+    assert not workflow_group_containers(recorder, f"canyonos-{second}", every=True)
     assert not _images(recorder, second)
     assert not (fleet.dirs["second"] / ".claude").exists()
     assert second not in _records()
-    assert first in _running_projects(recorder)
+    assert first in _running_workflow_groups(recorder)
     assert _images(recorder, first)
     assert len(dashboard_containers(recorder)) == DASHBOARD_CONTAINERS
 
@@ -311,15 +313,15 @@ def test_stop_refuses_a_selected_deployment_that_is_gone_and_leaves_the_other(
     assert f"`{second}` is no longer deployed" in call.output, call.output
     assert "canyonos list" in call.output, call.output
     assert "Traceback" not in call.output, call.output
-    assert first in _running_projects(recorder)
+    assert first in _running_workflow_groups(recorder)
 
 
-def test_with_one_project_left_stop_refuses_it_once_its_controller_is_down(
+def test_with_one_workflow_group_left_stop_refuses_it_once_its_controller_is_down(
     recorder, fleet
 ):
     first = fleet.names["first"]
-    others = _running_projects(recorder) - {first}
-    assert not others, f"other projects run on this machine: {others}"
+    others = _running_workflow_groups(recorder) - {first}
+    assert not others, f"other workflow groups run on this machine: {others}"
     docker(recorder, ["rm", "-f", f"canyonos-{first}-global-controller"])
 
     call = canyonos(recorder, ["stop"], cwd=fleet.outside, check=False)
@@ -327,29 +329,33 @@ def test_with_one_project_left_stop_refuses_it_once_its_controller_is_down(
     assert call.code == 1, call.output
     assert f"Run `canyonos stop {first}` to force it." in call.output, call.output
     assert "stop --all" not in call.output, call.output
-    assert project_containers(recorder, f"canyonos-{first}", every=True)
+    assert workflow_group_containers(recorder, f"canyonos-{first}", every=True)
     assert first in _records()
 
 
-def test_naming_a_project_whose_controller_is_down_forces_its_stop(recorder, fleet):
+def test_naming_a_workflow_group_whose_controller_is_down_forces_its_stop(
+    recorder, fleet
+):
     first = fleet.names["first"]
 
     call = canyonos(recorder, ["stop", first, "--json"], cwd=fleet.outside)
 
-    expected = {"ok": True, "code": None, "errors": [], "deployments": [first]}
+    expected = {"ok": True, "code": None, "errors": [], "workflow_groups": [first]}
     assert call.json() == expected, call.output
-    assert not project_containers(recorder, f"canyonos-{first}", every=True)
+    assert not workflow_group_containers(recorder, f"canyonos-{first}", every=True)
     assert first not in _records()
     assert not dashboard_containers(recorder)
     assert len(dashboard_containers(recorder, every=True)) == DASHBOARD_CONTAINERS
 
 
-def test_a_project_no_longer_deployed_is_found_only_in_its_folder(recorder, fleet):
+def test_a_workflow_group_no_longer_deployed_is_found_only_in_its_folder(
+    recorder, fleet
+):
     first_id = fleet.ids["first"][:12]
 
     missing = canyonos(recorder, ["stop", first_id], cwd=fleet.outside, check=False)
     canyonos(recorder, ["clean", first_id], cwd=fleet.dirs["first"])
 
     assert missing.code == 1, missing.output
-    assert f"No deployment is named `{first_id}`" in missing.output, missing.output
+    assert f"No workflow group is named `{first_id}`" in missing.output, missing.output
     assert not _images(recorder, fleet.names["first"])

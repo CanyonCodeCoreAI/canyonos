@@ -21,8 +21,8 @@ import {
   DASHBOARD_POLL_INTERVAL_MS,
   dashboardPollInterval,
   toParams,
-} from '@/modules/projects/projects.query-cache';
-import type { BucketedQuery, RangeQuery } from '@/modules/projects/projects.queries';
+} from '@/modules/workflows/workflows.query-cache';
+import type { BucketedQuery, RangeQuery } from '@/modules/workflows/workflows.queries';
 
 export interface ListQuery extends RangeQuery {
   readonly limit: number;
@@ -34,96 +34,98 @@ export interface LogsQuery extends ListQuery {
   readonly replica?: string;
 }
 
-export const monitoringSeriesQueryOptions = (project_id: string, query: BucketedQuery) =>
+export const monitoringSeriesQueryOptions = (workflow_id: string, query: BucketedQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'series', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'series', query],
     queryFn: () =>
       apiCall<MonitoringSeriesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.series.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.series.get({ $query: toParams(query) })
       ),
     retry: false,
   });
 
-export const resourcesQueryOptions = (project_id: string, query: BucketedQuery) =>
+export const resourcesQueryOptions = (workflow_id: string, query: BucketedQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'resources', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'resources', query],
     queryFn: () =>
       apiCall<MonitoringResourceUtilizationResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.resources.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.resources.get({ $query: toParams(query) })
       ),
     retry: false,
   });
 
-export const tracesQueryOptions = (project_id: string, query: ListQuery) =>
+export const tracesQueryOptions = (workflow_id: string, query: ListQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'traces', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'traces', query],
     queryFn: () =>
       apiCall<MonitoringTracesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.traces.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.traces.get({ $query: toParams(query) })
       ),
     retry: false,
   });
 
-export const llmCallsQueryOptions = (project_id: string, query: ListQuery) =>
+export const llmCallsQueryOptions = (workflow_id: string, query: ListQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'llm', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'llm', query],
     queryFn: () =>
       apiCall<MonitoringLlmCallsResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.llm.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.llm.get({ $query: toParams(query) })
       ),
     retry: false,
   });
 
-export const logsQueryOptions = (project_id: string, query: LogsQuery) =>
+export const logsQueryOptions = (workflow_id: string, query: LogsQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'logs', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'logs', query],
     queryFn: () =>
       apiCall<MonitoringLogsResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.logs.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.logs.get({ $query: toParams(query) })
       ),
     retry: false,
   });
 
-export const logSourcesQueryOptions = (project_id: string, query: RangeQuery) =>
+export const logSourcesQueryOptions = (workflow_id: string, query: RangeQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'log-sources', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'log-sources', query],
     queryFn: () =>
       apiCall<MonitoringLogSourcesResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.logs.sources.get({ $query: toParams(query) })
+        forgeAuthApi.workflows[workflow_id]!.monitoring.logs.sources.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
   });
 
 // The exporter ships replica samples every 5s, so polling faster only re-reads the same rows.
-export const replicasQueryOptions = (project_id: string) =>
+export const replicasQueryOptions = (workflow_id: string) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'replicas'],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'replicas'],
     queryFn: () =>
       apiCall<MonitoringReplicasResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.replicas.get()
+        forgeAuthApi.workflows[workflow_id]!.monitoring.replicas.get()
       ),
     refetchInterval: dashboardPollInterval,
     retry: false,
   });
 
 // Polled so a deploy or a teardown flips the running badge without a reload.
-export const endpointQueryOptions = (project_id: string) =>
+export const endpointQueryOptions = (workflow_id: string) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'endpoint'],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'endpoint'],
     queryFn: () =>
       apiCall<MonitoringEndpointResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.endpoint.get()
+        forgeAuthApi.workflows[workflow_id]!.monitoring.endpoint.get()
       ),
     refetchInterval: DASHBOARD_POLL_INTERVAL_MS,
     retry: false,
   });
 
-export const errorSummaryQueryOptions = (project_id: string, query: RangeQuery) =>
+export const errorSummaryQueryOptions = (workflow_id: string, query: RangeQuery) =>
   queryOptions({
-    queryKey: ['projects', project_id, 'monitoring', 'errors', 'summary', query],
+    queryKey: ['workflows', workflow_id, 'monitoring', 'errors', 'summary', query],
     queryFn: () =>
       apiCall<MonitoringErrorSummaryResponse>(() =>
-        forgeAuthApi.projects[project_id]!.monitoring.errors.summary.get({
+        forgeAuthApi.workflows[workflow_id]!.monitoring.errors.summary.get({
           $query: toParams(query),
         })
       ),

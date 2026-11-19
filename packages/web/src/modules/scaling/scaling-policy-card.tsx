@@ -68,9 +68,9 @@ const NEW_POLICY: ScalingPolicy = {
   ...POLICY_KINDS.throughput.defaults,
 };
 
-/** What one policy means for the project, said wherever the policy is edited. */
+/** What one policy means for the workflow, said wherever the policy is edited. */
 export const SCALING_SCOPE =
-  "One policy for each project, from its config/scaling.yaml. Each of the project's agents is measured on its own load and adds or removes its own replicas. The endpoint container is never scaled.";
+  "One policy for each workflow, from its config/scaling.yaml. Each of the workflow's agents is measured on its own load and adds or removes its own replicas. The endpoint container is never scaled.";
 
 /** The stored policy in one line for a toolbar: "throughput · up > 10 · down < 1 · 1–5 replicas". */
 export function policySummary(policy: ScalingStatus): string {
@@ -93,20 +93,18 @@ export function policySummary(policy: ScalingStatus): string {
 }
 
 /**
- * One project's policy. The server says whether one is stored and whether the controller
+ * One workflow's policy. The server says whether one is stored and whether the controller
  * accepts it; the card opens into an editor that mounts fresh each time, and the screen keys the
  * card on the stored policy so a save closes it.
  */
 export function ScalingPolicyCard({
-  project_id,
-  project,
+  workflow_id,
   policy,
 }: {
-  readonly project_id: string;
-  readonly project: string;
+  readonly workflow_id: string;
   readonly policy: ScalingStatus;
 }) {
-  const remove = useDeleteScalingPolicy(project_id, project);
+  const remove = useDeleteScalingPolicy(workflow_id);
   const destroy = () => remove.mutate();
   const error = remove.error
     ? scalingErrorMessage(remove.error, 'Could not delete the policy.')
@@ -127,7 +125,7 @@ export function ScalingPolicyCard({
           onDelete={destroy}
         />
         <CollapsibleContent className={GROW}>
-          <PolicyEditor project_id={project_id} project={project} policy={policy} />
+          <PolicyEditor workflow_id={workflow_id} policy={policy} />
         </CollapsibleContent>
       </section>
     </Collapsible>
@@ -311,15 +309,13 @@ type PolicyForm = UseFormReturn<ScalingPolicy>;
 
 /** Mounts when the card opens, so every edit starts from what is stored right now. */
 function PolicyEditor({
-  project_id,
-  project,
+  workflow_id,
   policy,
 }: {
-  readonly project_id: string;
-  readonly project: string;
+  readonly workflow_id: string;
   readonly policy: ScalingStatus;
 }) {
-  const save = useSaveScalingPolicy(project_id, project);
+  const save = useSaveScalingPolicy(workflow_id);
   const is_new = policy.status !== 'applied';
   const form = useForm<ScalingPolicy>({
     resolver: zodResolver(ScalingPolicySchema),

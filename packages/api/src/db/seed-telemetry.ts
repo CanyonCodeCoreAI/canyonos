@@ -7,16 +7,16 @@ import { sql } from 'drizzle-orm';
 
 import {
   GEN_AI,
-  PROJECT_ID_ATTRIBUTE,
   RUNTIME_ATTRIBUTES,
   STATUS_CODE,
+  WORKFLOW_ID_ATTRIBUTE,
 } from '../modules/metrics/metrics.contract';
 import { db } from './client';
-import { otelSpans, projects } from './schema';
+import { otelSpans, workflows } from './schema';
 
-const DEMO_PROJECT_NAME = 'Canyon Code Demo Flow';
+const DEMO_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
-const SEED_PROJECT_NAMESPACE = 'canyon-code/dev-seed/project';
+const SEED_WORKFLOW_NAMESPACE = 'canyon-code/dev-seed/workflow';
 
 const MINUTE_NANOS = 60_000_000_000n;
 
@@ -131,8 +131,8 @@ const SEED_SPANS: readonly SeedSpan[] = [
 type SeedTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // Identity is derived, never matched by display name; version 8 is the RFC 9562 custom slot.
-function seedProjectId(): string {
-  const bytes = createHash('sha256').update(SEED_PROJECT_NAMESPACE).digest().subarray(0, 16);
+function seedWorkflowId(): string {
+  const bytes = createHash('sha256').update(SEED_WORKFLOW_NAMESPACE).digest().subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x80;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.toString('hex');
@@ -145,18 +145,18 @@ function seedProjectId(): string {
   ].join('-');
 }
 
-async function ensureDemoProject(tx: SeedTx): Promise<string> {
-  const id = seedProjectId();
-  await tx.insert(projects).values({ id, name: DEMO_PROJECT_NAME }).onConflictDoNothing();
+async function ensureDemoWorkflow(tx: SeedTx): Promise<string> {
+  const id = seedWorkflowId();
+  await tx.insert(workflows).values({ id, name: DEMO_WORKFLOW_NAME }).onConflictDoNothing();
   return id;
 }
 
-function span_attributes(span: SeedSpan, project_id: string): Record<string, unknown> {
+function span_attributes(span: SeedSpan, workflow_id: string): Record<string, unknown> {
   const { agent_id, model, input_tokens, output_tokens } = span;
   const { token_cost, server_cost, error_count } = span;
   const cost = (token_cost ?? 0) + (server_cost ?? 0);
 
-  const attributes: Record<string, unknown> = { [PROJECT_ID_ATTRIBUTE]: project_id };
+  const attributes: Record<string, unknown> = { [WORKFLOW_ID_ATTRIBUTE]: workflow_id };
   if (agent_id !== undefined) attributes[GEN_AI.AGENT_ID] = agent_id;
   if (model !== undefined) attributes[GEN_AI.REQUEST_MODEL] = model;
   if (input_tokens !== undefined) attributes[GEN_AI.INPUT_TOKENS] = input_tokens;
@@ -168,25 +168,25 @@ function span_attributes(span: SeedSpan, project_id: string): Record<string, unk
   return attributes;
 }
 
-/** Returns the demo project id, which the seed derives from its namespace rather than the name. */
+/** Returns the demo workflow id, which the seed derives from its namespace rather than the name. */
 export async function seedDevTelemetry(): Promise<string> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${SEED_ADVISORY_LOCK_KEY}::bigint)`);
-    const project_id = await ensureDemoProject(tx);
+    const workflow_id = await ensureDemoWorkflow(tx);
     const now = BigInt(Date.now()) * 1_000_000n;
-    const span_id = (suffix: string) => `seed-${project_id}-${suffix}`;
+    const span_id = (suffix: string) => `seed-${workflow_id}-${suffix}`;
 
     const rows = SEED_SPANS.map((span) => {
       const start = now - span.minutes_ago * MINUTE_NANOS;
       return {
         span_id: span_id(span.suffix),
-        trace_id: `seed-${project_id}-${span.trace}`,
+        trace_id: `seed-${workflow_id}-${span.trace}`,
         parent_span_id: span.parent === undefined ? null : span_id(span.parent),
         name: span.name,
         status_code: span.failed === true ? STATUS_CODE.ERROR : STATUS_CODE.UNSET,
         start_time_unix_nano: start,
         end_time_unix_nano: start + span.duration_minutes * MINUTE_NANOS,
-        attributes: span_attributes(span, project_id),
+        attributes: span_attributes(span, workflow_id),
         input: span.input ?? null,
         output: span.output ?? null,
       };
@@ -210,6 +210,6 @@ export async function seedDevTelemetry(): Promise<string> {
           output: sql`excluded.output`,
         },
       });
-    return project_id;
+    return workflow_id;
   });
 }

@@ -41,7 +41,7 @@ COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
 LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
-# Made once per machine and kept in the stack's `.env`: the API encrypts each project's
+# Made once per machine and kept in the stack's `.env`: the API encrypts each workflow's
 # Redis password in its database with it.
 SECRET_KEYS = ("CANYONOS_REDIS_PASSWORD_ENCRYPTION_KEY",)
 # The services the dashboard publishes on the host, each with the port it listens on
@@ -51,7 +51,7 @@ SERVICE_PORTS = {
     "web": (8080, DEFAULT_DASHBOARD_PORT, None),
     "api": (3000, DEFAULT_DASHBOARD_API_PORT, "the dashboard's API"),
 }
-# The services a deployment's containers reach by container name on its network.
+# The services a workflow group's containers reach by container name on its network.
 NETWORK_SERVICES = ("api", "db")
 
 
@@ -88,7 +88,7 @@ class DashboardStack:
     @property
     def env_path(self) -> Path:
         """Path to the machine's dashboard `.env`, where `canyonos serve` writes the
-        stack's settings and secrets, shared by every deployment."""
+        stack's settings and secrets, shared by every workflow group."""
         return self.state_dir / ".env"
 
 
@@ -117,7 +117,7 @@ def _dashboard_lock(on_wait: Callable[[], None] | None = None) -> Iterator[None]
     """Hold the machine-wide dashboard lock for the duration of the block.
 
     Every command that starts, stops, or removes the shared stack takes it, so
-    two project folders never interleave their compose calls, port choice, or
+    two workflow folders never interleave their compose calls, port choice, or
     secrets. Blocks until the lock is free, calling `on_wait` first when
     another command holds it. Raises PhaseFailure("validate", ...) when the
     lock file cannot be opened or locked.
@@ -159,8 +159,8 @@ def _container_name(service: str) -> str:
 
 
 def join_deployment_network(network: str) -> str | None:
-    """Connect the dashboard's api and database to a deployment's network: the api
-    reaches that deployment's Redis by name, and the deployment's telemetry and
+    """Connect the dashboard's api and database to a workflow group's network: the api
+    reaches that workflow group's Redis by name, and the workflow group's telemetry and
     endpoint reach them by theirs. Returns why it couldn't, or None once connected,
     already or now."""
     for service in NETWORK_SERVICES:
@@ -176,7 +176,7 @@ def join_deployment_network(network: str) -> str | None:
 
 
 def leave_deployment_network(network: str) -> None:
-    """Disconnect the dashboard's api and database from a deployment's network, so the
+    """Disconnect the dashboard's api and database from a workflow group's network, so the
     network can go; one not connected, or a Docker that doesn't answer in time, is left
     to the network removal that follows to report."""
     for service in NETWORK_SERVICES:
@@ -197,7 +197,7 @@ def leave_deployment_network(network: str) -> None:
 
 
 def _deployment_networks() -> list[str]:
-    """The name of every deployment's network on this machine."""
+    """The name of every workflow group's network on this machine."""
     listed = _run(
         [
             "docker",
@@ -213,17 +213,17 @@ def _deployment_networks() -> list[str]:
 
 
 def _leave_deployment_networks() -> None:
-    """Disconnect a stopped dashboard from every deployment's network before it starts.
+    """Disconnect a stopped dashboard from every workflow group's network before it starts.
     Docker Desktop publishes the api's port through one of the networks the container
     starts on, and loses it for the host once that network is disconnected, so the api
-    must start on its own network only and join the deployments' afterwards."""
+    must start on its own network only and join the workflow groups' afterwards."""
     for network in _deployment_networks():
         leave_deployment_network(network)
 
 
 def _join_deployment_networks() -> None:
-    """Connect a just-started dashboard to every deployment's network, so
-    deployments already running keep their dashboard when compose recreates it."""
+    """Connect a just-started dashboard to every workflow group's network, so
+    workflow groups already running keep their dashboard when compose recreates it."""
     for network in _deployment_networks():
         join_deployment_network(network)
 
@@ -715,7 +715,7 @@ def run_dashboard(
     does for `canyonos serve` and for a deploy that changes the key.
 
     The whole run holds the dashboard lock, so a concurrent serve, stop, or clean
-    from another project folder waits for it rather than racing it.
+    from another workflow folder waits for it rather than racing it.
     """
 
     def report(result: ServeResult) -> None:

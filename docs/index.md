@@ -31,7 +31,7 @@ with.
 **A workflow is a program that delivers an outcome, and each agent is a specialist it
 trusts with one step.**
 
-A project folder holds the workflow; one lead agent receives each request and calls
+A workflow folder holds the workflow; one lead agent receives each request and calls
 the others. Each agent is a class in its own file, and one agent calls another as if it
 were a local function; CanyonOS carries the call to the other agent's container. Your
 code says what the application does, and the config says how it runs: how many
@@ -49,7 +49,7 @@ With CanyonOS [installed](INSTALLATION.md), run these:
 mkdir my-app && cd my-app
 canyonos new-app                                # writes a starter workflow with two small agents
 cd ..
-canyonos deploy my-app --folder my-deployment --api-key <your api key>   # runs it
+canyonos deploy my-app --workflow-group my-group --api-key <your api key>   # runs it
 ```
 
 [Start from scratch](guides/FROM_SCRATCH.md) takes it from there, step by step.

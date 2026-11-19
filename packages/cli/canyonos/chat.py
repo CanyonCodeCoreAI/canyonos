@@ -4,7 +4,7 @@
 """
 Logic for `canyonos chat`: call running workflows from one terminal session. Each
 call is a box per argument of the workflow; `/add <curl command>` remembers a new
-workflow and `/switch` picks or deletes one; run from a deployment's folder, its
+workflow and `/switch` picks or deletes one; run from a workflow group's folder, its
 running workflows are added first. The questions a workflow asks are answered in
 boxes as they come, and `/recent` shows the result of one of the last requests again.
 """
@@ -29,6 +29,7 @@ from rich.text import Text
 
 from canyonos import ui
 from canyonos.auth import auth_header
+from canyonos.deploy import is_workflow_id
 from canyonos.gc import GCError, _error_body, deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal, write_private_file
 from canyonos.test import _parse_answer, _query_route, _Run
@@ -65,8 +66,11 @@ def _from_curl(text):
     words = shlex.split(text.replace("\\\n", " "))
     url = next(word for word in words if word.startswith(("http://", "https://")))
     body = json.loads(words[words.index("-d") + 1])
-    # A workflow's route is `/<project>/<agent>/<method>` and its body a JSON object.
-    if len(urlsplit(url).path.strip("/").split("/")) < 3 or not isinstance(body, dict):
+    # A workflow's route is `/<workflow_id>`, a UUID, or `/<workflow>/<agent>/<method>`,
+    # and its body a JSON object.
+    path = urlsplit(url).path.strip("/").split("/")
+    route = len(path) >= 3 or (len(path) == 1 and is_workflow_id(path[0]))
+    if not route or not isinstance(body, dict):
         raise ValueError("not a workflow's curl command")
     return {
         "url": url,
@@ -83,6 +87,7 @@ def _deployed_workflows():
     return [
         {
             "url": route["url"],
+            "name": f"{route['workflow']}: {route['agent']}.{route['method']}",
             "arguments": {name: "str" for name in route["arguments"]},
         }
         for route in deployed_endpoint(existing)["routes"]
@@ -277,7 +282,7 @@ def _call(workflow, values, sign):
 
 
 def _open(workflow):
-    """Clear the terminal and show the banner, then the project, agent, method and URL
+    """Clear the terminal and show the banner, then the workflow, agent, method and URL
     of the workflow the boxes call."""
     ui.console.clear()
     size = shutil.get_terminal_size()
@@ -288,8 +293,9 @@ def _open(workflow):
     about = "No workflow yet: type /add <its curl command>"
     if workflow:
         url = workflow["url"]
-        project, agent, method = urlsplit(url).path.strip("/").split("/")[-3:]
-        about = f"project   {project}\nworkflow  {agent}.{method}\nendpoint  {url}"
+        # One added with /add has only its URL.
+        name = workflow.get("name") or urlsplit(url).path
+        about = f"workflow  {name}\nendpoint  {url}"
     ui.panel(Panel(Text(about, WHITE), border_style=GREEN, expand=False))
 
 
@@ -306,7 +312,7 @@ def run_chat():
         if deployed := _deployed_workflows():
             _remember(workflows, deployed)
     except GCError as e:
-        error = f"Could not read the workflows of the deploy running here: {e}"
+        error = f"Could not read the workflows of the workflow group running here: {e}"
     workflow = workflows[0] if workflows else None
     _open(workflow)
     # What was sent to each workflow this session, by URL, for Ctrl-P and Ctrl-N.

@@ -207,7 +207,7 @@ def load(redis, previous=None):
 
 
 def _policy_allows(policy, agent, context):
-    """Among the rules of the agent's project (`policy` holds each project's, by name),
+    """Among the rules of the agent's workflow (`policy` holds each workflow's, by name),
     the first, most specific first, whose `match` the request context meets decides; no
     rules allow everything, no matching rule denies."""
     rules = policy.get(agent.split(".", 1)[0]) if isinstance(policy, dict) else None

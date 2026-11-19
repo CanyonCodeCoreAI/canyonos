@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Queries through the deployed endpoint: a queued query answers 202, and the test
-query gives a result the project's own check accepts, through the REST API and
+query gives a result the workflow's own check accepts, through the REST API and
 through `canyonos test`, which sends its default query when given none in a
-deployment folder; on projects that call no model, twenty queries in a row all
+workflow group folder; on workflows that call no model, twenty queries in a row all
 finish; a finished request stays readable after cleanup; a bad body and an unknown
-request are refused; a plain hex string is not taken for a Future on projects that
+request are refused; a plain hex string is not taken for a Future on workflows that
 take any text; and a failing agent is named in the error.
 
 Every route needs the session's API key as a bearer, the scheme in any case: a
@@ -27,8 +27,8 @@ from ..harness import (
     hash_api_key,
     http,
     poll,
-    project_redis,
-    project_root,
+    workflow_group_redis,
+    workflow_root,
     result_of,
     submit,
 )
@@ -37,6 +37,7 @@ RESULT_CHARACTERS = 4000
 CLEANUP_TIMEOUT = 240
 HEX_QUERY = "deadbeefdeadbeef"
 API_KEY_HASH_KEY = "auth:api_key_hash"
+IDENTITY_KEY = "controller:identity"
 
 
 def _problems(check, result, **context):
@@ -49,13 +50,13 @@ def _problems(check, result, **context):
 
 
 def cli_query(deployed) -> str:
-    """The query as `canyonos test` takes it: project.yaml's `cli_query` when the
+    """The query as `canyonos test` takes it: workflow.yaml's `cli_query` when the
     workflow reads the command line's text in its own form, else the REST query."""
-    return deployed.project.cli_query or as_argument(deployed.endpoint, deployed.query)
+    return deployed.workflow.cli_query or as_argument(deployed.endpoint, deployed.query)
 
 
 def _canyonos_test(recorder, deployed, *query):
-    timeout = deployed.project.timeout
+    timeout = deployed.workflow.timeout
     call = canyonos(
         recorder,
         ["test", *query, "--json", "--timeout", str(timeout)],
@@ -85,7 +86,7 @@ def test_canyonos_test_reports_a_real_result(recorder, deployed, check):
 
 
 def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, check):
-    path = project_root(deployed.project_dir) / "config" / "test_query.txt"
+    path = workflow_root(deployed.workflow_dir) / "config" / "test_query.txt"
     report = _canyonos_test(recorder, deployed)
     query = path.read_text().strip()
     assert report["results"][0]["query"] == query, report
@@ -95,9 +96,9 @@ def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, 
 
 @pytest.mark.trait("quick")
 def test_twenty_queries_in_a_row_all_finish(recorder, deployed, check):
-    if "llm" in deployed.project.traits:
+    if "llm" in deployed.workflow.traits:
         pytest.skip("the AWS account's model rate limit can't take 20 queries in a row")
-    timeout = deployed.project.timeout
+    timeout = deployed.workflow.timeout
     for _ in range(20):
         request_id, result = result_of(
             recorder, deployed.endpoint, deployed.query, timeout=timeout
@@ -107,7 +108,7 @@ def test_twenty_queries_in_a_row_all_finish(recorder, deployed, check):
 
 
 def test_status_answers_after_cleanup(recorder, deployed, query_result):
-    store = project_redis(recorder, deployed.dir)
+    store = workflow_group_redis(recorder, deployed.dir)
     request = f"request:{query_result.request_id}"
 
     def cleaned_up():
@@ -149,7 +150,7 @@ def test_unknown_request_is_not_found(recorder, deployed):
 def test_hex_argument_is_not_a_future(recorder, deployed, check):
     """A 16-hex-character argument is text, not a Future id to wait for (CAN-452)."""
     request_id = submit(recorder, deployed.endpoint, HEX_QUERY)
-    timeout = deployed.project.timeout
+    timeout = deployed.workflow.timeout
     status = finished(recorder, deployed.endpoint, request_id, timeout=timeout)
     assert status["status"] == "done", status
     problems = _problems(check, status["result"], query=HEX_QUERY)
@@ -252,9 +253,11 @@ def test_only_a_bearer_header_carries_the_key(recorder, deployed):
 
 
 def test_the_endpoint_waits_for_the_published_key_hash(recorder, deployed):
-    store = project_redis(recorder, deployed.dir)
+    store = workflow_group_redis(recorder, deployed.dir)
     published = store.get(API_KEY_HASH_KEY)
+    workflows = json.loads(store.hget(IDENTITY_KEY, "workflows"))
     assert published == hash_api_key(recorder.api_key), published
+    assert deployed.workflow_id in workflows, workflows
     try:
         store.delete(API_KEY_HASH_KEY)
         for headers in (deployed.endpoint.headers, {}):
@@ -269,7 +272,7 @@ def test_the_endpoint_waits_for_the_published_key_hash(recorder, deployed):
 
 @pytest.mark.trait("quick")
 def test_canyonos_test_sends_the_key_and_never_shows_it(recorder, deployed):
-    timeout = deployed.project.timeout
+    timeout = deployed.workflow.timeout
     call = canyonos(
         recorder,
         ["test", cli_query(deployed), "--timeout", str(timeout)],

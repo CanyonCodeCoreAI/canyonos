@@ -5,9 +5,9 @@
 ```
 ┌──────────────────────────── GC container ────────────────────────────┐
 │                                                                      │
-│  api_interface.py (:8000) ◀── PUT, DELETE /v1/deployments/<id> and   │
-│       │ spawns,             its /projects/<name>, GET it and its     │
-│       │ reads its output    /logs /health, GET /v1/deployments       │
+│  api_interface.py (:8000) ◀── PUT, DELETE /v1/workflow-groups/<id>   │
+│       │ spawns,             and its /workflows/<name>, GET them and  │
+│       │ reads its output    /logs /health, GET /v1/workflow-groups   │
 │       ▼                                                              │
 │  cli.py deploy ──▶ GlobalController                                  │
 │                      │  ProcessSupervisor                            │
@@ -22,7 +22,7 @@
 │                                                                      │
 │  ┌────────────────────────────────┐   clients                        │
 │  │ canyonos-<p>-endpoint-<id>     │◀─ POST                           │
-│  │  core image, gunicorn + Flask  │   /<project>/<agent>/<method>    │
+│  │  core image, gunicorn + Flask  │   /<workflow_id>                 │
 │  │  :api_port ─▶ 8080             │   GET  /status/<request_id>      │
 │  │  LocalController (routing only)│                                  │
 │  └───────────────┬────────────────┘                                  │
@@ -30,7 +30,7 @@
 │  canyonos-<p>-redis-localhost (the endpoint's Redis: root futures)   │
 └──────────────────────────────────────────────────────────────────────┘
 ┌────────────────────────── machine (host) ────────────────────────────┐
-│  <p> = the deployment, the folder `canyonos deploy` ran from         │
+│  <p> = the workflow group, the folder `canyonos deploy` ran from         │
 │  canyonos-<p>-redis-<host>    canyonos-<p>-metrics-<host>            │
 │         ▲  ▲  ▲                 (machine_metrics_poller)             │
 │         │  │  │                                                      │
@@ -103,7 +103,7 @@
 ```
  client                 canyonos-<p>-endpoint-<id>         target replica                  agents
  ──────                 ──────────────────────────         ──────────────                  ──────
- POST /<project>/<agent>/<method>
+ POST /<workflow_id>
    {body} ────────────▶ request_id = new
                         SET request:<id>:context
                         Future(<agent>.<method>, body,

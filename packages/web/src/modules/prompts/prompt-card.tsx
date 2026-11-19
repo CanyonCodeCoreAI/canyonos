@@ -32,13 +32,13 @@ import { Textarea } from '@repo/ui/shadcn/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@repo/ui/shadcn/tooltip';
 import { cn } from '@repo/ui/utils';
 import { QueryError } from '@/modules/core/components/QueryError';
-import { formatDay } from '@/modules/projects/projects.format';
 import {
   promptErrorMessage,
   promptQueryOptions,
   useCreateSystemPrompt,
   useMakePromptLive,
 } from '@/modules/prompts/prompts.queries';
+import { formatDay } from '@/modules/workflows/workflows.format';
 
 const TOAST = { testId: 'app-toast' } as const;
 const GROW =
@@ -55,10 +55,10 @@ function firstLine(text: string): string {
 }
 
 export function PromptCard({
-  project_id,
+  workflow_id,
   summary,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly summary: PromptListItem;
 }) {
   const live = version_parts(summary.live.version).label;
@@ -99,7 +99,7 @@ export function PromptCard({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent className={GROW}>
-          <PromptHistory project_id={project_id} name={summary.name} />
+          <PromptHistory workflow_id={workflow_id} name={summary.name} />
         </CollapsibleContent>
       </section>
     </Collapsible>
@@ -121,13 +121,13 @@ function PromptName({ name }: { readonly name: string }) {
 
 /** Mounts when the card opens, so the history is read on demand and dropped on close. */
 function PromptHistory({
-  project_id,
+  workflow_id,
   name,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly name: string;
 }) {
-  const query = useQuery(promptQueryOptions(project_id, name));
+  const query = useQuery(promptQueryOptions(workflow_id, name));
   if (query.isError && !query.isFetching) {
     return (
       <div className="border-border/60 border-t p-5">
@@ -155,8 +155,8 @@ function PromptHistory({
   return (
     <div className="border-border/60 flex flex-col gap-5 border-t p-5" data-testid="prompt-body">
       {/* Keyed on the newest version: a save brings a new one, which closes and resets the editor. */}
-      <LivePanel key={prompt.versions[0]?.version} project_id={project_id} prompt={prompt} />
-      <VersionList project_id={project_id} prompt={prompt} />
+      <LivePanel key={prompt.versions[0]?.version} workflow_id={workflow_id} prompt={prompt} />
+      <VersionList workflow_id={workflow_id} prompt={prompt} />
     </div>
   );
 }
@@ -230,13 +230,13 @@ function MutationError({
 
 /** What agents get now, with the editor that saves the text as the next version. */
 function LivePanel({
-  project_id,
+  workflow_id,
   prompt,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly prompt: Prompt;
 }) {
-  const create = useCreateSystemPrompt(project_id, prompt.name);
+  const create = useCreateSystemPrompt(workflow_id, prompt.name);
   const next = `v${next_revision(prompt)}`;
   const live = version_parts(prompt.live.version).label;
   const form = useForm<SystemPromptCreate>({
@@ -333,10 +333,10 @@ function LivePanel({
 
 /** Every stored version, newest first; the live one is marked from the data, the others can go live. */
 function VersionList({
-  project_id,
+  workflow_id,
   prompt,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly prompt: Prompt;
 }) {
   return (
@@ -348,7 +348,7 @@ function VersionList({
         {prompt.versions.map((version) => (
           <VersionRow
             key={version.version}
-            project_id={project_id}
+            workflow_id={workflow_id}
             prompt={prompt}
             version={version}
           />
@@ -359,15 +359,15 @@ function VersionList({
 }
 
 function VersionRow({
-  project_id,
+  workflow_id,
   prompt,
   version,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly prompt: Prompt;
   readonly version: SystemPrompt;
 }) {
-  const make_live = useMakePromptLive(project_id, prompt.name);
+  const make_live = useMakePromptLive(workflow_id, prompt.name);
   const is_live = version.version === prompt.live.version;
   const parts = version_parts(version.version);
   const date = versionDate(version);

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Hand an agent's project `.env` to its containers.
+Hand an agent's workflow `.env` to its containers.
 
 Containers on this machine read it directly, remote ones get a short-lived 0600
 copy, and either way it reaches Docker as `--env-file`.

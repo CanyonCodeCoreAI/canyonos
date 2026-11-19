@@ -39,7 +39,7 @@ export function resolveApiKeyHash(value: string | undefined): string | null {
 const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
 const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
 
-/** The key the API encrypts each project's Redis password with before storing it. Development
+/** The key the API encrypts each workflow's Redis password with before storing it. Development
  * and test fall back to a fixed key; anywhere else a missing, committed, or short key refuses
  * the start. */
 export function resolveRedisPasswordKey(
@@ -66,8 +66,8 @@ const canyonos = {
   redisHost: env.CANYONOS_REDIS_HOST ?? 'host.docker.internal',
   redisPort: parseInteger(env.CANYONOS_REDIS_PORT, 6379),
   redisPasswordKey: resolveRedisPasswordKey(env.REDIS_PASSWORD_ENCRYPTION_KEY, environment),
-  // Kubernetes: the projects (and their Redis) the operator lists for this dashboard.
-  projectsFile: env.CANYONOS_PROJECTS_FILE ?? null,
+  // Kubernetes: the workflows (and their Redis) the operator lists for this dashboard.
+  workflowsFile: env.CANYONOS_PROJECTS_FILE ?? null,
 };
 
 const governance = {

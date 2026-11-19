@@ -4,7 +4,7 @@ The dashboard shows what your deployed workflows are doing: each request with it
 traces, model calls and cost, and the logs, errors and resource use behind them. You can
 also change prompts, scaling and spend rules while a workflow runs. This page covers the
 dashboard a Docker deploy starts on your machine; for the one on a cluster, see
-[Kubernetes deployment](KUBERNETES.md#dashboard).
+[Kubernetes workflow group](KUBERNETES.md#dashboard).
 
 ## Open it
 
@@ -16,17 +16,17 @@ machine's public IP. To start the dashboard without deploying:
 canyonos serve
 ```
 
-To use another port, set `dashboard_port` in `deployment.yaml`. One dashboard serves
-every deployment on the machine, so a dashboard that is already running keeps its port.
+To use another port, set `dashboard_port` in `workflow_group.yaml`. One dashboard serves
+every workflow group on the machine, so a dashboard that is already running keeps its port.
 [Ports a deploy opens](WORKFLOW_CONFIG.md#ports-a-deploy-opens) says
 what happens when the port you set is taken.
 
-`canyonos stop` stops the dashboard when no other deployment is running, and keeps its
+`canyonos stop` stops the dashboard when no other workflow group is running, and keeps its
 history for the next start. `canyonos clean --all` removes it and its data.
 
 ## Find a request
 
-Each deployment is listed under **Deployments**, named after its folder. Select it
+Each workflow group is listed under **Workflow groups**, named after its folder. Select it
 to open its **Status** page, then go to **Costs** and choose **Per-Query view** to see
 each request with its status, cost and latency.
 
@@ -37,21 +37,21 @@ Every page shows the last 7 days at first. Use the time window control to change
 
 ## What each page shows
 
-The pages are in the order the sidebar lists them under each deployment.
+The pages are in the order the sidebar lists them under each workflow group.
 
 | Page       | What it shows                                                                                                                                                     |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status     | Whether the deployment is running, its routes, replicas, agents, active requests and errors in the last 24 hours, and a button to delete a stopped deployment     |
+| Status     | Whether the workflow group is running, its routes, replicas, agents, active requests and errors in the last 24 hours, and a button to delete a stopped workflow group     |
 | Costs      | Query count, spend, tokens and cost per query, in a **Per-Agent view** and a **Per-Query view**                                                                   |
 | Traces     | Traffic, p95 latency, and one row per request with its LLM calls, cost and duration. **LLM calls** lists every model call; expand one to see its input and output |
 | Errors     | Errors grouped by type and by agent, and the full list                                                                                                            |
 | Metrics    | CPU and other resource use for each machine and each agent                                                                                                        |
 | Logs       | Log lines, which you can filter by agent and by replica                                                                                                           |
-| Prompts    | Each agent function's prompt and its versions, named `<project>.<agent>.<function>`                                                                               |
-| Scaling    | Each project's scaling policy, and each of its agents' replicas and load                                                                                          |
+| Prompts    | Each agent function's prompt and its versions, named `<workflow>.<agent>.<function>`                                                                              |
+| Scaling    | Each workflow's scaling policy, and each of its agents' replicas and load                                                                                         |
 | Governance | Each agent, the agents it calls, whether it is up, and its spend against its caps                                                                                 |
 
-Deleting a stopped deployment on **Status** removes it and its telemetry from the
+Deleting a stopped workflow group on **Status** removes it and its telemetry from the
 dashboard, and can't be undone. It doesn't touch its folders.
 
 ## Change a running workflow
@@ -75,7 +75,7 @@ The last three pages change a workflow while it runs:
 When the machine has an API key, the dashboard asks for it before it shows anything,
 and its API, on port `3000`, takes it from scripts. `canyonos dashboard` signs you in
 with it. Without a key, anyone who reaches either port can read and change every
-deployment on it. Both ports listen on every interface.
+workflow group on it. Both ports listen on every interface.
 
 ```bash
 canyonos serve --api-key <your api key>   # set or replace the key, restart the dashboard
@@ -84,7 +84,7 @@ canyonos serve --no-api-key               # remove it: the dashboard opens for a
 
 How to set, send and replace the key is in [API key](AUTHORIZATION.md).
 
-The dashboard API also keeps each deployment's Redis password, encrypted with
+The dashboard API also keeps each workflow group's Redis password, encrypted with
 `REDIS_PASSWORD_ENCRYPTION_KEY`, and won't start without that key (32 characters or
 more). `canyonos serve` makes the key once and keeps it in
 `~/.canyonos/dashboard/.env`.

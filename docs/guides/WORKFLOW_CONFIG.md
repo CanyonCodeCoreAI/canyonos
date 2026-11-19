@@ -2,8 +2,8 @@
 
 The workflow config, `config/workflow_config.yaml`, describes your workflow: its
 agents, what each one installs and runs on, and the methods the endpoint serves. Where
-it runs, and the other settings every workflow of a deployment shares, are in
-`deployment.yaml`. `canyonos deploy` starts exactly what they describe. This page lists
+it runs, and the other settings every workflow of a workflow group shares, are in
+`workflow_group.yaml`. `canyonos deploy` starts exactly what they describe. This page lists
 every key each accepts.
 
 ## Where it lives
@@ -12,14 +12,30 @@ The file is `config/workflow_config.yaml` in the [workflow root](BUILD_ARTIFACT.
 `.canyon/config/workflow_config.yaml` after `canyonos convert`. `canyonos new-app` and
 `canyonos convert` write it for you.
 
-`deployment.yaml` is in the deployment folder, the one `--folder` names in
-`canyonos deploy <project folder>... --folder <deployment folder>`. The first deploy
-writes it when there is none.
+`workflow_group.yaml` is in the workflow group folder, the one `--workflow-group` names in
+`canyonos deploy <workflow folder>... --workflow-group <workflow group folder>`. The first deploy
+writes it when there is none, with the group's `workflow_group_id`.
 
-- `canyonos config` views or edits `deployment.yaml` in the terminal and saves each
+The deploy also gives each workflow folder a random `workflow_id` the first time it
+deploys it, and keeps it in `workflows:`, keyed by the workflow's name in the group, its
+folder's name and the start of its ID (`portfolio-3f9a2c1b`), with the folder's path:
+
+```yaml
+workflows:
+  portfolio-3f9a2c1b:
+    path: ../testing/portfolio
+    workflow_id: 3f9a2c1b-...
+```
+
+A redeploy or sync of the folder keeps its ID; a copy of the folder gets its own. So two
+folders of the same name, such as `~/testing/portfolio` and `~/production/portfolio`,
+deploy into one group as two workflows. Agents are named `<name>.<agent>`, such as
+`portfolio-3f9a2c1b.IntentAgent`.
+
+- `canyonos config` views or edits `workflow_group.yaml` in the terminal and saves each
   change in place. It doesn't create the file or fill in defaults.
-- After you edit either file, `canyonos sync <project folder>...` applies it to the
-  running deploy.
+- After you edit either file, `canyonos sync <workflow folder>...` applies it to the
+  running workflow group.
 
 With nothing deployed, changes apply on the next `canyonos deploy`.
 
@@ -62,8 +78,9 @@ endpoint:
 CanyonOS runs two replicas of `PriceAgent`, the class of that name in
 `agents/price_agent.py`, each with one CPU core and 256 MB of memory, and installs
 `yfinance` into its image. Other agents call it through `get_price`. The endpoint, on
-port `8080`, runs `Workflow.main` for each `POST /<project>/Workflow/main`, where
-`<project>` is the project folder's name.
+port `8080`, runs `Workflow.main` for each `POST /<workflow_id>`, where
+`<workflow_id>` is the ID the workflow group gave this folder; `canyonos deploy`
+prints it.
 
 The keys may come in any order.
 
@@ -77,7 +94,7 @@ Keys every entry takes:
 
 | Key                | Default  | What it does                                                                                                                                              |
 | ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`             | required | The agent's name. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one file are rejected. Deployed as `<project>.<name>`.         |
+| `name`             | required | The agent's name. Names are lowercased into the image tag, so `MapAgent` and `mapagent` in one file are rejected. Deployed as `<workflow>.<name>`.        |
 | `type`             | `agent`  | `agent` or `database`                                                                                                                                     |
 | `replicas`         | `1`      | How many replicas run at once, at least 1. A database runs exactly 1.                                                                                     |
 | `resources.cpu`    | `1`      | CPU cores per replica, passed to `docker run --cpus`                                                                                                      |
@@ -109,12 +126,12 @@ Keys of `type: database`:
 | `volume_path` | none     | A folder inside it whose data survives a redeploy. Required on Kubernetes.                                                          |
 
 On Docker, `volume_path` is kept on the volume
-`canyonos-<folder>-<id>-<project>--<name>-data`: the deployment folder's name, the
-first 8 characters of `deployment_id`, the project folder's name, and the entry's name
+`canyonos-<folder>-<id>-<workflow>--<name>-data`: the workflow group folder's name, the
+first 8 characters of `workflow_group_id`, the workflow folder's name, and the entry's name
 in lowercase.
 
 A database needs no code. Other agents find it in the routing table, the Redis hash
-`routing_table:addresses`, which maps the entry's name, `<project>.<name>`, to a JSON list of `host:port`
+`routing_table:addresses`, which maps the entry's name, `<workflow>.<name>`, to a JSON list of `host:port`
 strings. Every container reaches that Redis at `CANYONOS_REDIS_HOST` and
 `CANYONOS_REDIS_PORT`, with the password in `CANYONOS_REDIS_PASSWORD`.
 
@@ -218,10 +235,12 @@ endpoint:
 | Key               | Default  | What it does                                                                   |
 | ----------------- | -------- | ------------------------------------------------------------------------------ |
 | `routes[].agent`  | required | An entry of `type: agent`                                                      |
-| `routes[].method` | required | One of that agent's `functions`, served at `POST /<project>/<agent>/<method>` |
+| `routes[].method` | required | One of that agent's `functions`, served at `POST /<workflow_id>` |
 
-A route listed twice is rejected. The endpoint's port, `endpoint.api_port`, is set in
-`deployment.yaml`; see [Top-level keys](#top-level-keys).
+A folder is one workflow, so `routes` lists one route. It is served at
+`POST /<workflow_id>`, and also at `POST /<name>/<agent>/<method>`, where `<name>` is
+the workflow's name in the group (see below). The endpoint's port, `endpoint.api_port`, is set in
+`workflow_group.yaml`; see [Top-level keys](#top-level-keys).
 
 What a request looks like and what it returns is in
 [Runtime contract](RUNTIME_CONTRACT.md#endpoint).
@@ -229,20 +248,20 @@ What a request looks like and what it returns is in
 ## Top-level keys
 
 Every key at the top of either file. The workflow config takes only `agents` and
-`endpoint`; the rest go in `deployment.yaml`, and in the workflow config they are
+`endpoint`; the rest go in `workflow_group.yaml`, and in the workflow config they are
 rejected. Any other key is rejected.
 
-Where it runs, in `deployment.yaml`:
+Where it runs, in `workflow_group.yaml`:
 
 | Key                    | Default               | What it does                                                                                                                                                                    |
 | ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `target`               | `docker`              | Who runs the deployment: `docker` on the machine that runs `canyonos deploy`, or `kubernetes` with the `kubernetes:` block.                                                     |
-| `kubernetes`           | none                  | Namespace, registry and other cluster settings; see [Kubernetes deployment](KUBERNETES.md#configuration)                                                                        |
+| `target`               | `docker`              | Who runs the workflow group: `docker` on the machine that runs `canyonos deploy`, or `kubernetes` with the `kubernetes:` block.                                                     |
+| `kubernetes`           | none                  | Namespace, registry and other cluster settings; see [Kubernetes workflow group](KUBERNETES.md#configuration)                                                                        |
 | `provider`             | `local`               | Where the agents run with `target: docker`: `local` (this machine), `ec2-pool` or `ec2-assign`, in any casing. See [Run it somewhere else](CONFIGURE.md#run-it-somewhere-else). |
-| `deploy_mode`          | `distributed`         | `distributed` gives each agent its own container; `toy` puts a project's agents in one, deploying faster but with less granular scaling. On `target: docker`, toy needs `provider: local`. |
-| `ec2-pool`             | none                  | The EC2 machines for `provider: ec2-pool`; see [EC2 deployment](EC2.md#configuration)                                                                                           |
-| `ec2-assign`           | none                  | Each agent's EC2 machine type for `provider: ec2-assign`; see [EC2 deployment](EC2.md#configuration)                                                                            |
-| `ssh_private_key_path` | `~/.ssh/canyonos_ec2` | The key for SSH to EC2 machines; see [EC2 deployment](EC2.md#configuration)                                                                                                     |
+| `deploy_mode`          | `distributed`         | `distributed` gives each agent its own container; `toy` puts a workflow's agents in one, deploying faster but with less granular scaling. On `target: docker`, toy needs `provider: local`. |
+| `ec2-pool`             | none                  | The EC2 machines for `provider: ec2-pool`; see [EC2 workflow group](EC2.md#configuration)                                                                                           |
+| `ec2-assign`           | none                  | Each agent's EC2 machine type for `provider: ec2-assign`; see [EC2 workflow group](EC2.md#configuration)                                                                            |
+| `ssh_private_key_path` | `~/.ssh/canyonos_ec2` | The key for SSH to EC2 machines; see [EC2 workflow group](EC2.md#configuration)                                                                                                     |
 
 What it runs, in the workflow config:
 
@@ -251,7 +270,7 @@ What it runs, in the workflow config:
 | `agents`   | required | The [agent entries](#agent-entries)                     |
 | `endpoint` | required | The methods served over HTTP; see [Endpoint](#endpoint) |
 
-The rest, in `deployment.yaml`, have defaults that suit most deployments, so the file
+The rest, in `workflow_group.yaml`, have defaults that suit most workflow groups, so the file
 `canyonos deploy` writes and the examples leave them out:
 
 | Key                 | Default                        | What it does                                                                                                                                                                                                        |
@@ -265,7 +284,7 @@ The rest, in `deployment.yaml`, have defaults that suit most deployments, so the
 | `redis.db`          | `0`                            | Its database number                                                                                                                                                                                                 |
 | `poll_interval`     | `5`                            | Seconds between the Global Controller's checks that everything runs. Replicas get it as `CANYONOS_POLL_INTERVAL`.                                                                                                   |
 | `cleanup_interval`  | `10`                           | Most seconds between passes that clear finished requests                                                                                                                                                            |
-| `deployment_id`     | written by the first deploy    | Identifies the deployment on the dashboard and in its Docker names. Leave it out of a new deployment, and don't change it.                                                                                          |
+| `workflow_group_id`     | written by the first deploy    | Identifies the workflow group in its telemetry and its Docker names. Leave it out of a new workflow group, and don't change it.                                                                                            |
 
 Leave `api_port`, `redis.port` and `dashboard_port` unset unless something needs a
 fixed port: a port you set is never moved, so a taken one stops the deploy.
@@ -300,7 +319,7 @@ endpoint that already ends in `/v1/traces` passes validation and then posts to
 Only the Global Controller exports telemetry, so a destination only needs to be
 reachable from it: on Docker, from the machine that runs `canyonos deploy`.
 `http://canyonos-dashboard-api:3000` names the local dashboard's API. The dashboard
-joins each deployment's Docker network, so the address works whatever host port the API
+joins each workflow group's Docker network, so the address works whatever host port the API
 is on.
 
 On Kubernetes, a destination on the local dashboard or on `host.docker.internal` is
@@ -316,8 +335,8 @@ ec2-pool:
   region: ${EC2_REGION}
 ```
 
-- The value comes from the project's `.env`: the one beside `config/`, or, after
-  `canyonos convert`, the one beside `.canyon` when there is one. In `deployment.yaml`,
+- The value comes from the workflow's `.env`: the one beside `config/`, or, after
+  `canyonos convert`, the one beside `.canyon` when there is one. In `workflow_group.yaml`,
   it comes from the `.env` beside it. A variable already set
   in the environment the config is read in keeps its own value.
 - Numbers, such as `replicas` and ports, and booleans can't use a variable.
@@ -337,22 +356,22 @@ With `target: docker`, a deploy opens these ports on the machine that runs
 | Dashboard, shared by every workflow | `dashboard_port`    | `8081`, else the next free one                            | every interface |
 | The dashboard's API                 | none                | `3000`, else the next free one                            | every interface |
 
-Agents open no port: the Global Controller reaches them over the deployment's private
+Agents open no port: the Global Controller reaches them over the workflow group's private
 Docker network. The dashboard's own database opens none either: workflows reach it by
 name on their Docker network, so a database of yours can keep `5432`.
 
 With `provider: ec2-pool` or `ec2-assign`, each machine also opens `50051` and up for
-its agents, on its private IP only; see [EC2 deployment](EC2.md).
+its agents, on its private IP only; see [EC2 workflow group](EC2.md).
 
 Every port is picked by these rules:
 
 - **A port you set is never moved.** A taken `db_port`, `api_port` or `redis.port`
   stops the deploy with a message that names the setting; a taken `dashboard_port`
-  stops only the dashboard. A `redis.port` held by this deployment's own Redis, left by a
+  stops only the dashboard. A `redis.port` held by this workflow group's own Redis, left by a
   deploy that crashed, is reused.
 - **A port you didn't set** starts at the one it had last deploy, or its default. It
   moves to the next one that is free and that nothing else of CanyonOS on this machine
-  holds or has picked: another deployment's Global Controller, Redis or endpoint, a
+  holds or has picked: another workflow group's Global Controller, Redis or endpoint, a
   Kubernetes port-forward, or the dashboard's ports. `canyonos deploy` says when the
   Global Controller, the endpoint, Redis or the dashboard's API moved.
 - **Deploys started at the same moment** pick their ports one at a time, so each gets
@@ -361,7 +380,7 @@ Every port is picked by these rules:
   Controller, the endpoint or the dashboard on to the next one by the same rules. Redis
   stops the deploy instead; deploying again picks another.
 - **A dashboard already running** is reused on its own port. `canyonos deploy` warns
-  when that isn't this deployment's `dashboard_port`.
+  when that isn't this workflow group's `dashboard_port`.
 
 ## Errors
 
@@ -369,18 +388,18 @@ Every port is picked by these rules:
 `canyonos validate` runs the same check. A misspelled key, a value of the wrong type, or
 an `entrypoint` that doesn't exist stops the deploy. Every problem is listed at once, as
 `file:line: key: message`, so you can fix them all in one pass. A misspelled key names
-the closest valid one. A deployment setting in the workflow config is rejected with
-`is a deployment setting, shared by every project: set it in deployment.yaml`.
+the closest valid one. A workflow group setting in the workflow config is rejected with
+`is a workflow group setting, shared by every workflow: set it in workflow_group.yaml`.
 
 `canyonos sync` and `canyonos config` check the edited file too. When it has a problem,
-a running deploy keeps its current config.
+a running workflow group keeps its current config.
 
 Some keys are retired, and the error says what to do instead:
 
 | Key                                                       | What to do                                                    |
 | --------------------------------------------------------- | ------------------------------------------------------------- |
 | `database`                                                | Remove it; telemetry is set under `otel:`                     |
-| `project_id`                                              | Remove it; the deployment's id is `deployment_id`             |
+| `project_id`                                              | Remove it; the workflow group's id is `workflow_group_id`             |
 | `env_file`                                                | Remove it; the workflow's `.env` reaches the agents by itself |
 | `ec2`                                                     | Rename it to `ec2-pool`                                       |
 | `provider: EC2`                                           | Use `provider: ec2-pool`                                      |

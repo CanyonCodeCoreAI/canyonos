@@ -193,7 +193,7 @@ spec:
                         agent:
                           description: |-
                             agent is the name of the agent whose method the route serves, as in the
-                            project's config (for example Workflow).
+                            workflow's config (for example Workflow).
                           minLength: 1
                           type: string
                         arguments:
@@ -206,18 +206,18 @@ spec:
                           x-kubernetes-list-type: atomic
                         method:
                           description: method is the agent function served at POST
-                            /<project>/<agent>/<method>.
+                            /<workflow>/<agent>/<method>.
                           minLength: 1
                           type: string
-                        project:
-                          description: project is the project folder of the deployment
-                            the agent belongs to.
+                        workflow:
+                          description: workflow is the workflow the agent belongs
+                            to.
                           minLength: 1
                           type: string
                       required:
                       - agent
                       - method
-                      - project
+                      - workflow
                       type: object
                     minItems: 1
                     type: array

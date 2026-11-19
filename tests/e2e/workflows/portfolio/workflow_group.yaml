@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The settings every workflow of the workflow group shares. Each workflow's agents and
+# routes are in its config/workflow_config.yaml.
+
+# Where every replica runs: `local` (this machine), `ec2-pool` (machines from `ec2-pool:`) or `ec2-assign`.
+provider: local
+
+endpoint:
+  api_port: 8080
+
+poll_interval: 4
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+otel:
+  destinations:
+    - name: local
+      protocol: http
+      endpoint: http://canyonos-dashboard-api:3000
+      headers: {}

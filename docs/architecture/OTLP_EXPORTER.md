@@ -91,8 +91,8 @@ the package's [`TRACES.md`](https://github.com/CanyonCodeCoreAI/canyonos/blob/ma
 
 The Global Controller resolves the list in three steps:
 
-1. Take `otel.destinations` from `deployment.yaml`, with `${VAR}` expanded. Without
-   the block, use the dashboard API on the deployment's Docker network.
+1. Take `otel.destinations` from `workflow_group.yaml`, with `${VAR}` expanded. Without
+   the block, use the dashboard API on the workflow group's Docker network.
 2. On Kubernetes, drop destinations on `host.docker.internal` or on the local
    dashboard, since a cluster has no way back to the laptop.
 3. If `CANYONOS_DASHBOARD_OTLP_ENDPOINT` is set (the operator sets it when the cluster

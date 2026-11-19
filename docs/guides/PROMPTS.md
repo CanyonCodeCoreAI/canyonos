@@ -6,7 +6,7 @@ Gateway sends the live version with each model call the function makes.
 
 ## Define prompts in a file
 
-Create `prompts.yaml` in the project's `config` folder. Each prompt is named after the
+Create `prompts.yaml` in the workflow's `config` folder. Each prompt is named after the
 agent function it belongs to and holds a list of versions:
 
 ```yaml
@@ -27,7 +27,7 @@ prompts:
 | `updated_at` | none            | The version's date on the dashboard                                                        |
 | `live`       | the highest `n` | Set `true` on the one version agents are sent                                              |
 
-Versions the dashboard saves are named `<project>-<Agent>-<function>-<hash>-v<n>`, where
+Versions the dashboard saves are named `<workflow>-<Agent>-<function>-<hash>-v<n>`, where
 `<hash>` is the first 8 hex digits of the text's SHA-256. You can follow the same
 pattern.
 
@@ -41,9 +41,9 @@ covered in [Limits](#limits).
 
 ## Change a prompt while the workflow runs
 
-Open the deployment on the [dashboard](DASHBOARD.md) and go to **Prompts**. Each prompt
-is a card named `<project>.<Agent>.<function>`, showing the live version and the first
-line of its text. The page works only while the deployment runs; otherwise it says so.
+Open the workflow group on the [dashboard](DASHBOARD.md) and go to **Prompts**. Each prompt
+is a card named `<workflow>.<Agent>.<function>`, showing the live version and the first
+line of its text. The page works only while the workflow group runs; otherwise it says so.
 
 1. Open the card. The live version is at the top, and **Versions** below lists every
    version, newest first.
@@ -58,22 +58,22 @@ line of its text. The page works only while the deployment runs; otherwise it sa
 ## See which version a request used
 
 Every model call that was sent a prompt records it on its agent call's span, as
-`prompt_name` (`<project>.<Agent>.<function>`) and `prompt_version` (for example
+`prompt_name` (`<workflow>.<Agent>.<function>`) and `prompt_version` (for example
 `IntentAgent-parse-7f24ec2e-v1`). On **Traces**, open a request to see the version under
 each agent call. When one agent call makes several model calls, the last one's version
 is kept.
 
 ## Where prompts are kept
 
-The dashboard keeps every version in its Postgres database, by the deployment's
-`deployment_id`. When a deploy registers the deployment with the dashboard, and each
+The dashboard keeps every version in its Postgres database, by each workflow's
+`workflow_id`. When a deploy registers the workflow group with the dashboard, and each
 time you open the Prompts page, the dashboard copies in every prompt from `prompts.yaml`
 it doesn't have yet, with all its versions. From then on, the dashboard's copy is what
 agents are sent. Without the dashboard, agents are sent the live versions in
 `prompts.yaml` as of the last deploy.
 
-Because prompts are kept by `deployment_id`, they carry over to the next deploy only
-when the deployment keeps its `deployment_id`, and deleting the deployment on the
+Because prompts are kept by `workflow_group_id`, they carry over to the next deploy only
+when the workflow group keeps its `workflow_group_id`, and deleting the workflow group on the
 dashboard deletes its prompts. How the gateway gets the live versions is in
 [LLM Gateway internals](../architecture/LLM_GATEWAY.md#prompts).
 
@@ -84,7 +84,7 @@ dashboard deletes its prompts. How the gateway gets the live versions is in
 - Once the dashboard has a prompt, later changes to it in `prompts.yaml`, including new
   versions, are ignored. Save a new version on the dashboard instead.
 - The dashboard cannot add or delete a prompt. To add one, put it in `prompts.yaml` and
-  run `canyonos sync <project folder>` (Docker only) or `canyonos deploy`; it reaches
+  run `canyonos sync <workflow folder>` (Docker only) or `canyonos deploy`; it reaches
   agents once the dashboard has stored it, at the latest when you next open the Prompts
   page.
 - Prompts are set on OpenAI chat completions and responses, Anthropic messages, and AWS

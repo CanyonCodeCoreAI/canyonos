@@ -14,7 +14,6 @@ import type {
   MonitoringSeriesResponse,
   MonitoringTracesResponse,
 } from '@canyonos/api/monitoring';
-import type { ProjectStats, ProjectSummary } from '@canyonos/api/projects';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
 import type { RequestList } from '@canyonos/api/requests';
 import type { FleetOverview } from '@canyonos/api/resources';
@@ -24,11 +23,12 @@ import type {
   ScalingPolicy,
   ScalingResponse,
 } from '@canyonos/api/scaling';
+import type { WorkflowStats, WorkflowSummary } from '@canyonos/api/workflows';
 
 import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
-import { seed_running_project, seed_scaling, seed_scaling_agents } from './redis-test.utils';
+import { seed_running_workflow, seed_scaling, seed_scaling_agents } from './redis-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -45,11 +45,11 @@ describe('SDK contract', () => {
     expect(Number.isNaN(Date.parse(data.timestamp))).toBe(false);
   });
 
-  test('project, stats, requests, metrics, and resources endpoints are typed at runtime', async () => {
+  test('workflow, stats, requests, metrics, and resources endpoints are typed at runtime', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const { project_id } = await create_test_project({
-      name: 'SDK Project',
+    const { workflow_id } = await create_test_workflow({
+      name: 'SDK Workflow',
       files: [{ path: 'workflow.py', component_kind: 'workflow' }],
     });
     const range = {
@@ -57,22 +57,23 @@ describe('SDK contract', () => {
       to: new Date().toISOString(),
     };
 
-    const projects: ProjectSummary[] = (await api.projects.get({ $headers: headers })).data!;
-    const project: ProjectSummary = (await api.projects[project_id]!.get({ $headers: headers }))
+    const workflows: WorkflowSummary[] = (await api.workflows.get({ $headers: headers })).data!;
+    const workflow: WorkflowSummary = (await api.workflows[workflow_id]!.get({ $headers: headers }))
       .data!;
-    const stats: ProjectStats = (await api.projects[project_id]!.stats.get({ $headers: headers }))
-      .data!;
+    const stats: WorkflowStats = (
+      await api.workflows[workflow_id]!.stats.get({ $headers: headers })
+    ).data!;
     const requests: RequestList = (
-      await api.projects[project_id]!.requests.get({
+      await api.workflows[workflow_id]!.requests.get({
         $query: { ...range, limit: 20, offset: 0 },
         $headers: headers,
       })
     ).data!;
     const kpis: MetricsKpis = (
-      await api.projects[project_id]!.metrics.kpis.get({ $query: range, $headers: headers })
+      await api.workflows[workflow_id]!.metrics.kpis.get({ $query: range, $headers: headers })
     ).data!;
     const blocks: MetricsBlocks = (
-      await api.projects[project_id]!.metrics.blocks.get({
+      await api.workflows[workflow_id]!.metrics.blocks.get({
         $query: range,
         $headers: headers,
       })
@@ -87,20 +88,20 @@ describe('SDK contract', () => {
       })
     ).data!;
 
-    expect(projects.some(({ id }) => id === project_id)).toBe(true);
-    expect(project).toMatchObject({ id: project_id, name: 'SDK Project', file_count: 1 });
-    expect(stats).toMatchObject({ project_id, workflow_count: 1 });
+    expect(workflows.some(({ id }) => id === workflow_id)).toBe(true);
+    expect(workflow).toMatchObject({ id: workflow_id, name: 'SDK Workflow', file_count: 1 });
+    expect(stats).toMatchObject({ workflow_id, file_count: 1 });
     expect(requests.total).toBe(0);
-    expect(kpis.project_id).toBe(project_id);
-    expect(blocks.project_id).toBe(project_id);
-    expect(overview.projects.some(({ id }) => id === project_id)).toBe(true);
+    expect(kpis.workflow_id).toBe(workflow_id);
+    expect(blocks.workflow_id).toBe(workflow_id);
+    expect(overview.workflows.some(({ id }) => id === workflow_id)).toBe(true);
   });
 
   test('monitoring endpoints are typed at runtime', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const { project_id } = await create_test_project({ name: 'SDK Monitoring' });
-    const monitoring = api.projects[project_id]!.monitoring;
+    const { workflow_id } = await create_test_workflow({ name: 'SDK Monitoring' });
+    const monitoring = api.workflows[workflow_id]!.monitoring;
     // On the hour, so the hourly grid has exactly 24 whole buckets rather than two partial ends.
     const to_ms = Math.floor(Date.now() / 3_600_000) * 3_600_000;
     const range = {
@@ -134,7 +135,7 @@ describe('SDK contract', () => {
       await monitoring.replicas.get({ $headers: headers })
     ).data!;
 
-    const scope = { project_id, ...range } as const;
+    const scope = { workflow_id, ...range } as const;
     expect(series).toMatchObject({ ...scope, bucket_seconds: 3600 });
     expect(series.series.map(({ signal, samples }) => [signal, samples])).toEqual([
       ['traffic', 24],
@@ -149,14 +150,14 @@ describe('SDK contract', () => {
     expect(errors).toEqual({ ...scope, total: 0, by_type: [], by_agent: [] });
     expect(resources).toMatchObject({ ...scope, machines: [], agents: [] });
     expect(resources.bucket_start_ats).toHaveLength(24);
-    expect(replicas).toEqual({ project_id, replicas: [] });
+    expect(replicas).toEqual({ workflow_id, replicas: [] });
   });
 
   test('prompt endpoints are typed at runtime', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const { project_id } = await create_test_project({ name: 'SDK Prompts' });
-    await seed_running_project(project_id, {
+    const { workflow_id } = await create_test_workflow({ name: 'SDK Prompts' });
+    await seed_running_workflow(workflow_id, {
       prompts: {
         'app.summarize': [
           {
@@ -167,7 +168,7 @@ describe('SDK contract', () => {
         ],
       },
     });
-    await load_prompts(project_id);
+    await load_prompts(workflow_id);
 
     const v1: SystemPrompt = {
       version: 'app-summarize-abcdef01-v1',
@@ -175,19 +176,19 @@ describe('SDK contract', () => {
       updated_at: '2026-09-01T00:00:00.000Z',
     };
     const prompts: PromptListItem[] = (
-      await api.projects[project_id]!.prompts.get({ $headers: headers })
+      await api.workflows[workflow_id]!.prompts.get({ $headers: headers })
     ).data!;
     const created: SystemPrompt = (
-      await api.projects[project_id]!.prompts['app.summarize']!.versions.post(
+      await api.workflows[workflow_id]!.prompts['app.summarize']!.versions.post(
         { content: 'Summarize briefly.' },
         { headers: key_headers }
       )
     ).data!;
     const prompt: Prompt = (
-      await api.projects[project_id]!.prompts['app.summarize']!.get({ $headers: headers })
+      await api.workflows[workflow_id]!.prompts['app.summarize']!.get({ $headers: headers })
     ).data!;
     const live: PromptListItem = (
-      await api.projects[project_id]!.prompts['app.summarize']!.live.put(
+      await api.workflows[workflow_id]!.prompts['app.summarize']!.live.put(
         { version: created.version },
         { headers: key_headers }
       )
@@ -204,7 +205,7 @@ describe('SDK contract', () => {
   test('scaling endpoints are typed at runtime', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const { project_id } = await create_test_project({ name: 'SDK Scaling' });
+    const { workflow_id } = await create_test_workflow({ name: 'SDK Scaling' });
     const policy: ScalingPolicy = {
       min_replicas: 1,
       max_replicas: 4,
@@ -212,31 +213,31 @@ describe('SDK contract', () => {
       scale_up_above: 3,
       scale_down_below: 1,
     };
-    await seed_running_project(project_id, { prompts: {} });
-    await seed_scaling(JSON.stringify({ projects: { app: policy } }));
+    await seed_running_workflow(workflow_id, { prompts: {} });
+    await seed_scaling(JSON.stringify({ workflows: { app: policy } }));
     await seed_scaling_agents([{ name: 'app.PriceAgent', replicas: 1 }]);
 
     const scaling: ScalingResponse = (
-      await api.projects[project_id]!.scaling.get({ $headers: headers })
+      await api.workflows[workflow_id]!.scaling.get({ $headers: headers })
     ).data!;
     const agents: ScalingAgentsResponse = (
-      await api.projects[project_id]!.scaling.agents.get({ $headers: headers })
+      await api.workflows[workflow_id]!.scaling.agents.get({ $headers: headers })
     ).data!;
     const saved: ScalingPolicy = (
-      await api.projects[project_id]!.scaling.app!.put(
+      await api.workflows[workflow_id]!.scaling.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
         { headers: key_headers }
       )
     ).data!;
 
-    expect(scaling).toEqual({ projects: { app: { status: 'applied', policy } } });
+    expect(scaling).toEqual({ workflows: { app: { status: 'applied', policy } } });
     expect(agents).toEqual({
       agents: [{ name: 'app.PriceAgent', replicas_expected: 1, replicas_running: 0, load: null }],
     });
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.projects[project_id]!.scaling.app!.delete(undefined, { headers: key_headers })
+      await api.workflows[workflow_id]!.scaling.delete(undefined, { headers: key_headers })
     ).data!;
     expect(deleted).toEqual({ status: 'none' });
   });

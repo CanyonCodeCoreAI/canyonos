@@ -48,7 +48,7 @@ py-modules = ["cli"]
 [tool.setuptools.package-data]
 canyonos = [
     "dashboard.compose.yml",
-    "deployment.yaml",
+    "workflow_group.yaml",
     "new_app_template/**/*",
     "new_app_template/**/.*",
     # The quickstart's workflows; `.*` catches each one's .env.

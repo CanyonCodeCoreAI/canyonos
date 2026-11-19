@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The CanyonOS API server's Kubernetes side, run in its own pod for every deployment in
-the cluster: build a deployment's projects in the cluster, whose build applies them,
-delete it, read its status, agent logs and health from its CanyonBuild, CanyonProject
-and CanyonAgents, find the deployments again after a restart, and check who calls the
-server."""
+"""The CanyonOS API server's Kubernetes side, run in its own pod for every workflow
+group in the cluster: build a workflow group's workflows in the cluster, whose build
+applies them, delete it, read its status, agent logs and health from its CanyonBuild,
+CanyonProject and CanyonAgents, find the workflow groups again after a restart, and
+check who calls the server."""
 
 import io
 import json
@@ -38,7 +38,7 @@ from canyonos_core.schema import (
     DEPLOYMENT_CONFIG,
     SchemaError,
     check_deployment,
-    project_names,
+    workflow_names,
 )
 
 STARTUP_TIMEOUT_SECONDS = 30 * 60
@@ -50,13 +50,14 @@ UPLOAD_PORT = 8090
 # Reasons the operator gives for a CanyonAgent that will never start as configured.
 FATAL_REASONS = ("NameMismatch", "Unsupported", "ProjectNotFound")
 LABEL_AGENT = f"{API_GROUP}/agent"
-# The fingerprints a project runs, kept on its CanyonProject for after a server restart.
+# The fingerprints a workflow group runs, kept on its CanyonProject for after a restart.
 DEPLOYED_ANNOTATION = f"{API_GROUP}/deployed"
 
 
 class _ClusterDeploy(DeployProgress):
-    """One deploy of a deployment's project to the cluster, reported as a deploy on
-    Docker is; `api` reaches its namespace and `project` is the deployment's name."""
+    """One deploy of a workflow group's CanyonProject to the cluster, reported as a
+    deploy on Docker is; `api` reaches its namespace and `project` is the workflow
+    group's name."""
 
     def __init__(self, api, project, workspace, deployed):
         super().__init__(None, deployed)
@@ -72,7 +73,7 @@ def running_deploy(progress):
 
 
 def start(workspace, name, deployed, lock):
-    """Build and apply the deployment uploaded to `workspace`, named `name`, in the
+    """Build and apply the workflow group uploaded to `workspace`, named `name`, in the
     cluster on a background thread, recording `deployed` as the fingerprints and auth it
     runs; return its progress. `lock` is held while a failed deploy is stopped."""
     manifest, violations = check_deployment(workspace)
@@ -90,21 +91,22 @@ def start(workspace, name, deployed, lock):
     return progress
 
 
-# The deploys `restore` rebuilt, by deployment_id.
+# The deploys `restore` rebuilt, by workflow_group_id.
 _restored = {}
 
 
-def restore(add_deployment, workspace_dir):
-    """Hold again, through `add_deployment`, each deployment whose CanyonProject is in
-    the cluster, as a running deploy that stop, status and logs reach, its folder under
-    `workspace_dir`. Run at startup: the server keeps deployments only in memory."""
+def restore(add_workflow_group, workspace_dir):
+    """Hold again, through `add_workflow_group`, each workflow group whose CanyonProject
+    is in the cluster, as a running deploy that stop, status and logs reach, its folder
+    under `workspace_dir`. Run at startup: the server keeps workflow groups only in
+    memory."""
     projects = KubernetesApi.from_environment().request(
         "GET", f"/apis/{API_GROUP}/{API_VERSION}/canyonprojects"
     )["items"]
     for project in projects:
         spec = project["spec"]
-        deployment_id, name = spec["projectID"], spec["displayName"]
-        workspace = os.path.join(workspace_dir, deployment_id)
+        workflow_group_id, name = spec["projectID"], spec["displayName"]
+        workspace = os.path.join(workspace_dir, workflow_group_id)
         os.makedirs(workspace, exist_ok=True)
         api = KubernetesApi.from_environment(
             {**os.environ, "CANYONOS_NAMESPACE": project["metadata"]["namespace"]}
@@ -120,11 +122,11 @@ def restore(add_deployment, workspace_dir):
             else {"code": None, "config": None, "auth": None},
         )
         progress.phase = "up"
-        deployment = add_deployment(deployment_id, workspace)
-        deployment.name = name
+        workflow_group = add_workflow_group(workflow_group_id, workspace)
+        workflow_group.name = name
         # So a sync, which sends no API key, keeps the key the project runs with.
-        deployment.auth = spec.get("auth", {})
-        deployment.deploy = _restored[deployment_id] = progress
+        workflow_group.auth = spec.get("auth", {})
+        workflow_group.deploy = _restored[workflow_group_id] = progress
 
 
 def _deploy(progress, spec, lock):
@@ -198,21 +200,21 @@ def _wait(progress, deadline):
 
 
 def _build(progress, spec, deadline):
-    """Build the deploy's projects as its `kubernetes:` settings `spec` say: the
-    deployment's `.env` and each project's into Secrets, then a CanyonBuild whose pod
-    takes the upload, builds and pushes the images and applies the deployment. Returns
-    why it failed, or None once it succeeded."""
+    """Build the deploy's workflows as its `kubernetes:` settings `spec` say: the
+    workflow group's `.env` and each workflow's into Secrets, then a CanyonBuild whose
+    pod takes the upload, builds and pushes the images and applies the workflow group.
+    Returns why it failed, or None once it succeeded."""
     api, project = progress.api, resource_name(progress.project)
     labels = {LABEL_PROJECT: project, MANAGED_BY_LABEL: MANAGED_BY}
     env = read_dotenv(os.path.join(progress.workspace, ".env"))
     env_secret = spec.env_secret or (f"{project}-env" if env else None)
     if not spec.env_secret:
-        # Each project's agents get its own .env, by the name manifests.py gives it.
+        # Each workflow's agents get its own .env, by the name manifests.py gives it.
         secrets = {
             f"{project}-{resource_name(name)}-env": read_dotenv(
                 os.path.join(progress.workspace, name, ".env")
             )
-            for name in project_names(progress.workspace)
+            for name in workflow_names(progress.workspace)
         }
         if env:
             secrets[f"{project}-env"] = env
@@ -422,12 +424,16 @@ def status(progress, report):
     url = project and project.get("status", {}).get("endpointURL")
     if url:
         parts = urlsplit(url)
+        routes = project["spec"]["endpoint"]["routes"]
+        for route in routes:
+            # The CRD keeps no workflow_id.
+            route["workflow_id"] = None
         report["endpoint"] = {
             "public_host": parts.hostname,
             "api_port": parts.port or (443 if parts.scheme == "https" else 80),
             "routes": [
                 {**route, "url": url.rstrip("/") + route_path(route)}
-                for route in project["spec"]["endpoint"]["routes"]
+                for route in routes
             ],
         }
     report["agents"] = {}
@@ -547,8 +553,9 @@ def agent_logs(progress, name, tail):
 def check_caller(authorization, configs, verb):
     """Answer 401 unless `authorization`, a request's Authorization header, holds the
     Bearer token of a user the cluster knows, and 403 unless that user may `verb`
-    CanyonProjects in the namespace each `deployment.yaml` text in `configs` names, and
-    in that of the request's deployment while its deploy `restore` rebuilt runs."""
+    CanyonProjects in the namespace each `workflow_group.yaml` text in `configs` names,
+    and in that of the request's workflow group while its deploy `restore` rebuilt
+    runs."""
     if not authorization.startswith("Bearer "):
         return jsonify(
             {
@@ -581,9 +588,9 @@ def check_caller(authorization, configs, verb):
         except (yaml.YAMLError, TypeError, KeyError):
             # None asks whether the user may do it in every namespace.
             namespaces.append(None)
-    # A rebuilt deploy has no uploaded deployment.yaml naming its namespace.
+    # A rebuilt deploy has no uploaded workflow_group.yaml naming its namespace.
     restored = running_deploy(
-        _restored.get((request.view_args or {}).get("deployment_id"))
+        _restored.get((request.view_args or {}).get("workflow_group_id"))
     )
     if restored:
         namespaces.append(restored.api.namespace)

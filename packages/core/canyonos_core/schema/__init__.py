@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Schema for the files a CanyonOS deployment declares itself with: its
-`deployment.yaml` and each project folder's `config/workflow_config.yaml`.
+"""Schema for the files a CanyonOS workflow group declares itself with: its
+`workflow_group.yaml` and each workflow folder's `config/workflow_config.yaml`.
 
 `check_deployment` is what the in-container deploy calls before it generates a
 single stub: a manifest key that does not exist, a port written as a string or
@@ -28,14 +28,14 @@ from canyonos_core.schema.manifest import (
     Manifest,
     OtelDestination,
     OtelSpec,
-    Project,
     RedisSpec,
     Resources,
+    Workflow,
     load_deployment,
     load_deployment_config,
-    load_project,
-    project_names,
+    load_workflow,
     qualified_name,
+    workflow_names,
 )
 
 __all__ = [
@@ -49,26 +49,26 @@ __all__ = [
     "Manifest",
     "OtelDestination",
     "OtelSpec",
-    "Project",
     "RedisSpec",
     "Resources",
     "SchemaError",
     "SchemaViolation",
+    "Workflow",
     "check_deployment",
-    "check_project",
+    "check_workflow",
     "load_deployment",
     "load_deployment_config",
-    "load_project",
-    "project_names",
+    "load_workflow",
     "qualified_name",
     "render_violation",
+    "workflow_names",
 ]
 
 
 def _as_typed(path):
     """A path as the reader would write it: relative to where the build runs.
 
-    The build runs from the deployment's folder, so that is the form the config files
+    The build runs from the workflow group's folder, so that is the form the config files
     and the rest of these violations are written in. A path outside it has no shorter
     honest form and is left absolute.
     """
@@ -80,7 +80,7 @@ def _as_typed(path):
 
 
 def _missing_sources(agent_specs, path, root):
-    """Violations for the code a project's agents point at but its folder `root` does
+    """Violations for the code a workflow's agents point at but its folder `root` does
     not hold.
 
     The build used to log a line and carry on, leaving a deploy that exited 0
@@ -95,7 +95,7 @@ def _missing_sources(agent_specs, path, root):
         if not os.path.isfile(source):
             problem = f"{_as_typed(source)} does not exist"
         elif os.path.commonpath([real_root, os.path.realpath(source)]) != real_root:
-            problem = f"{_as_typed(source)} resolves outside the project"
+            problem = f"{_as_typed(source)} resolves outside the workflow"
         else:
             continue
         violations.append(
@@ -104,33 +104,33 @@ def _missing_sources(agent_specs, path, root):
     return violations
 
 
-def check_project(root):
-    """`(project, violations)` for the project folder `root`: its `config/workflow_config.yaml`
-    and the code its agents point at. Never raises; the project is None when its config
+def check_workflow(root):
+    """`(workflow, violations)` for the workflow folder `root`: its `config/workflow_config.yaml`
+    and the code its agents point at. Never raises; the workflow is None when its config
     did not parse."""
     path = os.path.join(root, CONFIG_PATH)
     try:
-        project = load_project(path)
+        workflow = load_workflow(path)
     except SchemaError as error:
         return None, tuple(error.violations)
-    return project, tuple(_missing_sources(project.agents, path, root))
+    return workflow, tuple(_missing_sources(workflow.agents, path, root))
 
 
 def check_deployment(workspace):
-    """`(manifest, violations)` for the deployment in `workspace`: its config files and
-    the code every project's agents point at. Never raises; the manifest is None when
+    """`(manifest, violations)` for the workflow group in `workspace`: its config files and
+    the code every workflow's agents point at. Never raises; the manifest is None when
     the config files did not parse."""
     try:
         manifest = load_deployment(workspace)
     except SchemaError as error:
         return None, tuple(error.violations)
     violations = []
-    for name in project_names(workspace):
+    for name in workflow_names(workspace):
         root = os.path.join(workspace, name)
-        project_agents = [
-            agent_spec for agent_spec in manifest.agents if agent_spec.project == name
+        workflow_agents = [
+            agent_spec for agent_spec in manifest.agents if agent_spec.workflow == name
         ]
         violations += _missing_sources(
-            project_agents, os.path.join(root, CONFIG_PATH), root
+            workflow_agents, os.path.join(root, CONFIG_PATH), root
         )
     return manifest, tuple(violations)

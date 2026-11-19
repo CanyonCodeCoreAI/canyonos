@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""What the deployed project runs, read where the product keeps it: the replica
-records and routing table the reconciler writes to the project's Redis, the
+"""What the deployed workflow runs, read where the product keeps it: the replica
+records and routing table the reconciler writes to the workflow group's Redis, the
 futures of a request, the agents' state in `canyonos status --json`, and their
 replica containers in Docker. Cases use it to pick a replica the way callers do and
 to tell which replica ran each call of a request."""
@@ -18,14 +18,19 @@ from typing import cast
 
 import redis
 
-from .harness import canyonos, docker_name, project_containers, project_redis
+from .harness import (
+    canyonos,
+    docker_name,
+    workflow_group_containers,
+    workflow_group_redis,
+)
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 
 
 def store(recorder, deployed) -> redis.Redis:
-    """The deployed project's Redis, on the host port the CLI recorded for it."""
-    return project_redis(recorder, deployed.dir)
+    """The deployed workflow group's Redis, on the host port the CLI recorded for it."""
+    return workflow_group_redis(recorder, deployed.dir)
 
 
 def redis_reply(port: int, *command: str, tls: ssl.SSLContext | None = None) -> str:
@@ -75,7 +80,7 @@ def routed_replicas(redis_client: redis.Redis, agent: str) -> list[Replica]:
 
 @dataclass(frozen=True)
 class Call:
-    """One call a request made: its `<project>.<Agent>.<function>`, the replica that
+    """One call a request made: its `<workflow>.<Agent>.<function>`, the replica that
     ran it (None until that replica finished it) and the prompt version the LLM
     gateway sent with it, if any."""
 
@@ -127,7 +132,7 @@ def replica_containers(recorder, deployed, agent: str) -> dict[str, str]:
     )
     return {
         name: state
-        for name, state in project_containers(
+        for name, state in workflow_group_containers(
             recorder, deployed.group, every=True
         ).items()
         if pattern.fullmatch(name)

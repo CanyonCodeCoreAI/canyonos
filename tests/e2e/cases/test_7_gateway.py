@@ -22,8 +22,8 @@ IN_REPLICA = "/tmp/gateway_check.py"
 
 def test_gateway_inside_a_replica(recorder, deployed):
     served = {
-        qualified(deployed.project_dir, route["agent"])
-        for route in manifest(deployed.project_dir)["endpoint"]["routes"]
+        qualified(deployed.workflow_dir, route["agent"])
+        for route in manifest(deployed.workflow_dir)["endpoint"]["routes"]
     }
     agent = next(name for name in deployed.agents if name not in served)
     routed = routed_replicas(store(recorder, deployed), agent)

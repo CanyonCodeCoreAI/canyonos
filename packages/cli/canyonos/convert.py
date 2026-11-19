@@ -3,7 +3,7 @@
 
 """
 Logic for `canyonos convert`: install the CanyonOS skill on a coding agent,
-then launch that agent with a prompt to apply it to the current project.
+then launch that agent with a prompt to apply it to the current workflow.
 
 --agent/--scope/-y replace the two menus, so the command also runs where there
 is no tty, and -y is the unattended form whether or not one is attached. The
@@ -239,13 +239,15 @@ AGENTS = {
 
 def _prompt_agent():
     options = [(key, spec["label"]) for key, spec in AGENTS.items()]
-    return select_menu(options, title="Which coding agent should convert this project?")
+    return select_menu(
+        options, title="Which coding agent should convert this workflow?"
+    )
 
 
 def _prompt_scope(agent):
     dirs = AGENTS[agent]["skill_dirs"]
     options = [
-        ("local", f"This project only ({dirs['local']})"),
+        ("local", f"This workflow only ({dirs['local']})"),
         ("global", f"Globally ({dirs['global']})"),
     ]
     return select_menu(options, title="Where should the CanyonOS skill be installed?")
@@ -378,7 +380,7 @@ FETCH_STRATEGIES = (
 def _install_skill(dest, source=SKILL_SOURCE):
     """Install the skill into `dest` from `source` -- an existing directory to
     copy, otherwise a git ref to fetch. Returns True on success."""
-    # `isdir` alone would read the production ref as a path in any project that
+    # `isdir` alone would read the production ref as a path in any workflow that
     # happens to have a directory of that name next to it.
     if source != SKILL_REF and os.path.isdir(source):
         try:
@@ -501,7 +503,7 @@ def run_convert(
     if not _install_skill(dest):
         return False
     if install_only:
-        ui.ok(f"{spec['label']} can use the skill in {dest} to convert this project.")
+        ui.ok(f"{spec['label']} can use the skill in {dest} to convert this workflow.")
         return True
 
     # The agent's TUI needs stdin and stdout; without both, or with -y, run unattended.

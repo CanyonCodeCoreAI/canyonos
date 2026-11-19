@@ -11,16 +11,16 @@ import { QueryError } from '@/modules/core/components/QueryError';
 import { ErrorGroupPanel } from '@/modules/monitoring/components/error-group-panel';
 import { LogList } from '@/modules/monitoring/components/log-list';
 import { errorSummaryQueryOptions } from '@/modules/monitoring/monitoring.queries';
-import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import { WorkflowWindowControl } from '@/modules/workflows/components/workflow-window-control';
 import type { RangeSelection } from '@/modules/core/time-range';
 
 interface ErrorsScreenProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
 }
 
-export function ErrorsScreen({ project_id, range }: ErrorsScreenProps) {
-  const summary = useQuery(errorSummaryQueryOptions(project_id, { range }));
+export function ErrorsScreen({ workflow_id, range }: ErrorsScreenProps) {
+  const summary = useQuery(errorSummaryQueryOptions(workflow_id, { range }));
 
   return (
     <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="errors-screen">
@@ -28,7 +28,7 @@ export function ErrorsScreen({ project_id, range }: ErrorsScreenProps) {
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Errors
         </h1>
-        <ProjectWindowControl />
+        <WorkflowWindowControl />
       </header>
 
       <ErrorSummary summary={summary} />
@@ -36,7 +36,7 @@ export function ErrorsScreen({ project_id, range }: ErrorsScreenProps) {
       <section className="flex min-w-0 flex-col gap-3">
         <h2 className="text-foreground text-sm font-semibold">All errors</h2>
         <LogList
-          project_id={project_id}
+          workflow_id={workflow_id}
           range={range}
           errors_only
           empty_message="No errors recorded in this window."

@@ -1,4 +1,4 @@
-# The agents CanyonOS runs for this project.
+# The agents CanyonOS runs for this workflow.
 agents:
   - name: MyAgent
     entrypoint: agents/my_agent.py

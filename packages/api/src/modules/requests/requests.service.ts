@@ -25,12 +25,12 @@ const metric_range = (query: ListRequestsQuery): RequestMetricRange | undefined 
     ? { metric: query.metric, min: query.min, max: query.max }
     : undefined;
 
-// The project is resolved upstream by resolveProjectAccess, so the service only shapes the page.
+// The workflow is resolved upstream by resolveWorkflowAccess, so the service only shapes the page.
 export async function list_requests(
-  project_id: string,
+  workflow_id: string,
   query: ListRequestsQuery
 ): Promise<RequestList> {
-  const { total, items } = await requests_repo.page_by_project(project_id, {
+  const { total, items } = await requests_repo.page_by_workflow(workflow_id, {
     from: query.from,
     to: query.to,
     status: query.status,
@@ -46,11 +46,11 @@ export async function list_requests(
 }
 
 export async function get_request_trace(
-  project_id: string,
+  workflow_id: string,
   session_id: string,
   range: TimeRange
 ): Promise<RequestTrace> {
-  const trace = await requests_repo.trace_by_project(project_id, session_id, range);
+  const trace = await requests_repo.trace_by_workflow(workflow_id, session_id, range);
   if (!trace) {
     throw notFound('requests.not_found', `Request "${session_id}" was not found`);
   }

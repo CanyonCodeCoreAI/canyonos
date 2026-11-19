@@ -1,19 +1,19 @@
 ---
 name: scaling-agents
-description: Configure how a CanyonOS project's agents hold state, use models, and scale. Use when setting up or reviewing agent memory, `llms.yaml` model access and cost caps, or the `scaling.yaml` autoscaling policy.
+description: Configure how a CanyonOS workflow's agents hold state, use models, and scale. Use when setting up or reviewing agent memory, `llms.yaml` model access and cost caps, or the `scaling.yaml` autoscaling policy.
 ---
 
 # Configure memory, models and scaling for CanyonOS
 
 Decide where each agent keeps state, which models it may call, and how many
-replicas it may run, from the project's actual source. Work in this order:
+replicas it may run, from the workflow's actual source. Work in this order:
 replicas depend on state, and spend depends on replicas. Preserve application
 behavior; do not invent limits that refuse real calls.
 
 ## 1. Locate the source and config
 
-- Work in the project root: `.canyon` when the project folder has one, otherwise
-  the project folder itself. Find `config/workflow_config.yaml` there and write `llms.yaml`
+- Work in the workflow root: `.canyon` when the workflow folder has one, otherwise
+  the workflow folder itself. Find `config/workflow_config.yaml` there and write `llms.yaml`
   and `scaling.yaml` beside it. Respect an explicitly chosen destination.
 - Trace each manifest entry's entrypoint, relative to the root.
 - Read existing `llms.yaml` and `scaling.yaml` first. Keep their entries, names
@@ -58,7 +58,7 @@ Follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
   `packages/core/canyonos_core/llm_gateway/llm_prices.json` has no price for the
   model at the provider serving it. Set `max_tokens` to the largest limit the
   calls set.
-- Write no `llms.yaml` when the project calls no model through the gateway.
+- Write no `llms.yaml` when the workflow calls no model through the gateway.
 
 ## 4. Scaling: `scaling.yaml`
 
@@ -88,7 +88,7 @@ Follow [Autoscaling](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos
 - Parse both files. Check every rule in steps 3 and 4, and that every agent
   named in `llms.yaml` is an entry in `workflow_config.yaml`; under a
   misspelled name, the real agent's calls are refused.
-- Run `canyonos validate` from the project folder and resolve findings until
+- Run `canyonos validate` from the workflow folder and resolve findings until
   exit 0, or report the blocker.
 - Report per agent: its state and whether it scales, and the models it calls
   and caps. Report the workflow's policy, or the agent that blocked one, and

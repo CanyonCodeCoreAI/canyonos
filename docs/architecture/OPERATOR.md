@@ -1,13 +1,13 @@
 # Operator
 
-The operator runs CanyonOS projects on Kubernetes. It is a Go controller manager
+The operator runs CanyonOS workflow groups on Kubernetes. It is a Go controller manager
 (kubebuilder, controller-runtime) that does there what the [Reconciler](RECONCILER.md)
 does on Docker and EC2.
 
 A deploy renders a CanyonProject and one CanyonAgent per agent. The operator turns them
-into the project's Redis, Global Controller and endpoint, and each agent's pods, and keeps
+into the workflow group's Redis, Global Controller and endpoint, and each agent's pods, and keeps
 every agent at its replica count with rolling updates and an ordered teardown. It also
-writes the replica records and the routing table to the project's Redis, so the
+writes the replica records and the routing table to the workflow group's Redis, so the
 controllers read the same keys they read on Docker.
 
 The Global Controller still decides how many replicas run. It patches each CanyonAgent's
@@ -23,7 +23,7 @@ flowchart TB
     P --> O["Operator"]
     A --> O
     O --> W["Redis, Global Controller,<br/>endpoint, agent StatefulSets"]
-    O -->|"replica records, routing"| R["Project Redis"]
+    O -->|"replica records, routing"| R["Workflow group Redis"]
     G["Global Controller"] -->|"patches /scale"| A
 ```
 
@@ -31,11 +31,11 @@ flowchart TB
 
 All three are in `canyonos.canyoncode.ai/v1alpha1`.
 
-| Resource      | Short name | One per                       | Becomes                                                              |
-| ------------- | ---------- | ----------------------------- | -------------------------------------------------------------------- |
-| CanyonProject | `cproj`    | project, in its namespace     | Redis, Global Controller, endpoint, and a Service for callers        |
-| CanyonAgent   | `cagent`   | agent of a project            | a StatefulSet and headless Service (a database agent keeps one disk) |
-| CanyonBuild   | `cbuild`   | in-cluster build of a project | a Job that receives the upload, builds images, applies the project   |
+| Resource      | Short name | One per                              | Becomes                                                                   |
+| ------------- | ---------- | ------------------------------------ | ------------------------------------------------------------------------- |
+| CanyonProject | `cproj`    | workflow group, in its namespace     | Redis, Global Controller, endpoint, and a Service for callers             |
+| CanyonAgent   | `cagent`   | agent of a workflow group            | a StatefulSet and headless Service (a database agent keeps one disk)      |
+| CanyonBuild   | `cbuild`   | in-cluster build of a workflow group | a Job that receives the upload, builds images, applies the workflow group |
 
 A CanyonAgent's `metadata.name` must be the agent's name lowercased, with anything but
 letters, digits and hyphens turned into hyphens (`HelloAgent` becomes `helloagent`). The
@@ -46,7 +46,7 @@ CLI and the Global Controller use the same rule. Any other name is not run and r
 
 1. A CanyonProject creates Redis first. The Global Controller and the endpoint start
    once Redis is ready.
-2. A CanyonAgent starts once the project's `RedisReady` condition is true.
+2. A CanyonAgent starts once the CanyonProject's `RedisReady` condition is true.
 3. Each pod's readiness probe is the Local Controller's `/readyz`. Pod changes requeue
    the agent, and the operator writes what is ready to Redis.
 4. A pod that is deleted leaves routing at once. A `preStop` pause keeps it taking calls
@@ -103,7 +103,7 @@ at least once a minute in case Redis lost it. For the full schema, see
 ## Dashboard, deletion and install
 
 - **Dashboard:** with `--dashboard-namespace`, the operator keeps one Secret there,
-  `canyonos-dashboard-projects`, listing each project whose Redis is ready and how to
+  `canyonos-dashboard-projects`, listing each workflow whose Redis is ready and how to
   sign in to it.
 - **Dashboard key:** the chart, not the operator, sets the dashboard's key. The chart's
   `dashboard.apiKeyHash` goes into its Secret `canyonos-dashboard` as `api-key-hash`
@@ -111,7 +111,7 @@ at least once a minute in case Redis lost it. For the full schema, see
   `CANYONOS_API_KEY_HASH`. Empty, the API answers anyone who reaches it.
 - **Deletion:** the finalizer `canyonos.canyoncode.ai/teardown` holds a CanyonAgent or
   CanyonProject until it is taken down in order. An agent is unrouted, then its
-  StatefulSet is deleted and its pods drain. A project deletes its endpoint and agents,
+  StatefulSet is deleted and its pods drain. A CanyonProject deletes its endpoint and agents,
   waits for their pods, then cleans its keys from Redis. An unreachable Redis is
   skipped after five minutes.
 - **Install:** the Helm chart installs the operator as a Deployment, with leader
@@ -128,7 +128,7 @@ Paths are relative to `packages/operator`.
 | --------------------------- | -------------------------------------------------------------------------------------------- |
 | `api/v1alpha1/`             | The CRD types                                                                                |
 | `cmd/main.go`               | The manager, its flags and caches                                                            |
-| `internal/controller/`      | The reconcilers, rollout, teardown and the dashboard's project list                          |
+| `internal/controller/`      | The reconcilers, rollout, teardown and the dashboard's workflow list                         |
 | `internal/builders/`        | The Kubernetes objects each resource becomes, including the agent's environment (`agent.go`) |
 | `internal/redisstate/`      | The replica records and routing table written to Redis                                       |
 | `charts/canyonos-operator/` | The Helm chart; `crds/` and `files/role.yaml` are generated                                  |
@@ -144,4 +144,4 @@ real cluster, see [Kubernetes on kind](../contributing/DEVELOPMENT.md#kubernetes
 - A Redis key change: change core's side first, then the operator's writer
   (`internal/redisstate/writer.go`).
 
-The user guide is [Kubernetes deployment](../guides/KUBERNETES.md).
+The user guide is [Kubernetes workflow group](../guides/KUBERNETES.md).

@@ -30,7 +30,10 @@ import {
   errorSummaryQueryOptions,
   replicasQueryOptions,
 } from '@/modules/monitoring/monitoring.queries';
-import { projectDetailQueryOptions, useDeleteProject } from '@/modules/projects/projects.queries';
+import {
+  useDeleteWorkflow,
+  workflowDetailQueryOptions,
+} from '@/modules/workflows/workflows.queries';
 
 const CARD = cardVariants({ className: 'min-w-0 p-5' });
 const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
@@ -42,7 +45,7 @@ function deploymentOf(endpoint: UseQueryResult<MonitoringEndpointResponse>): Dep
   if (endpoint.isSuccess) return 'running';
   const is_not_running =
     endpoint.error instanceof ApiResponseError &&
-    endpoint.error.code === 'canyonos.project_not_running';
+    endpoint.error.code === 'canyonos.workflow_not_running';
   return is_not_running ? 'not_running' : 'unknown';
 }
 
@@ -56,20 +59,20 @@ function readout<T>(
 }
 
 interface StatusScreenProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
 }
 
-export function StatusScreen({ project_id }: StatusScreenProps) {
-  const project = useQuery(projectDetailQueryOptions(project_id));
-  const endpoint = useQuery(endpointQueryOptions(project_id));
-  const replicas_query = useQuery(replicasQueryOptions(project_id));
-  const errors = useQuery(errorSummaryQueryOptions(project_id, { range: { preset: '24h' } }));
+export function StatusScreen({ workflow_id }: StatusScreenProps) {
+  const workflow = useQuery(workflowDetailQueryOptions(workflow_id));
+  const endpoint = useQuery(endpointQueryOptions(workflow_id));
+  const replicas_query = useQuery(replicasQueryOptions(workflow_id));
+  const errors = useQuery(errorSummaryQueryOptions(workflow_id, { range: { preset: '24h' } }));
 
   const deployment = deploymentOf(endpoint);
   // Agent replicas also run calls, but each one serves an endpoint request already counted.
-  // A replica's agent is named `<project>.<agent>`, as the deployment names it.
+  // A replica's agent is named `<workflow>.<agent>`, as the workflow group names it.
   const route_agents = new Set(
-    endpoint.data?.endpoint?.routes.map((route) => `${route.project}.${route.agent}`)
+    endpoint.data?.endpoint?.routes.map((route) => `${route.workflow}.${route.agent}`)
   );
   const endpoint_requests = readout(replicas_query, ({ replicas }) =>
     replicas
@@ -82,12 +85,12 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
     <main className="flex min-h-full shrink-0 flex-col gap-7 p-7" data-testid="status-screen">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
-          {project.data?.name ?? 'Status'}
+          {workflow.data?.name ?? 'Status'}
         </h1>
         <StatusBadge deployment={deployment} />
-        <DeleteProjectButton
-          project_id={project_id}
-          name={project.data?.name}
+        <DeleteWorkflowButton
+          workflow_id={workflow_id}
+          name={workflow.data?.name}
           deployment={deployment}
         />
       </header>
@@ -123,7 +126,7 @@ export function StatusScreen({ project_id }: StatusScreenProps) {
       </section>
 
       <div className={CARD}>
-        <ContainersSection project_id={project_id} />
+        <ContainersSection workflow_id={workflow_id} />
       </div>
     </main>
   );
@@ -162,12 +165,12 @@ function StatusBadge({ deployment }: { readonly deployment: Deployment }) {
   );
 }
 
-function DeleteProjectButton({
-  project_id,
+function DeleteWorkflowButton({
+  workflow_id,
   name,
   deployment,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly name: string | undefined;
   readonly deployment: Deployment;
 }) {
@@ -178,16 +181,16 @@ function DeleteProjectButton({
           size="sm"
           variant="outline"
           className="ml-auto text-xs"
-          data-testid="status-delete-project"
+          data-testid="status-delete-workflow"
         >
           <Trash2Icon aria-hidden />
-          Delete deployment
+          Delete workflow
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent data-testid="status-delete-dialog">
-        <DeleteProjectDialog
-          project_id={project_id}
-          name={name ?? 'this deployment'}
+        <DeleteWorkflowDialog
+          workflow_id={workflow_id}
+          name={name ?? 'this workflow'}
           deployment={deployment}
         />
       </AlertDialogContent>
@@ -196,17 +199,17 @@ function DeleteProjectButton({
 }
 
 // Mounted by the dialog while it is open, so each opening starts from a fresh mutation.
-function DeleteProjectDialog({
-  project_id,
+function DeleteWorkflowDialog({
+  workflow_id,
   name,
   deployment,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly name: string;
   readonly deployment: Deployment;
 }) {
   const navigate = useNavigate();
-  const remove = useDeleteProject(project_id);
+  const remove = useDeleteWorkflow(workflow_id);
 
   if (deployment === 'running') {
     return (
@@ -231,7 +234,7 @@ function DeleteProjectDialog({
   const destroy = () =>
     remove.mutate(undefined, {
       onSuccess: () => {
-        toast.success('Deployment deleted.', TOAST);
+        toast.success('Workflow deleted.', TOAST);
         void navigate({ to: '/' });
       },
     });
@@ -241,7 +244,7 @@ function DeleteProjectDialog({
       <AlertDialogHeader>
         <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
         <AlertDialogDescription>
-          This removes the deployment and all its telemetry from the dashboard. This can&apos;t be
+          This removes the workflow and all its telemetry from the dashboard. This can&apos;t be
           undone.
         </AlertDialogDescription>
         <DeleteError message={remove.error?.message} />

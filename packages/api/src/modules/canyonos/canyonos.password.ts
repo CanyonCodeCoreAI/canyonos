@@ -13,7 +13,7 @@ const AUTH_TAG_BYTES = 16;
 
 const key = createHash('sha256').update(config.canyonos.redisPasswordKey).digest();
 
-/** Encrypts a project's Redis password for the database, as `v1:<iv>:<auth tag>:<ciphertext>`
+/** Encrypts a workflow's Redis password for the database, as `v1:<iv>:<auth tag>:<ciphertext>`
  * in base64, with a new random IV each time. */
 export function seal_redis_password(password: string): string {
   const iv = randomBytes(IV_BYTES);
@@ -26,13 +26,13 @@ export function seal_redis_password(password: string): string {
 function unreadable(cause: unknown) {
   return internalError(
     'canyonos.redis_password_unreadable',
-    "The dashboard can't decrypt the Redis password it stored for this deployment; its REDIS_PASSWORD_ENCRYPTION_KEY may have changed since. Deploy it again with `canyonos deploy` to register it again.",
+    "The dashboard can't decrypt the Redis password it stored for this workflow group; its REDIS_PASSWORD_ENCRYPTION_KEY may have changed since. Deploy it again with `canyonos deploy` to register it again.",
     { cause }
   );
 }
 
 /** Decrypts a password seal_redis_password stored. A value this key cannot open (another key,
- * or stored before passwords were encrypted) fails that project's request with a clear error. */
+ * or stored before passwords were encrypted) fails that workflow's request with a clear error. */
 export function open_redis_password(sealed: string): string {
   const [version, iv, tag, ciphertext, ...rest] = sealed.split(':');
   if (version !== FORMAT_VERSION || !iv || !tag || ciphertext === undefined || rest.length) {

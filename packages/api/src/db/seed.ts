@@ -16,6 +16,6 @@ export async function seedDevData(): Promise<void> {
   }
 
   seedLogger.info('Seeding dev data');
-  const projectId = await seedDevTelemetry();
-  seedLogger.info('Dev seed complete', { projectId });
+  const workflowId = await seedDevTelemetry();
+  seedLogger.info('Dev seed complete', { workflowId });
 }

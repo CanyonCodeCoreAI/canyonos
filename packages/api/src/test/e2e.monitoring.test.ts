@@ -9,9 +9,10 @@ import { db } from '@api/db/client';
 import { otelLogs, otelMetrics, otelSpans } from '@api/db/schema';
 import {
   GEN_AI,
-  PROJECT_ID_ATTRIBUTE,
   RUNTIME_ATTRIBUTES,
   STATUS_CODE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
 } from '@api/modules/metrics/metrics.contract';
 import {
   replicas_sql,
@@ -26,21 +27,21 @@ import {
   REPLICA_UP_SECONDS,
   REQUESTS_COMPLETED_METRIC,
   REQUESTS_STARTED_METRIC,
-  RESOURCE_PROJECT_ATTRIBUTE,
+  RESOURCE_WORKFLOW_ATTRIBUTE,
   SATURATION_METRIC,
 } from '@api/modules/monitoring/monitoring.signals';
 import { ROLLUP_SECONDS } from '@api/modules/telemetry/telemetry.rollup';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
-import { reset_controller, seed_endpoint, seed_running_project } from './redis-test.utils';
+import { reset_controller, seed_endpoint, seed_running_workflow } from './redis-test.utils';
 import {
   encode_metrics_export,
   metrics_export,
   post_otlp,
-  write_project_span,
+  write_workflow_span,
 } from './telemetry-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -84,12 +85,12 @@ interface SpanFixture {
   readonly output?: string;
 }
 
-const span_attributes = (project_id: string, span: SpanFixture): Record<string, unknown> => ({
-  [PROJECT_ID_ATTRIBUTE]: project_id,
+const span_attributes = (workflow_id: string, span: SpanFixture): Record<string, unknown> => ({
+  [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
   ...span.attributes,
 });
 
-async function write_span(project_id: string, span: SpanFixture): Promise<void> {
+async function write_span(workflow_id: string, span: SpanFixture): Promise<void> {
   const start = nanos_ago(span.ms_ago);
   await db.insert(otelSpans).values({
     span_id: span.span_id,
@@ -100,7 +101,7 @@ async function write_span(project_id: string, span: SpanFixture): Promise<void> 
     status_message: span.status_message ?? null,
     start_time_unix_nano: start,
     end_time_unix_nano: start + BigInt(span.duration_ms) * NANOS_PER_MS,
-    attributes: span_attributes(project_id, span),
+    attributes: span_attributes(workflow_id, span),
     input: span.input ?? null,
     output: span.output ?? null,
   });
@@ -117,7 +118,7 @@ interface MetricFixture {
 }
 
 interface GaugeReading {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly metric_name: string;
   readonly time_unix_nano: bigint;
   readonly value: number;
@@ -137,7 +138,9 @@ async function ingest_gauge(reading: GaugeReading): Promise<void> {
     '/v1/metrics',
     encode_metrics_export(
       metrics_export(reading.service_name, METRIC_SCOPE, [gauge], {
-        [RESOURCE_PROJECT_ATTRIBUTE]: reading.project_id,
+        [RESOURCE_WORKFLOW_ATTRIBUTE]: reading.workflow_id,
+        // Machine readings are their workflow group's, which has the workflow's id in these tests.
+        [WORKFLOW_GROUP_ID_ATTRIBUTE]: reading.workflow_id,
         ...(reading.host === undefined ? {} : { 'host.name': reading.host }),
       })
     )
@@ -145,9 +148,9 @@ async function ingest_gauge(reading: GaugeReading): Promise<void> {
   expect(response.status).toBe(200);
 }
 
-async function write_metric(project_id: string, metric: MetricFixture): Promise<void> {
+async function write_metric(workflow_id: string, metric: MetricFixture): Promise<void> {
   await ingest_gauge({
-    project_id,
+    workflow_id,
     metric_name: metric.metric_name,
     time_unix_nano: nanos_ago(metric.ms_ago),
     value: metric.value,
@@ -159,8 +162,8 @@ async function write_metric(project_id: string, metric: MetricFixture): Promise<
 interface LogFixture {
   readonly ms_ago: number;
   readonly body: string;
-  /** Null writes a log that names no project in its resource. */
-  readonly project_id: string | null;
+  /** Null writes a log that names no workflow in its resource. */
+  readonly workflow_id: string | null;
   readonly severity_text?: string;
   readonly severity_number?: number;
   readonly service_name?: string;
@@ -174,7 +177,7 @@ async function write_log(log: LogFixture): Promise<void> {
   await db.insert(otelLogs).values({
     service_name: log.service_name ?? null,
     resource_attributes:
-      log.project_id === null ? {} : { [RESOURCE_PROJECT_ATTRIBUTE]: log.project_id },
+      log.workflow_id === null ? {} : { [RESOURCE_WORKFLOW_ATTRIBUTE]: log.workflow_id },
     time_unix_nano: at,
     observed_time_unix_nano: at,
     severity_text: log.severity_text ?? null,
@@ -208,11 +211,11 @@ function grid_values(
   return values;
 }
 
-async function create_project(
+async function create_workflow(
   token: string,
-  name = 'Monitoring Project'
-): Promise<{ project_id: string }> {
-  return create_test_project({ name });
+  name = 'Monitoring Workflow'
+): Promise<{ workflow_id: string }> {
+  return create_test_workflow({ name });
 }
 
 interface PlanNode {
@@ -261,29 +264,29 @@ beforeAll(async () => {
   token = TEST_API_KEY;
 });
 
-describe('GET /projects/:project_id/monitoring/series', () => {
-  let project_id: string;
+describe('GET /workflows/:workflow_id/monitoring/series', () => {
+  let workflow_id: string;
   let foreign_id: string;
 
   /**
    * Fixture (1d grid):
    * - 2.5h ago: trace `ser-a` (two failed spans, 1000ms wall clock) and `ser-b` (3000ms, ok).
    * - 5.5h ago: trace `ser-c` (500ms, ok).
-   * - 2.5h ago: CPU readings 40 and 60 for this project; a memory reading that is not CPU.
-   * - The foreign project has a span and a CPU reading in the same bucket.
+   * - 2.5h ago: CPU readings 40 and 60 for this workflow; a memory reading that is not CPU.
+   * - The foreign workflow has a span and a CPU reading in the same bucket.
    */
   beforeAll(async () => {
-    ({ project_id } = await create_project(token));
-    ({ project_id: foreign_id } = await create_project(token, 'Foreign Monitoring'));
+    ({ workflow_id } = await create_workflow(token));
+    ({ workflow_id: foreign_id } = await create_workflow(token, 'Foreign Monitoring'));
 
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'ser-a-root',
       trace_id: 'ser-a',
       ms_ago: 2.5 * HOUR_MS,
       duration_ms: 1000,
       failed: true,
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'ser-a-child',
       trace_id: 'ser-a',
       parent_span_id: 'ser-a-root',
@@ -291,29 +294,29 @@ describe('GET /projects/:project_id/monitoring/series', () => {
       duration_ms: 800,
       failed: true,
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'ser-b',
       trace_id: 'ser-b',
       ms_ago: 2.5 * HOUR_MS,
       duration_ms: 3000,
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'ser-c',
       trace_id: 'ser-c',
       ms_ago: 5.5 * HOUR_MS,
       duration_ms: 500,
     });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, {
       metric_name: MACHINE_UTILIZATION_METRICS.cpu,
       ms_ago: 2.5 * HOUR_MS,
       value: 40,
     });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, {
       metric_name: MACHINE_UTILIZATION_METRICS.cpu,
       ms_ago: 2.5 * HOUR_MS - 1000,
       value: 60,
     });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, {
       metric_name: MACHINE_UTILIZATION_METRICS.memory,
       ms_ago: 2.5 * HOUR_MS,
       value: 99,
@@ -333,8 +336,8 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     });
   });
 
-  test('the four golden signals on one 24-hour grid, scoped to the project', async () => {
-    const res = await api.projects[project_id]!.monitoring.series.get({
+  test('the four golden signals on one 24-hour grid, scoped to the workflow', async () => {
+    const res = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -344,7 +347,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     const older = 5.5 * HOUR_MS;
 
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: grid.bucket_start_ats,
@@ -402,7 +405,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   });
 
   test('the grid is 24 hourly buckets ending on the current hour', async () => {
-    const res = await api.projects[project_id]!.monitoring.series.get({
+    const res = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -422,7 +425,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
       { range: range_days(90), bucket_seconds: (3 * DAY_MS) / 1000 },
     ];
     for (const { range, bucket_seconds } of ranges) {
-      const res = await api.projects[project_id]!.monitoring.series.get({
+      const res = await api.workflows[workflow_id]!.monitoring.series.get({
         $headers: bearer(token),
         $query: range,
       });
@@ -443,7 +446,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
       minute: 'numeric',
       hourCycle: 'h23',
     });
-    const res = await api.projects[project_id]!.monitoring.series.get({
+    const res = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: { ...range_days(30), time_zone },
     });
@@ -454,16 +457,16 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   });
 
   test('a zone ICU accepts but Postgres rejects is a 422, not a 500', async () => {
-    const res = await api.projects[project_id]!.monitoring.series.get({
+    const res = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: { ...range_days(30), time_zone: '-0800' },
     });
     expect(res.error?.status as number).toBe(422);
   });
 
-  test('a project with no telemetry has zero flows and unmeasured stocks', async () => {
-    const { project_id: empty_id } = await create_project(token, 'Empty Series');
-    const res = await api.projects[empty_id]!.monitoring.series.get({
+  test('a workflow with no telemetry has zero flows and unmeasured stocks', async () => {
+    const { workflow_id: empty_id } = await create_workflow(token, 'Empty Series');
+    const res = await api.workflows[empty_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -474,7 +477,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     const flow = { values: zeros, average: 0, peak: 0, latest: 0, samples: 24 };
     const unmeasured = { values: nulls, average: null, peak: null, latest: null, samples: 0 };
     expect(res.data).toEqual({
-      project_id: empty_id,
+      workflow_id: empty_id,
       ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: res.data!.bucket_start_ats,
@@ -487,8 +490,8 @@ describe('GET /projects/:project_id/monitoring/series', () => {
     });
   });
 
-  test('the foreign project sees only its own trace and reading', async () => {
-    const res = await api.projects[foreign_id]!.monitoring.series.get({
+  test('the foreign workflow sees only its own trace and reading', async () => {
+    const res = await api.workflows[foreign_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -501,7 +504,7 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   });
 
   test('a range whose from is not before its to is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.monitoring.series.get({
+    const res = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: { from: ONE_DAY_RANGE.to, to: ONE_DAY_RANGE.from },
     });
@@ -509,22 +512,22 @@ describe('GET /projects/:project_id/monitoring/series', () => {
   });
 });
 
-describe('GET /projects/:project_id/monitoring/logs', () => {
-  let project_id: string;
+describe('GET /workflows/:workflow_id/monitoring/logs', () => {
+  let workflow_id: string;
   let foreign_id: string;
 
   const price_agent = { 'canyonos.agent.name': 'PriceAgent', 'canyonos.agent.id': 'price-0' };
 
   /**
    * Newest first: `hello` (1h), `boom` (2h, scoped only through its trace), `fatal` (3h),
-   * `warn` (4h, no agent attributes), `bare` (5h, no agent and no service). The foreign project's
+   * `warn` (4h, no agent attributes), `bare` (5h, no agent and no service). The foreign workflow's
    * log, a log on the foreign trace, and a log from two days ago never show.
    */
   beforeAll(async () => {
-    ({ project_id } = await create_project(token, 'Logs Project'));
-    ({ project_id: foreign_id } = await create_project(token, 'Foreign Logs'));
+    ({ workflow_id } = await create_workflow(token, 'Logs Workflow'));
+    ({ workflow_id: foreign_id } = await create_workflow(token, 'Foreign Logs'));
 
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'log-span',
       trace_id: 'log-trace',
       ms_ago: 2 * HOUR_MS,
@@ -538,7 +541,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
     });
 
     await write_log({
-      project_id,
+      workflow_id,
       ms_ago: HOUR_MS,
       body: 'hello',
       severity_text: 'INFO',
@@ -547,7 +550,7 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
       attributes: { ...price_agent, 'http.route': '/quote' },
     });
     await write_log({
-      project_id: null,
+      workflow_id: null,
       ms_ago: 2 * HOUR_MS,
       body: 'boom',
       severity_text: 'ERROR',
@@ -561,44 +564,44 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
       },
     });
     await write_log({
-      project_id,
+      workflow_id,
       ms_ago: 3 * HOUR_MS,
       body: 'fatal',
       severity_text: 'FATAL',
       attributes: { 'canyonos.agent.name': 'PriceAgent', 'canyonos.agent.id': 'price-1' },
     });
     await write_log({
-      project_id,
+      workflow_id,
       ms_ago: 4 * HOUR_MS,
       body: 'warn',
       severity_text: 'WARN',
       severity_number: 13,
       service_name: 'svc-a',
     });
-    await write_log({ project_id, ms_ago: 5 * HOUR_MS, body: 'bare' });
+    await write_log({ workflow_id, ms_ago: 5 * HOUR_MS, body: 'bare' });
 
-    await write_log({ project_id: foreign_id, ms_ago: HOUR_MS, body: 'foreign' });
+    await write_log({ workflow_id: foreign_id, ms_ago: HOUR_MS, body: 'foreign' });
     await write_log({
-      project_id: null,
+      workflow_id: null,
       ms_ago: 1.5 * HOUR_MS,
       body: 'foreign trace',
       trace_id: 'log-foreign-trace',
     });
-    await write_log({ project_id, ms_ago: 2 * DAY_MS, body: 'too old' });
+    await write_log({ workflow_id, ms_ago: 2 * DAY_MS, body: 'too old' });
   });
 
-  const read_logs = (query: Partial<MonitoringLogsQuery>, id = project_id) =>
-    api.projects[id]!.monitoring.logs.get({
+  const read_logs = (query: Partial<MonitoringLogsQuery>, id = workflow_id) =>
+    api.workflows[id]!.monitoring.logs.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200, errors_only: false, ...query },
     });
 
-  test('every log of the project, newest first, with promoted keys out of attributes', async () => {
+  test('every log of the workflow, newest first, with promoted keys out of attributes', async () => {
     const res = await read_logs({});
     expect(res.error).toBeNull();
 
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       logs: [
         {
@@ -693,15 +696,15 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
     ]);
   });
 
-  test('the foreign project reads only its own logs', async () => {
+  test('the foreign workflow reads only its own logs', async () => {
     const res = await read_logs({}, foreign_id);
     expect(res.data!.logs.map((log) => log.body)).toEqual(['foreign', 'foreign trace']);
   });
 
-  test('a project with no logs returns an empty list', async () => {
-    const { project_id: empty_id } = await create_project(token, 'Empty Logs');
+  test('a workflow with no logs returns an empty list', async () => {
+    const { workflow_id: empty_id } = await create_workflow(token, 'Empty Logs');
     const res = await read_logs({}, empty_id);
-    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, logs: [] });
+    expect(res.data).toEqual({ workflow_id: empty_id, ...ONE_DAY_RANGE, logs: [] });
   });
 
   test('a limit outside 1..500 is rejected by validation (422)', async () => {
@@ -710,41 +713,41 @@ describe('GET /projects/:project_id/monitoring/logs', () => {
   });
 });
 
-describe('GET /projects/:project_id/monitoring/logs/sources', () => {
+describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
   test('agents with their replicas, both sorted, scoped, with an unknown fallback', async () => {
-    const { project_id } = await create_project(token, 'Sources Project');
-    const { project_id: foreign_id } = await create_project(token, 'Foreign Sources');
+    const { workflow_id } = await create_workflow(token, 'Sources Workflow');
+    const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Sources');
     const agent = (name: string, id: string) => ({
       'canyonos.agent.name': name,
       'canyonos.agent.id': id,
     });
 
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'a', attributes: agent('Risk', 'r-0') });
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'b', attributes: agent('Price', 'p-1') });
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'c', attributes: agent('Price', 'p-0') });
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'd', attributes: agent('Price', 'p-0') });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'a', attributes: agent('Risk', 'r-0') });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'b', attributes: agent('Price', 'p-1') });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'c', attributes: agent('Price', 'p-0') });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'd', attributes: agent('Price', 'p-0') });
     await write_log({
-      project_id,
+      workflow_id,
       ms_ago: HOUR_MS,
       body: 'e',
       attributes: { 'canyonos.agent.id': 'solo-0' },
     });
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'f', service_name: 'svc-a' });
-    await write_log({ project_id, ms_ago: HOUR_MS, body: 'g' });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'f', service_name: 'svc-a' });
+    await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'g' });
     await write_log({
-      project_id: foreign_id,
+      workflow_id: foreign_id,
       ms_ago: HOUR_MS,
       body: 'x',
       attributes: agent('Foreign', 'f-0'),
     });
 
-    const res = await api.projects[project_id]!.monitoring.logs.sources.get({
+    const res = await api.workflows[workflow_id]!.monitoring.logs.sources.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       sources: [
         { agent: 'Price', replicas: ['p-0', 'p-1'] },
@@ -756,18 +759,18 @@ describe('GET /projects/:project_id/monitoring/logs/sources', () => {
     });
   });
 
-  test('a project with no logs has no sources', async () => {
-    const { project_id } = await create_project(token, 'Empty Sources');
-    const res = await api.projects[project_id]!.monitoring.logs.sources.get({
+  test('a workflow with no logs has no sources', async () => {
+    const { workflow_id } = await create_workflow(token, 'Empty Sources');
+    const res = await api.workflows[workflow_id]!.monitoring.logs.sources.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
-    expect(res.data).toEqual({ project_id, ...SEVEN_DAY_RANGE, sources: [] });
+    expect(res.data).toEqual({ workflow_id, ...SEVEN_DAY_RANGE, sources: [] });
   });
 });
 
-describe('GET /projects/:project_id/monitoring/llm', () => {
-  let project_id: string;
+describe('GET /workflows/:workflow_id/monitoring/llm', () => {
+  let workflow_id: string;
 
   const first_call_attributes = {
     [GEN_AI.REQUEST_MODEL]: 'gpt-x',
@@ -780,10 +783,10 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
   const second_call_attributes = { [GEN_AI.REQUEST_MODEL]: 'claude-y' };
 
   beforeAll(async () => {
-    ({ project_id } = await create_project(token, 'LLM Project'));
-    const { project_id: foreign_id } = await create_project(token, 'Foreign LLM');
+    ({ workflow_id } = await create_workflow(token, 'LLM Workflow'));
+    const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign LLM');
 
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'llm-1',
       trace_id: 'llm-trace-1',
       name: 'quote',
@@ -793,7 +796,7 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
       input: 'price this',
       output: '42',
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'llm-2',
       trace_id: 'llm-trace-2',
       name: 'assess',
@@ -803,7 +806,7 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
       status_message: 'rate limited',
       attributes: second_call_attributes,
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'llm-harness',
       trace_id: 'llm-trace-1',
       ms_ago: 0.5 * HOUR_MS,
@@ -818,14 +821,14 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
     });
   });
 
-  test('only model spans of the project, newest first, with usage mapped', async () => {
-    const res = await api.projects[project_id]!.monitoring.llm.get({
+  test('only model spans of the workflow, newest first, with usage mapped', async () => {
+    const res = await api.workflows[workflow_id]!.monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       calls: [
         {
@@ -844,7 +847,7 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
           span_id: 'llm-1',
           input: 'price this',
           output: '42',
-          attributes: { [PROJECT_ID_ATTRIBUTE]: project_id, ...first_call_attributes },
+          attributes: { [WORKFLOW_ID_ATTRIBUTE]: workflow_id, ...first_call_attributes },
         },
         {
           at: at_ago(2 * HOUR_MS),
@@ -862,44 +865,44 @@ describe('GET /projects/:project_id/monitoring/llm', () => {
           span_id: 'llm-2',
           input: null,
           output: null,
-          attributes: { [PROJECT_ID_ATTRIBUTE]: project_id, ...second_call_attributes },
+          attributes: { [WORKFLOW_ID_ATTRIBUTE]: workflow_id, ...second_call_attributes },
         },
       ],
     });
   });
 
   test('limit keeps the newest calls', async () => {
-    const res = await api.projects[project_id]!.monitoring.llm.get({
+    const res = await api.workflows[workflow_id]!.monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
     expect(res.data!.calls.map((call) => call.span_id)).toEqual(['llm-1']);
   });
 
-  test('a project with no model spans returns no calls', async () => {
-    const { project_id: empty_id } = await create_project(token, 'Empty LLM');
-    const res = await api.projects[empty_id]!.monitoring.llm.get({
+  test('a workflow with no model spans returns no calls', async () => {
+    const { workflow_id: empty_id } = await create_workflow(token, 'Empty LLM');
+    const res = await api.workflows[empty_id]!.monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
-    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, calls: [] });
+    expect(res.data).toEqual({ workflow_id: empty_id, ...ONE_DAY_RANGE, calls: [] });
   });
 });
 
-describe('GET /projects/:project_id/monitoring/traces', () => {
-  let project_id: string;
+describe('GET /workflows/:workflow_id/monitoring/traces', () => {
+  let workflow_id: string;
 
   /**
    * `tr-a` (3h): root `handle` 4000ms with a failed `call-llm` at +1000ms and `fetch` at +2000ms.
    * `tr-c` (2h): one span. `tr-b` (1h): one span whose parent id is stored empty.
    */
   beforeAll(async () => {
-    ({ project_id } = await create_project(token, 'Traces Project'));
-    const { project_id: foreign_id } = await create_project(token, 'Foreign Traces');
+    ({ workflow_id } = await create_workflow(token, 'Traces Workflow'));
+    const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Traces');
     const agent = (id: string) => ({ [GEN_AI.AGENT_ID]: id });
     const start = 3 * HOUR_MS;
 
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'tr-a-root',
       trace_id: 'tr-a',
       name: 'handle',
@@ -907,7 +910,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       duration_ms: 4000,
       attributes: agent('price-0'),
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'tr-a-llm',
       trace_id: 'tr-a',
       parent_span_id: 'tr-a-root',
@@ -918,7 +921,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       status_message: 'llm down',
       attributes: agent('risk-0'),
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'tr-a-fetch',
       trace_id: 'tr-a',
       parent_span_id: 'tr-a-root',
@@ -927,7 +930,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       duration_ms: 500,
       attributes: agent('price-0'),
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'tr-c',
       trace_id: 'tr-c',
       name: 'third',
@@ -935,7 +938,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       duration_ms: 300,
       attributes: agent('advisor-0'),
     });
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'tr-b',
       trace_id: 'tr-b',
       parent_span_id: '',
@@ -952,13 +955,13 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   });
 
   test('traces newest first, each with its spans in start order', async () => {
-    const res = await api.projects[project_id]!.monitoring.traces.get({
+    const res = await api.workflows[workflow_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       traces: [
         {
@@ -1057,7 +1060,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   });
 
   test('a model span carries its call details, any other span null, and the trace sums every cost', async () => {
-    const { project_id: llm_id } = await create_project(token, 'Traces LLM');
+    const { workflow_id: llm_id } = await create_workflow(token, 'Traces LLM');
     await write_span(llm_id, {
       span_id: 'tr-llm-root',
       trace_id: 'tr-llm',
@@ -1083,7 +1086,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       output: 'here is the plan',
     });
 
-    const res = await api.projects[llm_id]!.monitoring.traces.get({
+    const res = await api.workflows[llm_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -1107,7 +1110,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   });
 
   test('a trace whose spans report zero cost totals 0, not null', async () => {
-    const { project_id: free_id } = await create_project(token, 'Traces Zero Cost');
+    const { workflow_id: free_id } = await create_workflow(token, 'Traces Zero Cost');
     await write_span(free_id, {
       span_id: 'tr-free',
       trace_id: 'tr-free',
@@ -1117,7 +1120,7 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
       attributes: { [GEN_AI.USAGE_COST]: 0 },
     });
 
-    const res = await api.projects[free_id]!.monitoring.traces.get({
+    const res = await api.workflows[free_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -1127,64 +1130,64 @@ describe('GET /projects/:project_id/monitoring/traces', () => {
   });
 
   test('limit counts traces, not spans', async () => {
-    const res = await api.projects[project_id]!.monitoring.traces.get({
+    const res = await api.workflows[workflow_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
     expect(res.data!.traces.map((trace) => trace.trace_id)).toEqual(['tr-b']);
 
-    const oldest = await api.projects[project_id]!.monitoring.traces.get({
+    const oldest = await api.workflows[workflow_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 3 },
     });
     expect(oldest.data!.traces.at(-1)!.spans).toHaveLength(3);
   });
 
-  test('a project with no spans returns no traces', async () => {
-    const { project_id: empty_id } = await create_project(token, 'Empty Traces');
-    const res = await api.projects[empty_id]!.monitoring.traces.get({
+  test('a workflow with no spans returns no traces', async () => {
+    const { workflow_id: empty_id } = await create_workflow(token, 'Empty Traces');
+    const res = await api.workflows[empty_id]!.monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
-    expect(res.data).toEqual({ project_id: empty_id, ...ONE_DAY_RANGE, traces: [] });
+    expect(res.data).toEqual({ workflow_id: empty_id, ...ONE_DAY_RANGE, traces: [] });
   });
 });
 
-describe('GET /projects/:project_id/monitoring/errors/summary', () => {
+describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
   const error_log = (
-    project_id: string | null,
+    workflow_id: string | null,
     body: string,
     attributes: Record<string, unknown>,
     severity: Pick<LogFixture, 'severity_text' | 'severity_number'> = { severity_number: 17 }
-  ) => write_log({ project_id, ms_ago: HOUR_MS, body, attributes, ...severity });
+  ) => write_log({ workflow_id, ms_ago: HOUR_MS, body, attributes, ...severity });
 
   test('error logs grouped by exception type and by agent, both sorted', async () => {
-    const { project_id } = await create_project(token, 'Errors Project');
-    const { project_id: foreign_id } = await create_project(token, 'Foreign Errors');
+    const { workflow_id } = await create_workflow(token, 'Errors Workflow');
+    const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Errors');
     const price = { 'canyonos.agent.name': 'PriceAgent' };
     const risk = { 'canyonos.agent.id': 'risk-0' };
 
     for (const body of ['v1', 'v2', 'v3']) {
-      await error_log(project_id, body, { ...price, 'exception.type': 'ValueError' });
+      await error_log(workflow_id, body, { ...price, 'exception.type': 'ValueError' });
     }
-    await error_log(project_id, 'k', { ...risk, 'exception.type': 'KeyError' });
+    await error_log(workflow_id, 'k', { ...risk, 'exception.type': 'KeyError' });
     await error_log(
-      project_id,
+      workflow_id,
       't',
       { ...risk, 'exception.type': 'TimeoutError' },
       { severity_text: 'FATAL' }
     );
-    await error_log(project_id, 'u', {});
-    await error_log(project_id, 'info', { 'exception.type': 'Ignored' }, { severity_number: 9 });
+    await error_log(workflow_id, 'u', {});
+    await error_log(workflow_id, 'info', { 'exception.type': 'Ignored' }, { severity_number: 9 });
     await error_log(foreign_id, 'foreign', { 'exception.type': 'ForeignError' });
 
-    const res = await api.projects[project_id]!.monitoring.errors.summary.get({
+    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       total: 6,
       by_type: [
@@ -1202,11 +1205,11 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
   });
 
   test('each grouping is capped at ten groups while total counts every error', async () => {
-    const { project_id } = await create_project(token, 'Many Errors');
+    const { workflow_id } = await create_workflow(token, 'Many Errors');
     const types = Array.from({ length: 12 }, (_, i) => `E${String(i + 1).padStart(2, '0')}`);
-    for (const type of types) await error_log(project_id, type, { 'exception.type': type });
+    for (const type of types) await error_log(workflow_id, type, { 'exception.type': type });
 
-    const res = await api.projects[project_id]!.monitoring.errors.summary.get({
+    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1215,14 +1218,14 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
     expect(res.data!.by_agent).toEqual([{ key: 'unknown', count: 12 }]);
   });
 
-  test('a project with no errors returns an empty summary', async () => {
-    const { project_id } = await create_project(token, 'No Errors');
-    const res = await api.projects[project_id]!.monitoring.errors.summary.get({
+  test('a workflow with no errors returns an empty summary', async () => {
+    const { workflow_id } = await create_workflow(token, 'No Errors');
+    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       total: 0,
       by_type: [],
@@ -1231,7 +1234,7 @@ describe('GET /projects/:project_id/monitoring/errors/summary', () => {
   });
 });
 
-describe('GET /projects/:project_id/monitoring/resources', () => {
+describe('GET /workflows/:workflow_id/monitoring/resources', () => {
   /**
    * Machines: `host-b` CPU 80 (1.5h); `host-a` CPU 20 (3.5h) and 40 (1.5h), memory 70 (1.5h);
    * `svc-m` (no host name) disk 10 (1.5h). Agents from span CPU, keyed on the agent that names the
@@ -1239,29 +1242,39 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
    * earliest reading is 3.5h ago, so the grid opens there.
    */
   test('machines and agents with their stats on a grid trimmed to the first reading', async () => {
-    const { project_id } = await create_project(token, 'Resources Project');
-    const { project_id: foreign_id } = await create_project(token, 'Foreign Resources');
+    const { workflow_id } = await create_workflow(token, 'Resources Workflow');
+    const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Resources');
     const { cpu, memory, disk } = MACHINE_UTILIZATION_METRICS;
     const first = 3.5 * HOUR_MS;
     const recent = 1.5 * HOUR_MS;
     const middle = 2.5 * HOUR_MS;
 
-    await write_metric(project_id, { metric_name: cpu, ms_ago: first, value: 20, host: 'host-a' });
-    await write_metric(project_id, { metric_name: cpu, ms_ago: recent, value: 40, host: 'host-a' });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, { metric_name: cpu, ms_ago: first, value: 20, host: 'host-a' });
+    await write_metric(workflow_id, {
+      metric_name: cpu,
+      ms_ago: recent,
+      value: 40,
+      host: 'host-a',
+    });
+    await write_metric(workflow_id, {
       metric_name: memory,
       ms_ago: recent,
       value: 70,
       host: 'host-a',
     });
-    await write_metric(project_id, { metric_name: cpu, ms_ago: recent, value: 80, host: 'host-b' });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, {
+      metric_name: cpu,
+      ms_ago: recent,
+      value: 80,
+      host: 'host-b',
+    });
+    await write_metric(workflow_id, {
       metric_name: disk,
       ms_ago: recent,
       value: 10,
       service_name: 'svc-m',
     });
-    await write_metric(project_id, {
+    await write_metric(workflow_id, {
       metric_name: 'canyonos.machine.network.utilization',
       ms_ago: recent,
       value: 5,
@@ -1276,7 +1289,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
       ms_ago: number,
       value: number
     ) =>
-      write_span(project_id, {
+      write_span(workflow_id, {
         span_id,
         trace_id: span_id,
         name,
@@ -1287,7 +1300,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
     await cpu_span('res-price-1', 'Price.quote', 'price-0', middle, 25);
     await cpu_span('res-price-2', 'Price.requote', 'price-1', recent, 35);
     await cpu_span('res-risk-1', 'Risk.assess', 'risk-0', recent, 50);
-    await write_span(project_id, {
+    await write_span(workflow_id, {
       span_id: 'res-no-cpu',
       trace_id: 'res-no-cpu',
       ms_ago: 5 * HOUR_MS,
@@ -1295,7 +1308,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
       attributes: { [GEN_AI.AGENT_ID]: 'idle-0' },
     });
 
-    const res = await api.projects[project_id]!.monitoring.resources.get({
+    const res = await api.workflows[workflow_id]!.monitoring.resources.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1314,7 +1327,7 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
     ) => ({ resource, values: grid_values(grid, null, points), ...stats });
 
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       ...ONE_DAY_RANGE,
       bucket_seconds: SECONDS_PER_HOUR,
       bucket_start_ats: grid.bucket_start_ats,
@@ -1370,16 +1383,16 @@ describe('GET /projects/:project_id/monitoring/resources', () => {
     });
   });
 
-  test('a project with no readings keeps the full grid', async () => {
-    const { project_id } = await create_project(token, 'Empty Resources');
+  test('a workflow with no readings keeps the full grid', async () => {
+    const { workflow_id } = await create_workflow(token, 'Empty Resources');
     for (const range of [ONE_DAY_RANGE, SEVEN_DAY_RANGE]) {
-      const res = await api.projects[project_id]!.monitoring.resources.get({
+      const res = await api.workflows[workflow_id]!.monitoring.resources.get({
         $headers: bearer(token),
         $query: range,
       });
       expect(res.error).toBeNull();
       expect(res.data).toEqual({
-        project_id,
+        workflow_id,
         ...range,
         bucket_seconds: res.data!.bucket_seconds,
         bucket_start_ats: res.data!.bucket_start_ats,
@@ -1409,7 +1422,7 @@ const sample = (
 
 // Replica freshness is judged against now(), not the frozen BASE_MS the other fixtures share.
 async function write_replica_samples(
-  project_id: string,
+  workflow_id: string,
   samples: readonly ReplicaSample[]
 ): Promise<void> {
   const now_ms = Date.now();
@@ -1417,7 +1430,7 @@ async function write_replica_samples(
     samples.map(({ agent, replica, metric, value, ms_ago }) => ({
       service_name: agent,
       resource_attributes: {
-        [RESOURCE_PROJECT_ATTRIBUTE]: project_id,
+        [RESOURCE_WORKFLOW_ATTRIBUTE]: workflow_id,
         ...(replica === null ? {} : { 'service.instance.id': replica }),
       },
       metric_name: metric,
@@ -1428,13 +1441,13 @@ async function write_replica_samples(
   );
 }
 
-describe('GET /projects/:project_id/monitoring/replicas', () => {
+describe('GET /workflows/:workflow_id/monitoring/replicas', () => {
   test('lists identified replicas whose latest up sample is fresh and 1, with their load and drain state', async () => {
-    const { project_id } = await create_project(token, 'Replicas Project');
-    const { project_id: other_project_id } = await create_project(token, 'Foreign Replicas');
+    const { workflow_id } = await create_workflow(token, 'Replicas Workflow');
+    const { workflow_id: other_workflow_id } = await create_workflow(token, 'Foreign Replicas');
     const stale_ms = (REPLICA_UP_SECONDS + 30) * 1000;
 
-    await write_replica_samples(project_id, [
+    await write_replica_samples(workflow_id, [
       sample('Planner', 'planner-0', AGENT_UP_METRIC, 0, 10_000),
       sample('Planner', 'planner-0', AGENT_UP_METRIC, 1, 1_000),
       sample('Planner', 'planner-0', QUEUE_LENGTH_METRIC, 9, 8_000),
@@ -1452,17 +1465,17 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
       sample('Worker', 'worker-1', AGENT_DRAINING_METRIC, 0, 8_000),
       sample('Worker', 'worker-1', AGENT_DRAINING_METRIC, 1, 1_000),
     ]);
-    await write_replica_samples(other_project_id, [
+    await write_replica_samples(other_workflow_id, [
       sample('Planner', 'foreign-0', AGENT_UP_METRIC, 1, 1_000),
     ]);
 
-    const res = await api.projects[project_id]!.monitoring.replicas.get({
+    const res = await api.workflows[workflow_id]!.monitoring.replicas.get({
       $headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       replicas: [
         {
           agent: 'Planner',
@@ -1489,15 +1502,15 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
     });
   });
 
-  test('a project with no replica samples lists no replicas', async () => {
-    const { project_id } = await create_project(token, 'Empty Replicas');
+  test('a workflow with no replica samples lists no replicas', async () => {
+    const { workflow_id } = await create_workflow(token, 'Empty Replicas');
 
-    const res = await api.projects[project_id]!.monitoring.replicas.get({
+    const res = await api.workflows[workflow_id]!.monitoring.replicas.get({
       $headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
-    expect(res.data).toEqual({ project_id, replicas: [] });
+    expect(res.data).toEqual({ workflow_id, replicas: [] });
   });
 });
 
@@ -1505,12 +1518,12 @@ describe('GET /projects/:project_id/monitoring/replicas', () => {
 // pin only that the scan goes through an index bounded by the time range.
 describe('monitoring metric reads use their indexes', () => {
   test('replicas reads otel_metrics through its index', async () => {
-    const { project_id } = await create_project(token, 'Indexed Replicas');
-    await write_replica_samples(project_id, [
+    const { workflow_id } = await create_workflow(token, 'Indexed Replicas');
+    await write_replica_samples(workflow_id, [
       sample('Planner', 'planner-0', AGENT_UP_METRIC, 1, 1_000),
     ]);
 
-    const plan = await explain_without_seqscan(replicas_sql(project_id));
+    const plan = await explain_without_seqscan(replicas_sql(workflow_id));
 
     expect(table_scans(plan, 'otel_metrics')).toEqual([
       { index: expect.any(String), cond: expect.stringContaining('(time_unix_nano >=') },
@@ -1518,11 +1531,11 @@ describe('monitoring metric reads use their indexes', () => {
   });
 
   test('series and resources read rollups through their index', async () => {
-    const { project_id } = await create_project(token, 'Indexed Rollups');
+    const { workflow_id } = await create_workflow(token, 'Indexed Rollups');
 
     for (const statement of [
-      series_sql(project_id, ONE_DAY_RANGE),
-      resource_utilization_sql(project_id, ONE_DAY_RANGE),
+      series_sql(workflow_id, ONE_DAY_RANGE),
+      resource_utilization_sql(workflow_id, ONE_DAY_RANGE),
     ]) {
       const plan = await explain_without_seqscan(statement);
 
@@ -1537,15 +1550,15 @@ describe('monitoring metric reads use their indexes', () => {
   });
 
   test('series and resources on a one-minute grid read raw ticks through their index', async () => {
-    const { project_id } = await create_project(token, 'Indexed Raw Reads');
+    const { workflow_id } = await create_workflow(token, 'Indexed Raw Reads');
     const range = {
       from: new Date(RANGE_END_MS - 15 * 60_000).toISOString(),
       to: new Date(RANGE_END_MS).toISOString(),
     };
 
     for (const statement of [
-      series_sql(project_id, range),
-      resource_utilization_sql(project_id, range),
+      series_sql(workflow_id, range),
+      resource_utilization_sql(workflow_id, range),
     ]) {
       const plan = await explain_without_seqscan(statement);
 
@@ -1573,24 +1586,24 @@ describe('metric reads after raw retention', () => {
   const first_ms_ago = readings[0]![0];
   const weighted_average = (60 + 40 + 10) / 3;
 
-  let project_id: string;
+  let workflow_id: string;
 
   beforeAll(async () => {
-    ({ project_id } = await create_project(token, 'Retained Monitoring'));
+    ({ workflow_id } = await create_workflow(token, 'Retained Monitoring'));
     for (const [ms_ago, value] of readings)
-      await write_metric(project_id, { metric_name: SATURATION_METRIC, ms_ago, value, host });
+      await write_metric(workflow_id, { metric_name: SATURATION_METRIC, ms_ago, value, host });
 
-    // What the retention prune does, scoped to this project: the shared database has other tests' ticks.
+    // What the retention prune does, scoped to this workflow: the shared database has other tests' ticks.
     const deleted = await db.execute(sql`
       delete from ${otelMetrics}
-      where (resource_attributes ->> ${RESOURCE_PROJECT_ATTRIBUTE}) = ${project_id}
+      where (resource_attributes ->> ${RESOURCE_WORKFLOW_ATTRIBUTE}) = ${workflow_id}
         and time_unix_nano < ${nanos_ago(DAY_MS)}
     `);
     expect(deleted.count).toBe(readings.length);
   });
 
   test('series and resources on a 7-day range still show the readings', async () => {
-    const series = await api.projects[project_id]!.monitoring.series.get({
+    const series = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
@@ -1600,7 +1613,7 @@ describe('metric reads after raw retention', () => {
       grid_values(series.data!, null, [[first_ms_ago, weighted_average]])
     );
 
-    const resources = await api.projects[project_id]!.monitoring.resources.get({
+    const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
@@ -1628,7 +1641,7 @@ describe('metric reads after raw retention', () => {
       to: new Date(bucket_ms + 15 * 60_000).toISOString(),
     };
 
-    const series = await api.projects[project_id]!.monitoring.series.get({
+    const series = await api.workflows[workflow_id]!.monitoring.series.get({
       $headers: bearer(token),
       $query: range,
     });
@@ -1637,7 +1650,7 @@ describe('metric reads after raw retention', () => {
     const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
     expect(saturation.values).toEqual(Array.from({ length: 15 }, () => null));
 
-    const resources = await api.projects[project_id]!.monitoring.resources.get({
+    const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
       $headers: bearer(token),
       $query: range,
     });
@@ -1647,7 +1660,7 @@ describe('metric reads after raw retention', () => {
 });
 
 test('an unaligned from counts the five-minute bucket that contains it', async () => {
-  const { project_id } = await create_project(token, 'Unaligned Monitoring');
+  const { workflow_id } = await create_workflow(token, 'Unaligned Monitoring');
   const base_ms = ALIGNED_BASE_MS;
   const from_ms = base_ms + 150_000;
   const range = {
@@ -1659,7 +1672,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
     [3, 40],
   ] as const) {
     await ingest_gauge({
-      project_id,
+      workflow_id,
       metric_name: SATURATION_METRIC,
       time_unix_nano: BigInt(base_ms + minute * 60_000) * NANOS_PER_MS,
       value,
@@ -1668,7 +1681,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
     });
   }
 
-  const series = await api.projects[project_id]!.monitoring.series.get({
+  const series = await api.workflows[workflow_id]!.monitoring.series.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1678,7 +1691,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
   const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
   expect(saturation.values[0]).toBe(30);
 
-  const resources = await api.projects[project_id]!.monitoring.resources.get({
+  const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1692,7 +1705,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
 // that opens five minutes later, so a reading after `to` in that rollup bucket shares the last
 // grid bucket with one before it.
 test('an unaligned to counts the five-minute bucket that contains it', async () => {
-  const { project_id } = await create_project(token, 'Unaligned To Monitoring');
+  const { workflow_id } = await create_workflow(token, 'Unaligned To Monitoring');
   const base_ms = ALIGNED_BASE_MS;
   const to_ms = base_ms + 6 * HOUR_MS + 450_000;
   const range = {
@@ -1704,7 +1717,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
     [368, 80],
   ] as const) {
     await ingest_gauge({
-      project_id,
+      workflow_id,
       metric_name: SATURATION_METRIC,
       time_unix_nano: BigInt(base_ms + minute * 60_000) * NANOS_PER_MS,
       value,
@@ -1713,7 +1726,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
     });
   }
 
-  const series = await api.projects[project_id]!.monitoring.series.get({
+  const series = await api.workflows[workflow_id]!.monitoring.series.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1723,7 +1736,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
   const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
   expect(saturation.values.at(-1)).toBe(50);
 
-  const resources = await api.projects[project_id]!.monitoring.resources.get({
+  const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1733,71 +1746,67 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
   expect(cpu.values.at(-1)).toBe(50);
 });
 
-describe('GET /projects/:project_id/monitoring/endpoint', () => {
+describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
   beforeEach(reset_controller);
 
-  const RECORDED_ENDPOINT = {
+  // The workflow's own route, and one of another workflow of its workflow group.
+  const recorded_endpoint = (workflow_id: string) => ({
     public_host: '203.0.113.7',
     api_port: '8080',
     routes: JSON.stringify([
       {
-        project: 'app',
+        workflow: 'app',
+        workflow_id,
         agent: 'Workflow',
         method: 'main',
         arguments: ['query', 'language'],
         url: 'http://203.0.113.7:8080/app/Workflow/main',
       },
       {
-        project: 'ops',
+        workflow: 'ops',
+        workflow_id: crypto.randomUUID(),
         agent: 'Support',
         method: 'run',
         arguments: [],
         url: 'http://203.0.113.7:8080/ops/Support/run',
       },
     ]),
-  };
+  });
 
-  test('a project the controller is not running is 404 canyonos.project_not_running', async () => {
-    const { project_id } = await create_project(token, 'Idle Endpoint');
+  test('a workflow the controller is not running is 404 canyonos.workflow_not_running', async () => {
+    const { workflow_id } = await create_workflow(token, 'Idle Endpoint');
 
-    const res = await api.projects[project_id]!.monitoring.endpoint.get({
+    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(res.error?.status as number).toBe(404);
-    expect((res.error?.value as { error?: string })?.error).toBe('canyonos.project_not_running');
+    expect((res.error?.value as { error?: string })?.error).toBe('canyonos.workflow_not_running');
   });
 
   test('returns the endpoint the controller recorded, with its status url and an example body per route', async () => {
-    const { project_id } = await create_project(token, 'Endpoint Project');
-    await seed_running_project(project_id, { prompts: {} });
-    await seed_endpoint(RECORDED_ENDPOINT);
+    const { workflow_id } = await create_workflow(token, 'Endpoint Workflow');
+    await seed_running_workflow(workflow_id, { prompts: {} });
+    await seed_endpoint(recorded_endpoint(workflow_id));
 
-    const res = await api.projects[project_id]!.monitoring.endpoint.get({
+    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
-      project_id,
+      workflow_id,
       endpoint: {
         status_url: 'http://203.0.113.7:8080/status',
         routes: [
           {
             url: 'http://203.0.113.7:8080/app/Workflow/main',
-            project: 'app',
+            workflow: 'app',
+            workflow_id: workflow_id,
             agent: 'Workflow',
             method: 'main',
             arguments: ['query', 'language'],
             example_body: { query: 'your query', language: 'your query' },
-          },
-          {
-            url: 'http://203.0.113.7:8080/ops/Support/run',
-            project: 'ops',
-            agent: 'Support',
-            method: 'run',
-            arguments: [],
-            example_body: {},
           },
         ],
       },
@@ -1805,48 +1814,48 @@ describe('GET /projects/:project_id/monitoring/endpoint', () => {
   });
 
   test('a running controller with no endpoint has none', async () => {
-    const { project_id } = await create_project(token, 'No Endpoint Project');
-    await seed_running_project(project_id, { prompts: {} });
+    const { workflow_id } = await create_workflow(token, 'No Endpoint Workflow');
+    await seed_running_workflow(workflow_id, { prompts: {} });
 
-    const res = await api.projects[project_id]!.monitoring.endpoint.get({
+    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(res.error).toBeNull();
-    expect(res.data).toEqual({ project_id, endpoint: null });
+    expect(res.data).toEqual({ workflow_id, endpoint: null });
   });
 
   test('a partial or malformed endpoint record reads as no endpoint', async () => {
-    const { project_id } = await create_project(token, 'Malformed Endpoint Project');
-    await seed_running_project(project_id, { prompts: {} });
-    await seed_endpoint({ ...RECORDED_ENDPOINT, routes: 'not json' });
+    const { workflow_id } = await create_workflow(token, 'Malformed Endpoint Workflow');
+    await seed_running_workflow(workflow_id, { prompts: {} });
+    await seed_endpoint({ ...recorded_endpoint(workflow_id), routes: 'not json' });
 
-    const malformed = await api.projects[project_id]!.monitoring.endpoint.get({
+    const malformed = await api.workflows[workflow_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(malformed.error).toBeNull();
-    expect(malformed.data).toEqual({ project_id, endpoint: null });
+    expect(malformed.data).toEqual({ workflow_id, endpoint: null });
 
     await reset_controller();
-    await seed_running_project(project_id, { prompts: {} });
+    await seed_running_workflow(workflow_id, { prompts: {} });
     await seed_endpoint({ public_host: '203.0.113.7', api_port: '8080' });
 
-    const partial = await api.projects[project_id]!.monitoring.endpoint.get({
+    const partial = await api.workflows[workflow_id]!.monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
     expect(partial.error).toBeNull();
-    expect(partial.data).toEqual({ project_id, endpoint: null });
+    expect(partial.data).toEqual({ workflow_id, endpoint: null });
   });
 });
 
 describe('monitoring access', () => {
-  test('every monitoring route rejects a caller without the API key and an unknown project', async () => {
-    const { project_id } = await create_project(token, 'Access Monitoring');
+  test('every monitoring route rejects a caller without the API key and an unknown workflow', async () => {
+    const { workflow_id } = await create_workflow(token, 'Access Monitoring');
     const unknown = '00000000-0000-4000-8000-000000000000';
     const routes = (id: string, headers: Record<string, string> = {}) => {
-      const monitoring = api.projects[id]!.monitoring;
+      const monitoring = api.workflows[id]!.monitoring;
       const read = { $headers: headers, $query: ONE_DAY_RANGE };
       const list = { ...read, $query: { ...read.$query, limit: 200 } };
       return Promise.all([
@@ -1862,10 +1871,10 @@ describe('monitoring access', () => {
       ]);
     };
 
-    for (const res of await routes(project_id)) expect(res.error?.status as number).toBe(401);
+    for (const res of await routes(workflow_id)) expect(res.error?.status as number).toBe(401);
     for (const res of await routes(unknown, bearer(token))) {
       expect(res.error?.status as number).toBe(404);
-      expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
+      expect((res.error?.value as { error?: string })?.error).toBe('workflows.not_found');
     }
   });
 });
@@ -1880,14 +1889,14 @@ describe('monitoring endpoints read exactly [from, to)', () => {
   const list_query = { ...range, limit: 200, errors_only: false };
   const nanos = (minutes: number): bigint => BigInt(start_ms + minutes * minute_ms) * NANOS_PER_MS;
 
-  let project_id: string;
+  let workflow_id: string;
 
-  const monitoring = () => api.projects[project_id]!.monitoring;
+  const monitoring = () => api.workflows[workflow_id]!.monitoring;
 
   async function write_range_log(minutes: number, severity_text: string, body: string) {
     await db.insert(otelLogs).values({
       service_name: 'Researcher',
-      resource_attributes: { [RESOURCE_PROJECT_ATTRIBUTE]: project_id },
+      resource_attributes: { [RESOURCE_WORKFLOW_ATTRIBUTE]: workflow_id },
       time_unix_nano: nanos(minutes),
       observed_time_unix_nano: nanos(minutes),
       severity_text,
@@ -1899,7 +1908,7 @@ describe('monitoring endpoints read exactly [from, to)', () => {
 
   async function write_range_cpu(minutes: number, value: number) {
     await ingest_gauge({
-      project_id,
+      workflow_id,
       metric_name: SATURATION_METRIC,
       time_unix_nano: nanos(minutes),
       value,
@@ -1909,9 +1918,9 @@ describe('monitoring endpoints read exactly [from, to)', () => {
   }
 
   beforeAll(async () => {
-    ({ project_id } = await create_project(token, 'Ranged Monitoring'));
+    ({ workflow_id } = await create_workflow(token, 'Ranged Monitoring'));
 
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'range-in-llm',
       trace_id: 'range-trace-in',
       name: 'Researcher.answer',
@@ -1920,20 +1929,20 @@ describe('monitoring endpoints read exactly [from, to)', () => {
       input_tokens: 10,
       output_tokens: 5,
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'range-in-failed',
       trace_id: 'range-trace-failed',
       name: 'Researcher.search',
       start_time_unix_nano: nanos(7),
       failed: true,
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'range-before',
       trace_id: 'range-trace-before',
       start_time_unix_nano: nanos(-1),
       model: 'gpt-test',
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'range-at-end',
       trace_id: 'range-trace-at-end',
       start_time_unix_nano: nanos(60),

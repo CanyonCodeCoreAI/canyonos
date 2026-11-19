@@ -12,15 +12,15 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 ## What's in it
 
-This folder is the deployment folder: its `deployment.yaml` configures the deployment,
-and the project, `helloworld/`, holds the agent code.
+This folder is the workflow group folder: its `workflow_group.yaml` configures the workflow group,
+and the workflow, `helloworld/`, holds the agent code.
 
 | File | What it does |
 |---|---|
-| `deployment.yaml` | Where the deployment runs: on this machine (`provider: local`). |
+| `workflow_group.yaml` | Where the workflow group runs: on this machine (`provider: local`). |
 | `helloworld/agents/hello_agent.py` | `HelloAgent`, with one function, `hello(name)`, that returns `"Hello, <name>! I'm the HelloAgent!"` |
 | `helloworld/agents/workflow.py` | `Workflow.main(query)` calls `HelloAgent().hello(name=query)` and returns `{"greeting": ...}` with its result. |
-| `helloworld/config/workflow_config.yaml` | What to run: the two agents, and the `endpoint` route that serves `Workflow.main` at `POST /helloworld/Workflow/main`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
+| `helloworld/config/workflow_config.yaml` | What to run: the two agents, and the `endpoint` route that serves `Workflow.main` at `POST /<workflow_id>`, automatically published on the host at `8080` or the next free port. Each agent's `functions` hold its method signatures, and its `name` must match the class name. |
 | `helloworld/config/policy.yaml` | Which callers can reach which agents. |
 
 ## Before you start
@@ -28,11 +28,11 @@ and the project, `helloworld/`, holds the agent code.
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
 - It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
-- Work on a copy. Deploying writes into this folder: it adds a `deployment_id` to `deployment.yaml` and fills default resources into `helloworld/config/workflow_config.yaml`.
+- Work on a copy. Deploying writes into this folder: it adds a `workflow_group_id` to `workflow_group.yaml` and fills default resources into `helloworld/config/workflow_config.yaml`.
 
 ## 1. Deploy
 
-From this folder, deploy the `helloworld` project with an API key of your choice, and
+From this folder, deploy the `helloworld` workflow with an API key of your choice, and
 run the other commands from here too. The CLI saves the key, so later deploys reuse it
 (see [API key](../../docs/guides/AUTHORIZATION.md)):
 
@@ -40,8 +40,8 @@ run the other commands from here too. The CLI saves the key, so later deploys re
 canyonos deploy helloworld --api-key <your api key>
 ```
 
-From anywhere else, name both folders: `canyonos deploy examples/helloworld/helloworld --folder examples/helloworld`.
-The dashboard names your deployment after the deployment folder, `helloworld`.
+From anywhere else, name both folders: `canyonos deploy examples/helloworld/helloworld --workflow-group examples/helloworld`.
+The dashboard names your workflow group after the workflow group folder, `helloworld`.
 
 The first run takes about a minute while it builds the images. It ends with:
 
@@ -50,7 +50,7 @@ Deploy is live
 
 Dashboard  http://127.0.0.1:8081
 
-message           curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer <your api key>" -H "Content-Type: application/json" -d '{"query": "your query"}'
+message           curl -X POST http://127.0.0.1:8080/<workflow_id> -H "Authorization: Bearer <your api key>" -H "Content-Type: application/json" -d '{"query": "your query"}'
 respond to agent  curl -X POST http://127.0.0.1:8080/answer/<request_id> -H "Authorization: Bearer <your api key>" -H "Content-Type: application/json" -d '{"input": "your answer"}'
 check result      curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
@@ -75,10 +75,11 @@ Output     {
 
 ## 3. Send a request
 
-Every request carries the API key:
+Every request carries the API key. The URL is the one the deploy printed, with this
+workflow's `workflow_id`:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+curl -X POST http://127.0.0.1:8080/<workflow_id> \
   -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" \
   -d '{"query": "World"}'
@@ -99,14 +100,14 @@ curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<req
 ```
 
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
-- The path is `/<project>/<agent>/<method>`, where the project is the project folder's name. `POST /helloworld/HelloAgent/hello` returns `404`, since only the `endpoint` routes are served.
+- The path is `/<workflow_id>`, the ID the deploy gave the `helloworld` folder; `canyonos deploy` prints it and keeps it in `workflow_group.yaml`. Only the `endpoint` route is served, so `POST /<name>/HelloAgent/hello` returns `404`.
 - A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
 - A request without the key returns `401`; see
   [Refusals](../../docs/guides/AUTHORIZATION.md#refusals).
 
 ## 4. Find it in the dashboard
 
-Open the dashboard URL, then **Deployments** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `helloworld.Workflow` call `helloworld.HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
+Open the dashboard URL, then **Workflow groups** → **helloworld** → **Per-Query view**. Your request is listed under its `request_id`, with its status and latency. On **Traces**, expand its row to see `helloworld.Workflow` call `helloworld.HelloAgent.hello`. See [Dashboard](../../docs/guides/DASHBOARD.md) for the other pages.
 
 ## 5. Try a policy rule
 
@@ -129,7 +130,7 @@ Redeploy, then send the same request. It now fails:
 A request that sends `_context` matching the admin rule still gets through:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+curl -X POST http://127.0.0.1:8080/<workflow_id> \
   -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" \
   -d '{"query": "World", "_context": {"origin": "admin"}}'
@@ -140,11 +141,11 @@ curl -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
 ## 6. Stop
 
 ```bash
-canyonos stop    # remove the deploy, and stop the dashboard if no other deployment is running
+canyonos stop    # remove the deploy, and stop the dashboard if no other workflow group is running
 canyonos clean   # also remove the agents' images
 ```
 
 ## If something goes wrong
 
-- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old deploy still holds the port, remove `api_port` under `endpoint` in `deployment.yaml` to restore automatic selection, or choose a free fixed port.
+- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old workflow group still holds the port, remove `api_port` under `endpoint` in `workflow_group.yaml` to restore automatic selection, or choose a free fixed port.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

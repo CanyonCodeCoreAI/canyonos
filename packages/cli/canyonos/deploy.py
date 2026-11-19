@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos deploy`: upload the deployment to the container's /workspace
+Logic for `canyonos deploy`: upload the workflow group to the container's /workspace
 volume (via `canyonos sync`), which has the Global Controller container build and
 deploy it. The container's `canyonos deploy` handles both the build (stubs,
 protos, Docker images) and the launch -- the CLI just ships files and shows what
-the container's /deployment says it is doing.
+the container's status says it is doing.
 
 By default only the deploy's finished steps and current step are shown; `-v`
 streams its whole log, and a failure prints the last of it and the root cause.
@@ -40,11 +40,11 @@ from canyonos.constants import (
     deployment_config_path,
     endpoint_api_port,
     load_yaml,
-    project_config_path,
-    project_folder,
     read_config,
     round_trip_yaml,
     sends_to_dashboard,
+    workflow_config_path,
+    workflow_folder,
     write_config,
 )
 from canyonos.dashboard_stack import (
@@ -67,7 +67,7 @@ from canyonos.new_app import deployment_template
 from canyonos.os_support import is_terminal
 from canyonos.resources import configure_resources
 from canyonos.serve import (
-    _register_running_project,
+    _register_running_workflows,
     _warn_if_dashboard_port_ignored,
     serve_dashboard,
 )
@@ -97,18 +97,18 @@ def _save_id(config_path, key):
 
 
 def save_deployment_config(config_path):
-    """Give the deployment a `deployment.yaml` when it has none, the starter's, which
-    sends telemetry to the local dashboard, and give it its `deployment_id`, the
-    dashboard's id for the deployment."""
+    """Give the workflow group a `workflow_group.yaml` when it has none, the starter's, which
+    sends telemetry to the local dashboard, and give it its `workflow_group_id`, the
+    dashboard's id for the workflow group."""
     if not os.path.isfile(config_path):
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(deployment_template())
-    _save_id(config_path, "deployment_id")
+    _save_id(config_path, "workflow_group_id")
 
 
-def _is_project_id(value) -> bool:
-    """True when `value` is a UUID in the form `canyonos deploy` writes `deployment_id`:
-    lowercase and hyphenated."""
+def is_workflow_id(value) -> bool:
+    """True when `value` is a UUID in the form `canyonos deploy` writes a `workflow_id`
+    or `workflow_group_id`: lowercase and hyphenated."""
     try:
         return isinstance(value, str) and value == str(uuid.UUID(value))
     except ValueError:
@@ -116,15 +116,19 @@ def _is_project_id(value) -> bool:
 
 
 def require_deployment_id(config_path):
-    """Raise when the deployment's `deployment_id` is set but is not a lowercase,
+    """Raise when the workflow group's `workflow_group_id` is set but is not a lowercase,
     hyphenated UUID, the form `save_deployment_config` writes, since the dashboard and
     the Kubernetes resource names take it as written."""
     config = read_config(config_path)
-    value = config.get("deployment_id") if isinstance(config, dict) else None
-    if not value or _is_project_id(value):
+    if isinstance(config, dict) and "deployment_id" in config:
+        raise RuntimeError(
+            f"deployment_id in {config_path} is now called workflow_group_id: rename it."
+        )
+    value = config.get("workflow_group_id") if isinstance(config, dict) else None
+    if not value or is_workflow_id(value):
         return
     raise RuntimeError(
-        f"deployment_id {value!r} in {config_path} is not a project ID: it must be a "
+        f"workflow_group_id {value!r} in {config_path} is not a valid ID: it must be a "
         "lowercase, hyphenated UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), the form "
         "`canyonos deploy` writes. Write it in that form, or delete the line and the "
         "deploy makes a new one."
@@ -141,12 +145,13 @@ def run_deploy(
     api_key=None,
     no_api_key=False,
 ):
-    """Deploy the projects in `folders` as one deployment, named after the folder this
-    runs from and configured by its `deployment.yaml`. `yes` skips the resource picker;
+    """Deploy the workflows in `folders` as one workflow group, named after the folder this
+    runs from and configured by its `workflow_group.yaml`. `yes` skips the resource picker;
     `detach` returns once the deploy started, without the dashboard. The deploy hands
     the Global Controller the hash of this machine's API key, which `api_key` sets or
     replaces and `no_api_key` removes; with no key, the endpoint checks nothing."""
-    projects = deployment.projects(folders)
+    ids = deployment.workflow_ids(folders)
+    workflows = deployment.workflow_folders(folders, ids)
     config_path = deployment_config_path()
     require_deployment_id(config_path)
     key = resolve_api_key(api_key, no_api_key)
@@ -159,11 +164,12 @@ def run_deploy(
     internal_ca.refuse_redis_that_outlived_its_ca()
 
     save_deployment_config(config_path)
-    project_configs = {
-        name: project_config_path(project_folder(folder))
-        for name, folder in projects.items()
+    deployment.save_workflows(config_path, workflows, ids)
+    workflow_configs = {
+        name: workflow_config_path(workflow_folder(folder))
+        for name, folder in workflows.items()
     }
-    if not configure_resources(project_configs, config_path, ask=not yes):
+    if not configure_resources(workflow_configs, config_path, ask=not yes):
         ui.say("Deploy cancelled.")
         return None
 
@@ -171,9 +177,9 @@ def run_deploy(
     if not kubernetes:
         run_init(banner=banner, auth_env=gc_env(key), auth_disabled=key is None)
 
-    # Upload the deployment into the container before building/deploying.
-    if not run_sync(projects, api_key_hash=hash_api_key(key)):
-        raise RuntimeError("Could not sync the deployment into the container.")
+    # Upload the workflow group into the container before building/deploying.
+    if not run_sync(workflows, api_key_hash=hash_api_key(key)):
+        raise RuntimeError("Could not sync the workflow group into the container.")
 
     state = load_state()
 
@@ -220,7 +226,7 @@ def _curl_example(url, body, keyed):
 
 def summary_body(dashboard_url, endpoint, keyed):
     """Build the deploy panel's text: the dashboard URL, a warning when the dashboard
-    is down or the project's `otel:` block leaves it out, and how to call, poll and
+    is down or the workflow group's `otel:` block leaves it out, and how to call, poll and
     answer the endpoint described by its published record, when there is one, each
     `curl` sending the API key when the deploy is `keyed`."""
     body = Text()
@@ -300,7 +306,7 @@ def _start_dashboard(key):
             same_key = dashboard_api_key_hash() == api_key_hash
         if port is not None and same_key:
             _warn_if_dashboard_port_ignored()
-            _register_running_project()
+            _register_running_workflows()
             return dashboard_url(port)
         result = serve_dashboard(api_key_hash=api_key_hash, renewed=("api",))
     except Exception as e:
@@ -318,7 +324,7 @@ def _deploy_summary(state, endpoint, serve, key):
         dashboard = dashboard_url(port) if port else None
     if endpoint is None:
         ui.warn(
-            "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
+            "Could not read the running workflow group's endpoint. Run `canyonos logs` to see why."
         )
     elif deployment.configured_target() == "kubernetes":
         endpoint = keep_endpoint_forwarded(endpoint)
@@ -344,12 +350,14 @@ def _deploy_summary(state, endpoint, serve, key):
 
 def _interrupted():
     ui.blank()
-    ui.say("Stopped monitoring log stream. Run `canyonos stop` to stop the deploy.")
+    ui.say(
+        "Stopped monitoring log stream. Run `canyonos stop` to stop the workflow group."
+    )
     ui.hint("To resubscribe to log stream run `canyonos logs`.")
 
 
 def wait_for_verdict(state, show=lambda status: None):
-    """Poll the Global Controller's /deployment about once a second, handing each answer
+    """Poll the Global Controller's status about once a second, handing each answer
     to `show`, until the deploy is up or its process has exited, so a failed deploy's
     log and root cause are complete, and return that answer. None when the container
     stops answering."""
@@ -366,7 +374,7 @@ def wait_for_verdict(state, show=lambda status: None):
 
 
 def _progress_printer(spinner):
-    """Return what `wait_for_verdict` calls with each /deployment of a quiet deploy: it
+    """Return what `wait_for_verdict` calls with each status of a quiet deploy: it
     prints each newly finished step as a ✓ line and puts what the deploy does now on
     `spinner`, or once it has printed nothing for 3 minutes, the step holding it up."""
     printed, shown = 0, "Deploying agents..."

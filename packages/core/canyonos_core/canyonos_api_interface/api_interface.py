@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """HTTP server that runs in the Global Controller container on Docker, holding its one
-deployment, and beside the operator on Kubernetes, holding every deployment there; the
-CLI uploads a deployment to it, a background loop per deployment starts, restarts,
-reloads or stops its deploy to match, and the CLI reads the deploy's status, logs and
-health from it."""
+workflow group, and beside the operator on Kubernetes, holding every workflow group
+there; the CLI uploads a workflow group to it, a background loop per workflow group
+starts, restarts, reloads or stops its deploy to match, and the CLI reads the deploy's
+status, logs and health from it."""
 
 import base64
 import hashlib
@@ -44,22 +44,22 @@ from canyonos_core.canyonos_api_interface.models import (
     TEXT,
     AgentPath,
     DashboardBody,
-    DashboardProject,
-    DeploymentBody,
-    DeploymentPath,
-    Deployments,
+    DashboardWorkflows,
     Error,
     Generation,
     Health,
     LogsQuery,
-    Project,
-    ProjectArchive,
-    ProjectPath,
-    Projects,
     ReplicaLogs,
     Status,
     TailQuery,
     Uploaded,
+    Workflow,
+    WorkflowArchive,
+    WorkflowGroupBody,
+    WorkflowGroupPath,
+    WorkflowGroups,
+    WorkflowPath,
+    Workflows,
 )
 from canyonos_core.validate import finding_text, validate_root
 from canyonos_core.workspace_upload import (
@@ -77,15 +77,15 @@ if KUBERNETES:
 else:
     from canyonos_core.canyonos_api_interface import docker as target
 
-# The deployment is uploaded here (into a named volume) by the PUT routes: its
-# deployment.yaml and a folder per project. Deploy builds and launches against it.
-# On Kubernetes each deployment has a folder in it, named by its deployment_id.
+# The workflow group is uploaded here (into a named volume) by the PUT routes: its
+# workflow_group.yaml and a folder per workflow. Deploy builds and launches against it.
+# On Kubernetes each workflow group has a folder in it, named by its workflow_group_id.
 WORKSPACE_DIR = "/workspace"
 
 # How long the upload must stay unchanged before the apply loop acts on it.
 SETTLE_SECONDS = 2
 # Not an upload, so the apply loop doesn't wait for it.
-DASHBOARD_ROUTE = "/v1/deployments/<deployment_id>/dashboard"
+DASHBOARD_ROUTE = "/v1/workflow-groups/<workflow_group_id>/dashboard"
 # Just after a redeploy the dashboard api can 5xx, reaching for the old Redis, for ~30 s.
 DASHBOARD_RETRY_SECONDS = 60
 DASHBOARD_RETRY_DELAY_SECONDS = 2
@@ -109,24 +109,24 @@ app = OpenAPI(
     validation_error_status=400,
     validation_error_model=Error,
     validation_error_callback=_bad_request,
-    # Any route answers it for a deployment_id other than this server's.
+    # Any route answers it for a workflow_group_id other than this server's.
     responses={404: Error},
 )
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
 
 @dataclass
-class _Deployment:
-    """One deployment this server holds: the folder it is uploaded to, the upload's
+class _WorkflowGroup:
+    """One workflow group this server holds: the folder it is uploaded to, the upload's
     entries and file digests, kept here, out of the user's files, the API key hash its
     endpoint checks, its upload PUTs in progress, its latest deploy's progress, and how
     far its apply loop got."""
 
     workspace: str
     name: str = ""
-    project_entries: dict = field(default_factory=dict)
-    project_digests: dict = field(default_factory=dict)
-    deployment_digests: dict = field(default_factory=dict)
+    workflow_entries: dict = field(default_factory=dict)
+    workflow_digests: dict = field(default_factory=dict)
+    workflow_group_digests: dict = field(default_factory=dict)
     auth: dict = field(default_factory=dict)
     puts_in_progress: int = 0
     generation: int = 0
@@ -139,30 +139,32 @@ class _Deployment:
     lock: Any = field(default_factory=threading.Lock)
 
 
-# By deployment_id.
-_deployments = {}
+# By workflow_group_id.
+_workflow_groups = {}
 # Held while an upload changes; notified on each change, finished PUT and applied pass.
 _changes = threading.Condition()
 
 
 @app.before_request
 def _count_put():
-    """Count an upload PUT as in progress on the deployment it names from before its
-    body is read; that deployment's apply loop waits until none is."""
-    deployment = _deployments.get((request.view_args or {}).get("deployment_id"))
+    """Count an upload PUT as in progress on the workflow group it names from before
+    its body is read; that workflow group's apply loop waits until none is."""
+    workflow_group = _workflow_groups.get(
+        (request.view_args or {}).get("workflow_group_id")
+    )
     if (
         request.method == "PUT"
         and str(request.url_rule) != DASHBOARD_ROUTE
-        and deployment is not None
+        and workflow_group is not None
     ):
         with _changes:
-            deployment.puts_in_progress += 1
-        g.counted = deployment
+            workflow_group.puts_in_progress += 1
+        g.counted = workflow_group
 
 
 @app.teardown_request
 def _uncount_put(_error):
-    """Stop counting a finished upload PUT and wake its deployment's apply loop."""
+    """Stop counting a finished upload PUT and wake its workflow group's apply loop."""
     if "counted" in g:
         with _changes:
             g.counted.puts_in_progress -= 1
@@ -172,15 +174,18 @@ def _uncount_put(_error):
 def _check_caller():
     """On Kubernetes, answer 401 unless the request's Bearer token signs a user in, and
     403 unless they may change, or for a GET read, CanyonProjects in the namespace of
-    the deployment it names, as uploaded and as a PUT of its settings would make it."""
-    deployment_id = (request.view_args or {}).get("deployment_id")
+    the workflow group it names, as uploaded and as a PUT of its settings would make
+    it."""
+    workflow_group_id = (request.view_args or {}).get("workflow_group_id")
     configs = []
-    if deployment_id in _deployments:
-        path = os.path.join(_deployments[deployment_id].workspace, DEPLOYMENT_CONFIG)
+    if workflow_group_id in _workflow_groups:
+        path = os.path.join(
+            _workflow_groups[workflow_group_id].workspace, DEPLOYMENT_CONFIG
+        )
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as f:
                 configs.append(f.read())
-    if request.endpoint == "put_deployment":
+    if request.endpoint == "put_workflow_group":
         configs.append((request.get_json(silent=True) or {}).get("config") or "")
     return check_caller(
         request.headers.get("Authorization", ""),
@@ -197,15 +202,15 @@ def _check_secret():
     if not hmac.compare_digest(sent, expected):
         return jsonify(
             {
-                "error": "Send the Authorization header saved in this deployment's "
-                "~/.canyonos/deployments/<deployment>/state.json.",
+                "error": "Send the Authorization header saved in this workflow group's "
+                "~/.canyonos/deployments/<workflow group>/state.json.",
                 "code": "unauthenticated",
             }
         ), 401
 
 
 # After `_count_put`, so a refused PUT is still counted once and uncounted once; before
-# `_refuse_other_deployments`, so who may not call learns no deployment_id.
+# `_refuse_other_workflow_groups`, so who may not call learns no workflow_group_id.
 if KUBERNETES:
     app.before_request(_check_caller)
 else:
@@ -213,75 +218,79 @@ else:
 
 
 @app.before_request
-def _refuse_other_deployments():
-    """Answer 404 to a route naming a deployment this server doesn't hold, except, on
-    Kubernetes, the PUT of a new deployment's settings, which adds it."""
-    deployment_id = (request.view_args or {}).get("deployment_id")
-    # Not `.` or `..`: that deployment's folder would hold the other deployments'.
+def _refuse_other_workflow_groups():
+    """Answer 404 to a route naming a workflow group this server doesn't hold, except,
+    on Kubernetes, the PUT of a new workflow group's settings, which adds it."""
+    workflow_group_id = (request.view_args or {}).get("workflow_group_id")
+    # Not `.` or `..`: that workflow group's folder would hold the other ones'.
     adding = (
         KUBERNETES
-        and request.endpoint == "put_deployment"
-        and deployment_id not in (".", "..")
+        and request.endpoint == "put_workflow_group"
+        and workflow_group_id not in (".", "..")
     )
-    if deployment_id is not None and deployment_id not in _deployments and not adding:
+    if (
+        workflow_group_id is not None
+        and workflow_group_id not in _workflow_groups
+        and not adding
+    ):
         return jsonify(
             {
-                "error": f"No deployment has the id {deployment_id}",
-                "code": "unknown_deployment",
+                "error": f"No workflow group has the id {workflow_group_id}",
+                "code": "unknown_workflow_group",
             }
         ), 404
 
 
-def _record_change(deployment):
-    """Bump `deployment`'s generation and wake its apply loop; call it holding
+def _record_change(workflow_group):
+    """Bump `workflow_group`'s generation and wake its apply loop; call it holding
     `_changes`. Returns the new generation."""
-    deployment.generation += 1
-    deployment.last_change = time.monotonic()
+    workflow_group.generation += 1
+    workflow_group.last_change = time.monotonic()
     _changes.notify_all()
-    return deployment.generation
+    return workflow_group.generation
 
 
-def _apply_changes(deployment):
-    """Once each run of `deployment`'s upload changes settles, start, restart, reload or
-    stop its deploy to match the upload, and record the outcome. Runs on its own thread
-    for the server's whole life."""
+def _apply_changes(workflow_group):
+    """Once each run of `workflow_group`'s upload changes settles, start, restart,
+    reload or stop its deploy to match the upload, and record the outcome. Runs on its
+    own thread for the server's whole life."""
     while True:
         with _changes:
             _changes.wait_for(
-                lambda: deployment.generation > deployment.applied_generation
+                lambda: workflow_group.generation > workflow_group.applied_generation
             )
             while (
-                deployment.puts_in_progress
-                or time.monotonic() < deployment.last_change + SETTLE_SECONDS
+                workflow_group.puts_in_progress
+                or time.monotonic() < workflow_group.last_change + SETTLE_SECONDS
             ):
                 _changes.wait(SETTLE_SECONDS)
         while True:
             with _changes:
-                generation = deployment.generation
+                generation = workflow_group.generation
                 ready = (
-                    DEPLOYMENT_CONFIG in deployment.deployment_digests
-                    and deployment.project_entries
+                    DEPLOYMENT_CONFIG in workflow_group.workflow_group_digests
+                    and workflow_group.workflow_entries
                 )
                 uploaded = fingerprints(
                     {
-                        **deployment.deployment_digests,
+                        **workflow_group.workflow_group_digests,
                         **{
                             path: digest
-                            for digests in deployment.project_digests.values()
+                            for digests in workflow_group.workflow_digests.values()
                             for path, digest in digests.items()
                         },
                     }
                 )
-                uploaded["auth"] = deployment.auth
-            progress = target.running_deploy(deployment.deploy)
+                uploaded["auth"] = workflow_group.auth
+            progress = target.running_deploy(workflow_group.deploy)
             # A stop goes ahead; anything else waits for the deploy to finish starting.
             if not (ready and progress and progress.phase == "starting"):
                 break
             # Checked each second, so a DELETE that comes meanwhile stops it right away.
             with progress.changed:
                 progress.changed.wait_for(lambda: progress.phase != "starting", 1)
-        with deployment.lock:
-            progress = target.running_deploy(deployment.deploy)
+        with workflow_group.lock:
+            progress = target.running_deploy(workflow_group.deploy)
             if not ready:
                 action = "stop" if progress else "none"
             elif progress is None:
@@ -295,20 +304,23 @@ def _apply_changes(deployment):
                 action = "reload"
             else:
                 action = "none"
-            deployment.applying = None if action == "none" else action
+            workflow_group.applying = None if action == "none" else action
             failure = None
             if action in ("stop", "restart"):
                 failure = target.stop(progress)
             if action == "start" or (action == "restart" and not failure):
-                deployment.deploy = target.start(
-                    deployment.workspace, deployment.name, uploaded, deployment.lock
+                workflow_group.deploy = target.start(
+                    workflow_group.workspace,
+                    workflow_group.name,
+                    uploaded,
+                    workflow_group.lock,
                 )
             elif action == "reload":
                 failure = target.reload(progress, uploaded["config"])
         with _changes:
-            deployment.applying = None
-            deployment.applied_generation = generation
-            deployment.last_apply = {
+            workflow_group.applying = None
+            workflow_group.applied_generation = generation
+            workflow_group.last_apply = {
                 "generation": generation,
                 "action": action,
                 "ok": not failure,
@@ -319,68 +331,70 @@ def _apply_changes(deployment):
             _changes.notify_all()
 
 
-def _add_deployment(deployment_id, workspace):
-    """Hold deployment `deployment_id`, uploaded to `workspace`, and start its apply
-    loop. Returns it."""
-    deployment = _deployments[deployment_id] = _Deployment(workspace)
-    threading.Thread(target=_apply_changes, args=(deployment,), daemon=True).start()
-    return deployment
+def _add_workflow_group(workflow_group_id, workspace):
+    """Hold workflow group `workflow_group_id`, uploaded to `workspace`, and start its
+    apply loop. Returns it."""
+    workflow_group = _workflow_groups[workflow_group_id] = _WorkflowGroup(workspace)
+    threading.Thread(target=_apply_changes, args=(workflow_group,), daemon=True).start()
+    return workflow_group
 
 
 if not KUBERNETES:
-    _add_deployment(os.environ["CANYONOS_DEPLOYMENT_ID"], WORKSPACE_DIR)
+    _add_workflow_group(os.environ["CANYONOS_WORKFLOW_GROUP_ID"], WORKSPACE_DIR)
 
 
 @app.get(
-    "/v1/deployments", summary="List the deployments", responses={200: Deployments}
+    "/v1/workflow-groups",
+    summary="List the workflow groups",
+    responses={200: WorkflowGroups},
 )
-def list_deployments():
-    """Return the one deployment this server holds, with the name its last `PUT`
+def list_workflow_groups():
+    """Return the one workflow group this server holds, with the name its last `PUT`
     gave it."""
     with _changes:
-        deployments = [
-            {"deployment_id": deployment_id, "name": deployment.name}
-            for deployment_id, deployment in _deployments.items()
+        workflow_groups = [
+            {"workflow_group_id": workflow_group_id, "name": workflow_group.name}
+            for workflow_group_id, workflow_group in _workflow_groups.items()
         ]
-    return jsonify({"deployments": deployments}), 200
+    return jsonify({"workflow_groups": workflow_groups}), 200
 
 
 @app.put(
-    "/v1/deployments/<deployment_id>",
-    summary="Upload deployment.yaml and its .env",
+    "/v1/workflow-groups/<workflow_group_id>",
+    summary="Upload workflow_group.yaml and its .env",
     responses={200: Uploaded, 400: Error},
 )
-def put_deployment(path: DeploymentPath, body: DeploymentBody):
-    """Write `deployment.yaml` and the `.env` beside it into `/workspace`, removing that
-    `.env` when `env` is null, and keep `name` as the deployment's name. With
-    `projects`, remove the uploaded projects it leaves out; with `api_key_hash`, keep
-    it as the deployment's API key, none when it is empty."""
+def put_workflow_group(path: WorkflowGroupPath, body: WorkflowGroupBody):
+    """Write `workflow_group.yaml` and the `.env` beside it into `/workspace`, removing
+    that `.env` when `env` is null, and keep `name` as the workflow group's name. With
+    `workflows`, remove the uploaded workflows it leaves out; with `api_key_hash`, keep
+    it as the workflow group's API key, none when it is empty."""
     with _changes:
-        deployment = _deployments.get(path.deployment_id)
-        # Only on Kubernetes, where its first `PUT` adds a deployment.
-        if deployment is None:
-            workspace = os.path.join(WORKSPACE_DIR, path.deployment_id)
+        workflow_group = _workflow_groups.get(path.workflow_group_id)
+        # Only on Kubernetes, where its first `PUT` adds a workflow group.
+        if workflow_group is None:
+            workspace = os.path.join(WORKSPACE_DIR, path.workflow_group_id)
             os.makedirs(workspace, exist_ok=True)
-            deployment = _add_deployment(path.deployment_id, workspace)
+            workflow_group = _add_workflow_group(path.workflow_group_id, workspace)
         for file, text in {DEPLOYMENT_CONFIG: body.config, ".env": body.env}.items():
-            full_path = os.path.join(deployment.workspace, file)
+            full_path = os.path.join(workflow_group.workspace, file)
             if text is not None:
                 with open(full_path, "w", encoding="utf-8") as f:
                     f.write(text)
-                deployment.deployment_digests[file] = hashlib.sha256(
+                workflow_group.workflow_group_digests[file] = hashlib.sha256(
                     text.encode()
                 ).hexdigest()
-            elif deployment.deployment_digests.pop(file, None):
+            elif workflow_group.workflow_group_digests.pop(file, None):
                 os.remove(full_path)
-        if body.projects is not None:
-            for name in set(deployment.project_entries) - set(body.projects):
-                _remove_project(deployment, name)
+        if body.workflows is not None:
+            for name in set(workflow_group.workflow_entries) - set(body.workflows):
+                _remove_workflow(workflow_group, name)
         if body.api_key_hash is not None:
-            deployment.auth = (
+            workflow_group.auth = (
                 {"apiKeyHash": body.api_key_hash} if body.api_key_hash else {}
             )
-        deployment.name = body.name
-        generation = _record_change(deployment)
+        workflow_group.name = body.name
+        generation = _record_change(workflow_group)
     return jsonify(
         {"generation": generation, "warnings": _collector_image_warnings(body.config)}
     ), 200
@@ -407,29 +421,31 @@ def _collector_image_warnings(config_text):
 
 
 @app.delete(
-    "/v1/deployments/<deployment_id>",
+    "/v1/workflow-groups/<workflow_group_id>",
     summary="Stop the deploy and remove the upload",
     responses={200: Generation, 500: Error, 504: Error},
 )
-def delete_deployment(path: DeploymentPath):
+def delete_workflow_group(path: WorkflowGroupPath):
     """Remove everything uploaded to `/workspace`, then wait for the apply loop to stop
     the deploy; 504 if it did not stop in time, 500 if stopping it failed."""
-    deployment = _deployments[path.deployment_id]
+    workflow_group = _workflow_groups[path.workflow_group_id]
     with _changes:
-        deployment.name = ""
-        for name, entries in deployment.project_entries.items():
-            remove_stale_entries(os.path.join(deployment.workspace, name), entries, {})
-        for file in deployment.deployment_digests:
-            os.remove(os.path.join(deployment.workspace, file))
+        workflow_group.name = ""
+        for name, entries in workflow_group.workflow_entries.items():
+            remove_stale_entries(
+                os.path.join(workflow_group.workspace, name), entries, {}
+            )
+        for file in workflow_group.workflow_group_digests:
+            os.remove(os.path.join(workflow_group.workspace, file))
         for upload in (
-            deployment.project_entries,
-            deployment.project_digests,
-            deployment.deployment_digests,
+            workflow_group.workflow_entries,
+            workflow_group.workflow_digests,
+            workflow_group.workflow_group_digests,
         ):
             upload.clear()
-        generation = _record_change(deployment)
-        _changes.wait_for(lambda: deployment.applied_generation >= generation)
-        last_apply = deployment.last_apply
+        generation = _record_change(workflow_group)
+        _changes.wait_for(lambda: workflow_group.applied_generation >= generation)
+        last_apply = workflow_group.last_apply
     if not last_apply["ok"]:
         return jsonify({"error": last_apply["error"], "code": last_apply["code"]}), (
             504 if last_apply["code"] == "stop_timeout" else 500
@@ -438,19 +454,20 @@ def delete_deployment(path: DeploymentPath):
 
 
 @app.put(
-    "/v1/deployments/<deployment_id>/projects/<name>",
-    summary="Upload a project",
+    "/v1/workflow-groups/<workflow_group_id>/workflows/<name>",
+    summary="Upload a workflow",
     responses={200: Uploaded, 400: Error},
 )
-def put_project(path: ProjectPath, raw: ProjectArchive):
-    """Check the uploaded gzip tar of project `name` as `canyonos validate` does, then
+def put_workflow(path: WorkflowPath, raw: WorkflowArchive):
+    """Check the uploaded gzip tar of workflow `name` as `canyonos validate` does, then
     unpack it into `/workspace/<name>`, removing what its last upload had and this one
     lacks; on a 400 (bad archive, unsafe path or findings) the old files stay."""
-    name, deployment = path.name, _deployments[path.deployment_id]
+    name, workflow_group = path.name, _workflow_groups[path.workflow_group_id]
     with tempfile.TemporaryFile() as body, tempfile.TemporaryDirectory() as checked:
         shutil.copyfileobj(raw.stream, body)
         body.seek(0)
         try:
+            # nosemgrep: trailofbits.python.tarfile-extractall-traversal.tarfile-extractall-traversal
             with tarfile.open(fileobj=body, mode="r:gz") as archive:
                 members = archive.getmembers()
                 entries = archive_entries(members)
@@ -464,22 +481,24 @@ def put_project(path: ProjectPath, raw: ProjectArchive):
                     if not values.get(key)
                 ]
                 if not findings:
-                    project_dir = os.path.join(deployment.workspace, name)
+                    workflow_dir = os.path.join(workflow_group.workspace, name)
                     remove_stale_entries(
-                        project_dir, deployment.project_entries.get(name, {}), entries
+                        workflow_dir,
+                        workflow_group.workflow_entries.get(name, {}),
+                        entries,
                     )
-                    archive.extractall(project_dir, members, filter="tar")
+                    archive.extractall(workflow_dir, members, filter="tar")
                     with _changes:
-                        deployment.project_entries[name] = entries
-                        deployment.project_digests[name] = {
+                        workflow_group.workflow_entries[name] = entries
+                        workflow_group.workflow_digests[name] = {
                             f"{name}/{relative}": digest
                             for relative, digest in digests.items()
                         }
-                        generation = _record_change(deployment)
+                        generation = _record_change(workflow_group)
         except (tarfile.TarError, EOFError, OSError, ValueError) as e:
             return jsonify(
                 {
-                    "error": f"Could not unpack the project: {e}",
+                    "error": f"Could not unpack the workflow: {e}",
                     "code": "bad_archive",
                 }
             ), 400
@@ -493,7 +512,7 @@ def put_project(path: ProjectPath, raw: ProjectArchive):
             {
                 "error": f"{name} was not uploaded: fix the errors `canyonos validate` "
                 "reports, then rerun.",
-                "code": "project_invalid",
+                "code": "workflow_invalid",
                 "findings": [
                     finding_text(
                         finding._replace(path=os.path.join(name, finding.path))
@@ -507,56 +526,59 @@ def put_project(path: ProjectPath, raw: ProjectArchive):
 
 
 @app.delete(
-    "/v1/deployments/<deployment_id>/projects/<name>",
-    summary="Remove a project",
+    "/v1/workflow-groups/<workflow_group_id>/workflows/<name>",
+    summary="Remove a workflow",
     responses={200: Generation, 400: Error, 404: Error},
 )
-def delete_project(path: ProjectPath):
-    """Remove from `/workspace` what project `name`'s last upload put there; 404 if it
+def delete_workflow(path: WorkflowPath):
+    """Remove from `/workspace` what workflow `name`'s last upload put there; 404 if it
     was never uploaded."""
-    deployment = _deployments[path.deployment_id]
+    workflow_group = _workflow_groups[path.workflow_group_id]
     with _changes:
-        if path.name not in deployment.project_entries:
+        if path.name not in workflow_group.workflow_entries:
             return jsonify(
-                {"error": f"No project is named {path.name}", "code": "unknown_project"}
+                {
+                    "error": f"No workflow is named {path.name}",
+                    "code": "unknown_workflow",
+                }
             ), 404
-        _remove_project(deployment, path.name)
-        generation = _record_change(deployment)
+        _remove_workflow(workflow_group, path.name)
+        generation = _record_change(workflow_group)
     return jsonify({"generation": generation}), 200
 
 
-def _remove_project(deployment, name):
-    """Remove from `deployment`'s folder what project `name`'s last upload put there,
-    and forget that upload; call it holding `_changes`."""
+def _remove_workflow(workflow_group, name):
+    """Remove from `workflow_group`'s folder what workflow `name`'s last upload put
+    there, and forget that upload; call it holding `_changes`."""
     remove_stale_entries(
-        os.path.join(deployment.workspace, name),
-        deployment.project_entries.pop(name),
+        os.path.join(workflow_group.workspace, name),
+        workflow_group.workflow_entries.pop(name),
         {},
     )
-    del deployment.project_digests[name]
+    del workflow_group.workflow_digests[name]
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>",
-    summary="Read the deployment's status",
+    "/v1/workflow-groups/<workflow_group_id>",
+    summary="Read the workflow group's status",
     responses={200: Status},
 )
-def status(path: DeploymentPath):
-    """Report the deployment's name and `deployment.yaml` as last uploaded, how far the
-    apply loop got, the deploy's phase, progress and verdict, and while it runs, its
-    endpoint, agents and machine errors read from Redis; a part that could not be read
-    is left null and named under `errors`."""
-    deployment = _deployments[path.deployment_id]
+def status(path: WorkflowGroupPath):
+    """Report the workflow group's name and `workflow_group.yaml` as last uploaded, how
+    far the apply loop got, the deploy's phase, progress and verdict, and while it runs,
+    its endpoint, agents and machine errors read from Redis; a part that could not be
+    read is left null and named under `errors`."""
+    workflow_group = _workflow_groups[path.workflow_group_id]
     try:
         with open(
-            os.path.join(deployment.workspace, DEPLOYMENT_CONFIG), encoding="utf-8"
+            os.path.join(workflow_group.workspace, DEPLOYMENT_CONFIG), encoding="utf-8"
         ) as f:
             config = f.read()
     except FileNotFoundError:
         config = None
     report = {
         "version": VERSION,
-        "name": deployment.name,
+        "name": workflow_group.name,
         "config": config,
         "running": False,
         "phase": None,
@@ -570,26 +592,26 @@ def status(path: DeploymentPath):
         "endpoint": None,
         "agents": None,
         "machine_errors": None,
-        "generation": deployment.generation,
-        "applied_generation": deployment.applied_generation,
-        "applying": deployment.applying,
-        "last_apply": deployment.last_apply,
+        "generation": workflow_group.generation,
+        "applied_generation": workflow_group.applied_generation,
+        "applying": workflow_group.applying,
+        "last_apply": workflow_group.last_apply,
         "errors": [],
     }
-    target.status(deployment.deploy, report)
+    target.status(workflow_group.deploy, report)
     return jsonify(report), 200
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>/logs/controller",
+    "/v1/workflow-groups/<workflow_group_id>/logs/controller",
     summary="Read the controller log",
     responses={200: TEXT, 400: Error},
 )
-def controller_log(path: DeploymentPath, query: LogsQuery):
+def controller_log(path: WorkflowGroupPath, query: LogsQuery):
     """Return the deploy process's kept output, the last `tail` lines of it, as text;
     with `follow=true`, keep streaming new lines until the process has exited and every
     line was sent. Empty when nothing was deployed yet."""
-    tail, progress = query.tail, _deployments[path.deployment_id].deploy
+    tail, progress = query.tail, _workflow_groups[path.workflow_group_id].deploy
     if progress is None:
         return Response("", mimetype="text/plain")
     with progress.changed:
@@ -606,7 +628,8 @@ def controller_log(path: DeploymentPath, query: LogsQuery):
 def _follow_output(progress, sent):
     """Yield the deploy's output as it arrives, from line number `sent` on (counting
     lines no longer kept), until the deploy process has exited and every line was
-    sent. Streams `GET /v1/deployments/<deployment_id>/logs/controller?follow=true`."""
+    sent. Streams
+    `GET /v1/workflow-groups/<workflow_group_id>/logs/controller?follow=true`."""
     while True:
         with progress.changed:
             while progress.line_count == sent and not progress.finished:
@@ -620,21 +643,22 @@ def _follow_output(progress, sent):
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>/health",
+    "/v1/workflow-groups/<workflow_group_id>/health",
     summary="Check the running deploy",
     responses={200: Health, 409: Error},
 )
-def health(path: DeploymentPath):
+def health(path: WorkflowGroupPath):
     """Check the running deploy's Global Controller, Redis, each agent's replica count
     and its endpoint, each with how to fix it when it fails; 409 if no deploy is
     running."""
-    return target.health(_deployments[path.deployment_id].deploy)
+    return target.health(_workflow_groups[path.workflow_group_id].deploy)
 
 
-def _project(deployment, name):
-    """`deployment`'s uploaded project `name` as the projects routes answer it: its
-    name, the fingerprints of its files and the query in its `config/test_query.txt`."""
-    path = os.path.join(deployment.workspace, name, "config", "test_query.txt")
+def _workflow(workflow_group, name):
+    """`workflow_group`'s uploaded workflow `name` as the workflows routes answer it:
+    its name, the fingerprints of its files and the query in its
+    `config/test_query.txt`."""
+    path = os.path.join(workflow_group.workspace, name, "config", "test_query.txt")
     try:
         with open(path, encoding="utf-8") as f:
             test_query = f.read().strip() or None
@@ -642,45 +666,49 @@ def _project(deployment, name):
         test_query = None
     return {
         "name": name,
-        "fingerprints": fingerprints(deployment.project_digests[name]),
+        "fingerprints": fingerprints(workflow_group.workflow_digests[name]),
         "test_query": test_query,
     }
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>/projects",
-    summary="List the uploaded projects",
-    responses={200: Projects},
+    "/v1/workflow-groups/<workflow_group_id>/workflows",
+    summary="List the uploaded workflows",
+    responses={200: Workflows},
 )
-def list_projects(path: DeploymentPath):
-    """Return every uploaded project, by name."""
-    deployment = _deployments[path.deployment_id]
+def list_workflows(path: WorkflowGroupPath):
+    """Return every uploaded workflow, by name."""
+    workflow_group = _workflow_groups[path.workflow_group_id]
     with _changes:
-        projects = [
-            _project(deployment, name) for name in sorted(deployment.project_digests)
+        workflows = [
+            _workflow(workflow_group, name)
+            for name in sorted(workflow_group.workflow_digests)
         ]
-    return jsonify({"projects": projects}), 200
+    return jsonify({"workflows": workflows}), 200
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>/projects/<name>",
-    summary="Read a project",
-    responses={200: Project, 400: Error, 404: Error},
+    "/v1/workflow-groups/<workflow_group_id>/workflows/<name>",
+    summary="Read a workflow",
+    responses={200: Workflow, 400: Error, 404: Error},
 )
-def get_project(path: ProjectPath):
-    """Return uploaded project `name`; 404 if it was never uploaded."""
-    deployment = _deployments[path.deployment_id]
+def get_workflow(path: WorkflowPath):
+    """Return uploaded workflow `name`; 404 if it was never uploaded."""
+    workflow_group = _workflow_groups[path.workflow_group_id]
     with _changes:
-        if path.name not in deployment.project_digests:
+        if path.name not in workflow_group.workflow_digests:
             return jsonify(
-                {"error": f"No project is named {path.name}", "code": "unknown_project"}
+                {
+                    "error": f"No workflow is named {path.name}",
+                    "code": "unknown_workflow",
+                }
             ), 404
-        project = _project(deployment, path.name)
-    return jsonify(project), 200
+        workflow = _workflow(workflow_group, path.name)
+    return jsonify(workflow), 200
 
 
 @app.get(
-    "/v1/deployments/<deployment_id>/logs/agents/<name>",
+    "/v1/workflow-groups/<workflow_group_id>/logs/agents/<name>",
     summary="Read an agent's replica logs",
     responses={200: ReplicaLogs, 400: Error, 404: Error, 409: Error, 503: Error},
 )
@@ -689,36 +717,36 @@ def logs(path: AgentPath, query: TailQuery):
     one replica whose ID is `name`, read on its machine; 409 if no deploy is running,
     404 naming the agents when `name` is neither, 503 when Redis cannot be read."""
     return target.agent_logs(
-        _deployments[path.deployment_id].deploy, path.name, query.tail
+        _workflow_groups[path.workflow_group_id].deploy, path.name, query.tail
     )
 
 
 @app.put(
     DASHBOARD_ROUTE,
-    summary="Register the deployment's Redis with the dashboard",
-    responses={200: DashboardProject, 400: Error, 502: Error},
+    summary="Register the workflow group's Redis with the dashboard",
+    responses={200: DashboardWorkflows, 400: Error, 502: Error},
 )
-def put_dashboard(path: DeploymentPath, body: DashboardBody):
-    """Send this deployment's Redis host, port and password, plus a client certificate
-    its CA signs when its Redis takes only TLS, to the dashboard api at `url` and
-    return the project it registered. Connection failures and 5xx answers are retried
-    for a minute; 502 when the api refuses it or never answers."""
-    project = {
+def put_dashboard(path: WorkflowGroupPath, body: DashboardBody):
+    """Send this workflow group's Redis host, port and password, plus a client
+    certificate its CA signs when its Redis takes only TLS, to the dashboard api at
+    `url` and return the workflows it registered. Connection failures and 5xx answers
+    are retried for a minute; 502 when the api refuses it or never answers."""
+    payload = {
         "redis_host": os.environ["CANYONOS_REDIS_HOST"],
         "redis_port": DEFAULT_REDIS_PORT,
         "redis_password": os.environ[PASSWORD_ENV],
     }
-    # Redis takes only TLS clients with a certificate the deployment's CA signed.
+    # Redis takes only TLS clients with a certificate the workflow group's CA signed.
     if internal_ca.available():
         cert, key = internal_ca.sign(["dashboard"])
-        project["redis_tls"] = {
+        payload["redis_tls"] = {
             "ca": base64.b64decode(os.environ[internal_tls.CA_CERT_ENV]).decode(),
             "cert": cert.decode(),
             "key": key.decode(),
         }
     registration = urllib.request.Request(
-        f"{body.url}/canyonos/projects",
-        data=json.dumps(project).encode(),
+        f"{body.url}/canyonos/workflows",
+        data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -760,5 +788,5 @@ if __name__ == "__main__":
     # No banner or request lines among the deploy's output in the container's log.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     if KUBERNETES:
-        restore(_add_deployment, WORKSPACE_DIR)
+        restore(_add_workflow_group, WORKSPACE_DIR)
     run_simple("0.0.0.0", 8000, app, threaded=True)

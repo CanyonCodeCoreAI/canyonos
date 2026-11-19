@@ -4,7 +4,7 @@
 """Config, Redis clients and command execution shared by GlobalController and the reconciler.
 
 What it holds:
-- Config loading: reads the project's .env, loads the YAML and fills in ${VAR} values, so
+- Config loading: reads the workflow group's .env, loads the YAML and fills in ${VAR} values, so
   both processes see the same values.
 - Redis connections: the main one, plus one per machine opened when first needed.
 - The agent list from the config, by name, and a refresh from the list published to Redis.
@@ -149,20 +149,20 @@ class ControllerContext(object):
 
     @staticmethod
     def _load_config(workspace):
-        """Load the deployment in `workspace` (see `load_deployment_config`), and add
+        """Load the workflow group in `workspace` (see `load_deployment_config`), and add
         the `endpoint:` block as one more replica spec after the agents. Also gives
-        each agent spec the deployment's `provider`, in the spelling replica records use
+        each agent spec the workflow group's `provider`, in the spelling replica records use
         (`EC2-Pool` becomes `ec2-pool`); the endpoint stays on this machine. A
-        deployment without `deployment_id` is refused: `canyonos deploy` writes one
-        before syncing. The `.env` beside `deployment.yaml` is imported first, as the
+        workflow group without `workflow_group_id` is refused: `canyonos deploy` writes one
+        before syncing. The `.env` beside `workflow_group.yaml` is imported first, as the
         provider's credentials, such as AWS keys, come from it."""
         load_dotenv(os.path.join(workspace, ".env"))
         config = load_deployment_config(workspace)
-        if not config.get("deployment_id"):
+        if not config.get("workflow_group_id"):
             raise RuntimeError(
-                f"{workspace}/deployment.yaml has no deployment_id. A current "
-                "`canyonos deploy` writes one before syncing; a deployment.yaml you "
-                "supply yourself needs `deployment_id: <uuid>`."
+                f"{workspace}/workflow_group.yaml has no workflow_group_id. A current "
+                "`canyonos deploy` writes one before syncing; a workflow_group.yaml you "
+                "supply yourself needs `workflow_group_id: <uuid>`."
             )
         agent_specs = config["agents"]
         endpoint = config["endpoint"]
@@ -204,14 +204,14 @@ class ControllerContext(object):
         return True
 
     def env_file_of(self, agent_spec):
-        """The `.env` of the agent's project, or None when it has none.
+        """The `.env` of the agent's workflow, or None when it has none.
 
         Raises:
             ValueError: the file exists but is unreadable. Deploy fails here rather
                 than start an agent with no API keys.
         """
         return resolve_env_file(
-            os.path.join(self.workspace, agent_spec["project"], CONFIG_PATH)
+            os.path.join(self.workspace, agent_spec["workflow"], CONFIG_PATH)
         )
 
     def refresh_config(self):

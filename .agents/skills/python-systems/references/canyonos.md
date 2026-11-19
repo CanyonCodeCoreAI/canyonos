@@ -62,7 +62,7 @@ dispatch path, identifier scheme, or Redis read-back for the same work.
 uv run pytest packages/core/tests/test_<area>.py
 uv run pytest packages/cli/tests
 bun run check
-uv run pytest tests/e2e/cases --project=portfolio # real deploy and query; needs AWS credentials
+uv run pytest tests/e2e/cases --workflow=portfolio # real deploy and query; needs AWS credentials
 ```
 
 For controller, gateway, or Reconciler work, deploy `examples/portfolio`, query

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """`canyonos list`, `canyonos select-context` and the commands that act on the selected
-deployment, through the installed command, each case in its own HOME. The deployments
+workflow group, through the installed command, each case in its own HOME. The workflow groups
 are records `canyonos deploy` would write, whose Global Controller port answers
 nothing, so no Docker is needed and none is running. `canyonos dashboard` finds the
 dashboard through a stand-in `docker` that reports its web container's port, and
@@ -21,7 +21,7 @@ from .harness import CliCase
 
 FIRST_ID = "8a3f6c1e-2b4d-4e5f-9a7b-1c2d3e4f5a6b"
 SECOND_ID = "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
-PICK_AGAIN = "`canyonos select-context <deployment>`"
+PICK_AGAIN = "`canyonos select-context <workflow group>`"
 DASHBOARD_PORT = 8095
 # Characters a URL fragment has to escape, so the link proves the key is encoded.
 API_KEY = "e2e key/with+chars&=#%"
@@ -47,11 +47,13 @@ def _closed_port() -> int:
 def _record(
     case: CliCase, folder: str, deployment_id: str, auth_disabled: bool = False
 ) -> str:
-    """Write the deployment folder `folder` and the record a deploy from it leaves,
-    and return the deployment's name."""
+    """Write the workflow group folder `folder` and the record a deploy from it leaves,
+    and return the workflow group's name."""
     directory = case.cwd / folder
     directory.mkdir()
-    (directory / "deployment.yaml").write_text(f"deployment_id: {deployment_id}\n")
+    (directory / "workflow_group.yaml").write_text(
+        f"workflow_group_id: {deployment_id}\n"
+    )
     name = f"{folder}-{deployment_id[:8]}"
     records = case.home / ".canyonos" / "deployments" / name
     records.mkdir(parents=True)
@@ -60,8 +62,8 @@ def _record(
             {
                 "container_id": f"{folder}-controller",
                 "port": _closed_port(),
-                "deployment_id": deployment_id,
-                "project_dir": str(directory),
+                "workflow_group_id": deployment_id,
+                "workflow_group_dir": str(directory),
                 "auth_disabled": auth_disabled,
             }
         )
@@ -90,7 +92,7 @@ def test_list_with_no_deployment_says_how_to_deploy(cli_case: CliCase):
     result = cli_case.run_cli(["list"])
 
     assert result.returncode == 0, _said(result)
-    assert "No deployment on this machine" in _said(result)
+    assert "No workflow group on this machine" in _said(result)
     assert "canyonos deploy" in _said(result)
 
 
@@ -135,7 +137,7 @@ def test_select_context_refuses_a_deployment_it_cannot_tell(cli_case: CliCase):
     unnamed = cli_case.run_cli(["select-context"])
 
     assert missing.returncode == 1, _said(missing)
-    assert "No deployment is named `nope`" in _said(missing)
+    assert "No workflow group is named `nope`" in _said(missing)
     assert "canyonos list" in _said(missing)
     assert unnamed.returncode == 1, _said(unnamed)
     assert "--clear" in _said(unnamed)
@@ -152,10 +154,12 @@ def test_a_command_outside_a_deployment_folder_runs_from_the_selected_one(
 
     assert result.returncode == 3, _said(result)
     assert f"Acting on {name}" in result.stderr, _said(result)
-    assert "No deploy is currently running" in result.stderr, _said(result)
+    assert "No workflow group is currently running" in result.stderr, _said(result)
 
 
-def test_curl_outside_a_deployment_folder_calls_the_selected_one(cli_case: CliCase):
+def test_curl_outside_a_workflow_group_folder_calls_the_selected_one(
+    cli_case: CliCase,
+):
     name = _record(cli_case, "app-abcz", FIRST_ID)
     assert cli_case.run_cli(["select-context", name]).returncode == 0
 
@@ -163,8 +167,8 @@ def test_curl_outside_a_deployment_folder_calls_the_selected_one(cli_case: CliCa
 
     assert result.returncode == 1, _said(result)
     assert f"Acting on {name}" in result.stderr, _said(result)
-    assert "No deploy is running" in result.stderr, _said(result)
-    assert "No deployment is selected" not in _said(result)
+    assert "No workflow group is running" in result.stderr, _said(result)
+    assert "No workflow group is selected" not in _said(result)
 
 
 def test_a_selected_deployment_that_is_gone_is_an_error_that_says_what_to_do(

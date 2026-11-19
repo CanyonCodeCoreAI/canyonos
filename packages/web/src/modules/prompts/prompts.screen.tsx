@@ -13,15 +13,15 @@ import { QueryError } from '@/modules/core/components/QueryError';
 import { PromptCard } from '@/modules/prompts/prompt-card';
 import { promptErrorMessage, promptsQueryOptions } from '@/modules/prompts/prompts.queries';
 
-export function PromptsScreen({ project_id }: { readonly project_id: string }) {
-  const query = useQuery(promptsQueryOptions(project_id));
+export function PromptsScreen({ workflow_id }: { readonly workflow_id: string }) {
+  const query = useQuery(promptsQueryOptions(workflow_id));
 
   return (
     <main
       className="scroll-area flex min-h-0 flex-1 flex-col gap-7 overflow-y-auto p-7"
-      data-testid="project-prompts-screen"
+      data-testid="workflow-prompts-screen"
       data-state={screenState(query)}
-      data-project-id={project_id}
+      data-workflow-id={workflow_id}
     >
       <header className="flex flex-col gap-1.5">
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
@@ -32,7 +32,7 @@ export function PromptsScreen({ project_id }: { readonly project_id: string }) {
           live and running agents switch to it within seconds, no redeploy.
         </p>
       </header>
-      <PromptsBody project_id={project_id} query={query} />
+      <PromptsBody workflow_id={workflow_id} query={query} />
     </main>
   );
 }
@@ -47,16 +47,16 @@ function screenState(query: PromptsQuery): 'loading' | 'error' | 'empty' | 'list
 }
 
 function PromptsBody({
-  project_id,
+  workflow_id,
   query,
 }: {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly query: PromptsQuery;
 }) {
   switch (screenState(query)) {
     case 'loading':
       return (
-        <div className="flex flex-col gap-4" aria-busy="true" data-testid="project-prompt-loading">
+        <div className="flex flex-col gap-4" aria-busy="true" data-testid="workflow-prompt-loading">
           <Skeleton className="h-[4.25rem] w-full rounded-lg" />
           <Skeleton className="h-[4.25rem] w-full rounded-lg" />
         </div>
@@ -66,14 +66,14 @@ function PromptsBody({
         <QueryError
           message={promptErrorMessage(query.error, 'Could not load prompts.')}
           onRetry={() => void query.refetch()}
-          test_id="project-prompt-error"
-          retry_test_id="project-prompt-retry"
+          test_id="workflow-prompt-error"
+          retry_test_id="workflow-prompt-retry"
         />
       );
     case 'empty':
       return (
-        <EmptyState test_id="project-prompt-empty">
-          No prompts yet. Add config/prompts.yaml to the project and deploy it again.
+        <EmptyState test_id="workflow-prompt-empty">
+          No prompts yet. Add config/prompts.yaml to the workflow and deploy it again.
         </EmptyState>
       );
     case 'list':
@@ -81,7 +81,7 @@ function PromptsBody({
         <TooltipProvider delayDuration={150}>
           <div className="flex flex-col gap-4" data-testid="prompt-list">
             {query.data?.map((prompt) => (
-              <PromptCard key={prompt.name} project_id={project_id} summary={prompt} />
+              <PromptCard key={prompt.name} workflow_id={workflow_id} summary={prompt} />
             ))}
           </div>
         </TooltipProvider>

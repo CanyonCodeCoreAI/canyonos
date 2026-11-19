@@ -5,13 +5,13 @@ import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
 import type { MetricsKpi } from '@canyonos/api/metrics';
-import type { ProjectSummary } from '@canyonos/api/projects';
+import type { WorkflowSummary } from '@canyonos/api/workflows';
 
-import { apiBaseUrl, failJson, fulfillJson } from './projects';
+import { apiBaseUrl, failJson, fulfillJson } from './workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 
-export const PROJECT: ProjectSummary = {
+export const WORKFLOW: WorkflowSummary = {
   id: '44444444-4444-4444-8444-444444444401',
   name: 'Local Fraud Screen',
   file_count: 5,
@@ -36,11 +36,11 @@ async function routePath(
   );
 }
 
-export async function stubProjectsList(
+export async function stubWorkflowsList(
   page: Page,
-  projects: readonly ProjectSummary[]
+  workflows: readonly WorkflowSummary[]
 ): Promise<void> {
-  await routePath(page, '/projects', (route) => fulfillJson(route, projects));
+  await routePath(page, '/workflows', (route) => fulfillJson(route, workflows));
 }
 
 /** The fleet rollup the overview rows read spend from, answered empty. */
@@ -49,7 +49,7 @@ export async function stubFleetSpend(page: Page): Promise<void> {
     fulfillJson(route, {
       kpis: [],
       resources: [],
-      projects: [],
+      workflows: [],
       from: url.searchParams.get('from'),
       to: url.searchParams.get('to'),
     })
@@ -78,25 +78,25 @@ const requestedRange = (url: URL) => ({
   to: url.searchParams.get('to'),
 });
 
-export interface ProjectDashboardOptions {
+export interface WorkflowDashboardOptions {
   /** Fail the KPI read, which is what the cost ribbon's error state is drawn from. */
   readonly kpis_fail?: boolean;
 }
 
-/** A project dashboard that ran nothing: every metrics endpoint answers, and answers empty. */
-export async function stubProjectDashboard(
+/** A workflow dashboard that ran nothing: every metrics endpoint answers, and answers empty. */
+export async function stubWorkflowDashboard(
   page: Page,
-  project: ProjectSummary,
-  { kpis_fail = false }: ProjectDashboardOptions = {}
+  workflow: WorkflowSummary,
+  { kpis_fail = false }: WorkflowDashboardOptions = {}
 ): Promise<void> {
-  const base = `/projects/${project.id}`;
+  const base = `/workflows/${workflow.id}`;
 
-  await routePath(page, base, (route) => fulfillJson(route, project));
+  await routePath(page, base, (route) => fulfillJson(route, workflow));
   await routePath(page, `${base}/metrics/kpis`, (route, url) =>
     kpis_fail
       ? failJson(route, 'Could not read cost totals')
       : fulfillJson(route, {
-          project_id: project.id,
+          workflow_id: workflow.id,
           generated_at: '2026-07-29T12:00:00.000Z',
           ...requestedRange(url),
           ...EMPTY_KPI,
@@ -104,7 +104,7 @@ export async function stubProjectDashboard(
   );
   await routePath(page, `${base}/metrics/timeseries`, (route, url) =>
     fulfillJson(route, {
-      project_id: project.id,
+      workflow_id: workflow.id,
       ...requestedRange(url),
       bucket_seconds: 86_400,
       points: [],
@@ -112,7 +112,7 @@ export async function stubProjectDashboard(
   );
   await routePath(page, `${base}/metrics/blocks`, (route, url) =>
     fulfillJson(route, {
-      project_id: project.id,
+      workflow_id: workflow.id,
       ...requestedRange(url),
       total_cost: '0.000000',
       blocks: [],
@@ -120,7 +120,7 @@ export async function stubProjectDashboard(
   );
   await routePath(page, `${base}/metrics/distribution`, (route, url) =>
     fulfillJson(route, {
-      project_id: project.id,
+      workflow_id: workflow.id,
       metric: url.searchParams.get('metric') ?? 'cost_per_request',
       ...requestedRange(url),
       request_count: 0,

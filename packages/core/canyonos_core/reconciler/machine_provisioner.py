@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Start, list, check and terminate the deployment's pool of machines. The steps here
+"""Start, list, check and terminate the workflow group's pool of machines. The steps here
 are common to every provider; the commands specific to one provider live in providers/.
 Touches only machine records, providers and each machine's Redis and metrics collector;
 the replicas on the machines are the replica provisioner's."""

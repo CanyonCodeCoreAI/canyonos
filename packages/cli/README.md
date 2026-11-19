@@ -1,6 +1,6 @@
 # canyonos CLI
 
-The `canyonos` command line for [CanyonOS](https://canyonos.ai): port a project, deploy it, and manage the running deploy.
+The `canyonos` command line for [CanyonOS](https://canyonos.ai): convert a workflow, deploy it, and manage the running workflow group.
 
 ## Install
 
@@ -15,8 +15,8 @@ Converting an existing workflow? Run `canyonos convert` in its folder first; you
 agent writes a CanyonOS version of it into a `.canyon/` folder.
 
 ```bash
-canyonos deploy your-project --folder your-deployment   # build and launch the workflow, then open the dashboard
-canyonos stop                                           # stop the deploy and remove its containers and files
+canyonos deploy your-workflow --workflow-group your-group   # build and launch the workflow, then open the dashboard
+canyonos stop                                            # stop the workflow group and remove its containers and files
 ```
 
 Run `canyonos -h` for every command.

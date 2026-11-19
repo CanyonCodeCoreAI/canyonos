@@ -21,11 +21,11 @@ from canyonos_core.controller.utils.container_names import (
     ForeignContainerError,
     container_name,
     data_volume_name,
+    docker_group,
+    docker_group_label_args,
     docker_name,
     image_name,
     metrics_container_name,
-    project_group,
-    project_label_args,
     redis_container_name,
     workspace_volume_name,
 )
@@ -87,11 +87,11 @@ def _port_bound(port):
     return False
 
 
-def _refuse_other_projects_container(controller, container, host, user):
+def _refuse_other_workflow_groups_container(controller, container, host, user):
     """Raise instead of replacing a running container that has this replica's name
-    but belongs to another project. Project `my` with agent `app-worker` and project
-    `my-app` with agent `worker` both name a replica `canyonos-my-app-worker-0`; a
-    container with no project label predates projects and is replaced as before."""
+    but belongs to another workflow group. Workflow groups `my` with agent `app-worker`
+    and `my-app` with agent `worker` both name a replica `canyonos-my-app-worker-0`; a
+    container with no group label predates workflow groups and is replaced as before."""
     labels = controller._run_cmd(
         [
             "docker",
@@ -108,14 +108,14 @@ def _refuse_other_projects_container(controller, container, host, user):
             return
         raise ForeignContainerError(
             f"Cannot launch {container}: a container with that name is running but "
-            f"Docker would not say which project owns it: {labels.stderr.strip()}"
+            f"Docker would not say which workflow group owns it: {labels.stderr.strip()}"
         )
     owner = labels.stdout.strip()
-    if owner and owner != project_group():
+    if owner and owner != docker_group():
         raise ForeignContainerError(
             f"Cannot launch {container}: a container with that name already runs in "
-            f"Docker group {owner}, not {project_group()}. Rename the agent or the "
-            "project folder so the names no longer collide."
+            f"Docker group {owner}, not {docker_group()}. Rename the agent or the "
+            "workflow folder so the names no longer collide."
         )
 
 
@@ -123,7 +123,7 @@ def publishes_port(controller, machine, agent_spec):
     """Whether a replica's container port is published on its machine. Only callers on
     other machines need it: a replica on another machine, and the endpoint its agents
     there call back. A database is published on its `db_port`. Any other replica on this
-    machine is reached by name on the project's network, so it publishes nothing."""
+    machine is reached by name on the workflow group's network, so it publishes nothing."""
     return (
         not _is_local_host(machine["private_host"])
         or agent_spec.get("type") == "database"
@@ -143,18 +143,18 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
     host = machine["private_host"]
     user = machine.get("user")
     container = container_name(replica_id)
-    # What the deployment's network calls the replica: its container name, which
-    # carries the deployment too, can pass DNS's 63-character limit.
+    # What the workflow group's network calls the replica: its container name, which
+    # carries the workflow group too, can pass DNS's 63-character limit.
     network_name = docker_name(replica_id)
     is_local = _is_local_host(host)
-    # A remote machine has no project network, so reach its Redis via the host.
+    # A remote machine has no workflow group network, so reach its Redis via the host.
     redis_host = redis_container_name(host) if is_local else HOST_GATEWAY
 
     inspect = controller._run_cmd(
         ["docker", "inspect", "-f", "{{.State.Running}}", container], host, user
     )
     if inspect.returncode == 0 and inspect.stdout.strip() == "true":
-        _refuse_other_projects_container(controller, container, host, user)
+        _refuse_other_workflow_groups_container(controller, container, host, user)
         logger.warning(
             "No Redis record for %s but a container with that name is already running; "
             "treating it as orphaned and recreating.",
@@ -205,9 +205,9 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
             "docker",
             "run",
             "-d",
-            *project_label_args(),
+            *docker_group_label_args(),
             *(
-                ["--network", project_group(), "--network-alias", network_name]
+                ["--network", docker_group(), "--network-alias", network_name]
                 if is_local
                 else ["--restart", "unless-stopped"]
             ),
@@ -308,7 +308,7 @@ def launch(controller, machine, agent_spec, host_port, replica_id):
         "public_host": machine["public_host"],
         "host_port": str(host_port),
         "container_port": str(container_port),
-        # An unpublished replica's only address is the one on the project's network, as a
+        # An unpublished replica's only address is the one on the workflow group's network, as a
         # pod's is on Kubernetes.
         "published_address": f"{host}:{host_port}" if publish else address,
         "address": address,
@@ -348,7 +348,7 @@ def start_redis(controller, host, user):
             "docker",
             "run",
             "-d",
-            *project_label_args(),
+            *docker_group_label_args(),
             "--name",
             redis_container_name(host),
             *resource_limit_args(),
@@ -387,7 +387,7 @@ def start_metrics_collector(controller, host, user, image, redis_port, wants_gpu
             "docker",
             "run",
             "-d",
-            *project_label_args(),
+            *docker_group_label_args(),
             "--name",
             name,
             "--restart",
@@ -467,9 +467,9 @@ def _publish_args(bind_ip, host_port, container_port):
 def _callback_host(controller, agent_spec):
     """Return the address agents on other machines call the endpoint's controller
     back on, this machine's private IP, or None for any other agent, when the
-    deployment's provider runs every agent on this machine, or when the CLI found no
+    workflow group's provider runs every agent on this machine, or when the CLI found no
     private IP. The endpoint's own spec always names the local provider, so the
-    deployment's is read from the config."""
+    workflow group's is read from the config."""
     if agent_spec.get("type") != "endpoint":
         return None
     provider = controller.config.get("provider", providers.DEFAULT)
@@ -486,8 +486,8 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
     """Yield the `docker run` args that end the command and pick what runs.
 
     The endpoint runs the controller image as `python -m canyonos_core.endpoint`,
-    publishing its HTTP port on `api_port` and serving the deployment's routes. Any other
-    agent runs its own image with its project's `.env`; explicit -e flags before
+    publishing its HTTP port on `api_port` and serving the workflow group's routes. Any other
+    agent runs its own image with its workflow's `.env`; explicit -e flags before
     it still win, so a stray CANYONOS_* line in someone's .env cannot break agent
     wiring.
     """
@@ -529,7 +529,9 @@ def _image_args(controller, agent_spec, image, host, user, api_port):
             f"{TOY_PACKAGES_VOLUME}:{TOY_PACKAGES_DIR}",
             "-w",
             "/app",
-            agent_base_image(os.path.join(controller.workspace, agent_spec["project"])),
+            agent_base_image(
+                os.path.join(controller.workspace, agent_spec["workflow"])
+            ),
             "sh",
             TOY_START_SCRIPT,
         ]

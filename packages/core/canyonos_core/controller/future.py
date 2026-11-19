@@ -169,7 +169,7 @@ def wait_for_result(redis_client, future_id, timeout=None):
                 del _result_waiters[future_id]
 
 
-# Add generated grpc_stubs to path (Docker context copies them directly to /app, and local relies on project dir)
+# Add generated grpc_stubs to path (Docker context copies them directly to /app, and local relies on workflow dir)
 sys.path.insert(0, ".")
 sys.path.insert(0, "/app")
 sys.path.insert(0, os.path.abspath("grpc_stubs"))

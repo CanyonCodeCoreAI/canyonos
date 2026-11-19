@@ -85,7 +85,7 @@ def _new_api_key() -> str:
 
 @dataclass
 class Recorder:
-    """The calls made so far in this session, in order, every deployment folder
+    """The calls made so far in this session, in order, every workflow group folder
     `stage` made, each with the number of calls made before it, and the session's
     own API key, which every `canyonos` it runs gets as CANYONOS_API_KEY, so a run
     never uses the caller's `~/.canyonos/api_key` nor writes its key there."""
@@ -99,7 +99,7 @@ class Recorder:
         return call
 
     def staged_since(self, start: int) -> list[Path]:
-        """The deployment folders staged once `start` calls had been made."""
+        """The workflow group folders staged once `start` calls had been made."""
         return [path for index, path in self.staged if index >= start]
 
     def dump(self, path: Path, start: int = 0) -> None:
@@ -330,8 +330,8 @@ def canyonos(
     check: bool = True,
     keyed: bool = True,
 ) -> Call:
-    """Run the checkout's `canyonos` command in the project directory `cwd`, with the
-    session's API key unless `keyed` is False."""
+    """Run the checkout's `canyonos` command in the folder `cwd`, with the session's
+    API key unless `keyed` is False."""
     argv = ["uv", "run", "--project", str(REPO_ROOT), "--frozen", "canyonos", *args]
     env = cli_env(recorder.api_key if keyed else None)
     return run(recorder, argv, cwd=cwd, env=env, timeout=timeout, check=check)
@@ -472,8 +472,8 @@ class Api:
         return self.request("DELETE", path, **kwargs)
 
 
-def traces(api: Api, project_id: str) -> list[dict]:
-    """The project's traces from the last hour, as the dashboard API lists them."""
+def traces(api: Api, workflow_id: str) -> list[dict]:
+    """The workflow's traces from the last hour, as the dashboard API lists them."""
     now = datetime.now(timezone.utc)
     window = urlencode(
         {
@@ -481,7 +481,7 @@ def traces(api: Api, project_id: str) -> list[dict]:
             "to": (now + timedelta(minutes=5)).isoformat(),
         }
     )
-    path = f"/projects/{project_id}/monitoring/traces?{window}"
+    path = f"/workflows/{workflow_id}/monitoring/traces?{window}"
     return api.get(path).json()["traces"]
 
 
@@ -512,70 +512,83 @@ def collect_container_logs(
         (directory / f"{name}.log").write_text(call.output)
 
 
-def project_root(workspace: Path) -> Path:
-    """The folder `canyonos` reads the project in the project folder `workspace`
-    from: `.canyon` when there is one, else the project folder itself, the rule the
+def workflow_root(workspace: Path) -> Path:
+    """The folder `canyonos` reads the workflow in the workflow folder `workspace`
+    from: `.canyon` when there is one, else the workflow folder itself, the rule the
     CLI follows."""
     canyon = workspace / ".canyon"
     return canyon if canyon.is_dir() else workspace
 
 
-def project_dir(deployment: Path) -> Path:
-    """The project folder `stage` put in the deployment folder `deployment`: the
-    folder of the same name inside it, so the project and the dashboard share it."""
+def workflow_dir(deployment: Path) -> Path:
+    """The workflow folder `stage` put in the workflow group folder `deployment`: the
+    folder of the same name inside it, so the workflow and the dashboard share it."""
     return deployment / deployment.name
 
 
+def workflow_name(workspace: Path, deployment: Path | None = None) -> str:
+    """The name the workflow group in `deployment`, by default the folder holding
+    `workspace`, gives the workflow folder `workspace`: its `workflows:` entry's, its
+    folder's name and the start of its workflow_id, which the deploy writes."""
+    deployment = deployment or workspace.parent
+    config = yaml.safe_load((deployment / "workflow_group.yaml").read_text())
+    for name, entry in (config.get("workflows") or {}).items():
+        if (deployment / entry["path"]).resolve() == workspace.resolve():
+            return name
+    raise AssertionError(
+        f"{deployment}/workflow_group.yaml has no workflow for {workspace}"
+    )
+
+
 def qualified(workspace: Path, name: str) -> str:
-    """`name`, an agent or `<agent>.<method>` of the project in the project folder
-    `workspace`, as the deployment names it: `<project>.<name>`. Staged folders
-    already have the names the CLI gives projects."""
-    return f"{workspace.name}.{name}"
+    """`name`, an agent or `<agent>.<method>` of the workflow in the workflow folder
+    `workspace`, as the workflow group names it: `<workflow>.<name>`."""
+    return f"{workflow_name(workspace)}.{name}"
 
 
 def docker_name(agent: str) -> str:
-    """An agent's name, `<project>.<agent>`, as its containers and image name it:
+    """An agent's name, `<workflow>.<agent>`, as its containers and image name it:
     lowercase, with the `.` written `--`."""
     return agent.lower().replace(".", "--")
 
 
-def stage(recorder: Recorder, project, parent: Path, secrets: dict[str, str]) -> Path:
-    """Copy `project` into `parent/<name>/<name>` and return `parent/<name>`, the
-    deployment folder to run `canyonos` from, named as the dashboard names the
-    deployment, and note it on `recorder` for the traces. In order: its source from
+def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -> Path:
+    """Copy `workflow` into `parent/<name>/<name>` and return `parent/<name>`, the
+    workflow group folder to run `canyonos` from, named as the dashboard names the
+    workflow group, and note it on `recorder` for the traces. In order: its source from
     this repo, without any `.car`, `.canyon` or `.env` at any depth, or cloned whole
-    at its pinned commit, with the `deployment.yaml` of the deployment folder a
+    at its pinned commit, with the `workflow_group.yaml` of the workflow group folder a
     source from this repo sits in; then its committed port as `.canyon`; then its
-    overlay files; then its `deployment.yaml`, if any, moved up into the deployment
-    folder; then the project's `env` and `secrets` added to the project folder's
+    overlay files; then its `workflow_group.yaml`, if any, moved up into the workflow group
+    folder; then the workflow's `env` and `secrets` added to the workflow folder's
     `.env`."""
-    from .projects import Git
+    from .workflows import Git
 
-    deployment = parent / project.name
-    staged = project_dir(deployment)
+    deployment = parent / workflow.name
+    staged = workflow_dir(deployment)
     recorder.staged.append((len(recorder.calls), deployment))
-    if isinstance(project.source, Git):
-        clone = parent / f"{project.name}-clone"
+    if isinstance(workflow.source, Git):
+        clone = parent / f"{workflow.name}-clone"
         git = ["git", "-c", "advice.detachedHead=false"]
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        url = project.source.clone_url
+        url = workflow.source.clone_url
         argv = [*git, "clone", "--filter=blob:none", "--no-checkout", url, str(clone)]
         run(recorder, argv, cwd=parent, env=env)
-        sparse = [*git, "sparse-checkout", "set", project.source.path]
+        sparse = [*git, "sparse-checkout", "set", workflow.source.path]
         run(recorder, sparse, cwd=clone, env=env)
-        run(recorder, [*git, "checkout", project.source.ref], cwd=clone, env=env)
-        shutil.copytree(clone / project.source.path, staged, symlinks=True)
+        run(recorder, [*git, "checkout", workflow.source.ref], cwd=clone, env=env)
+        shutil.copytree(clone / workflow.source.path, staged, symlinks=True)
     else:
-        shutil.copytree(project.source, staged, symlinks=True, ignore=_stale)
-        if (project.source.parent / "deployment.yaml").is_file():
-            shutil.copy(project.source.parent / "deployment.yaml", deployment)
-    if project.port is not None:
-        shutil.copytree(project.port, staged / ".canyon", dirs_exist_ok=True)
-    for target, file in project.overlay.items():
+        shutil.copytree(workflow.source, staged, symlinks=True, ignore=_stale)
+        if (workflow.source.parent / "workflow_group.yaml").is_file():
+            shutil.copy(workflow.source.parent / "workflow_group.yaml", deployment)
+    if workflow.port is not None:
+        shutil.copytree(workflow.port, staged / ".canyon", dirs_exist_ok=True)
+    for target, file in workflow.overlay.items():
         shutil.copy(file, staged / target)
-    if (staged / "deployment.yaml").is_file():
-        (staged / "deployment.yaml").rename(deployment / "deployment.yaml")
-    _write_env(staged / ".env", {**project.env, **secrets})
+    if (staged / "workflow_group.yaml").is_file():
+        (staged / "workflow_group.yaml").rename(deployment / "workflow_group.yaml")
+    _write_env(staged / ".env", {**workflow.env, **secrets})
     return deployment
 
 
@@ -587,7 +600,7 @@ def _stale(directory, names):
 
 
 def _write_env(path: Path, values: dict[str, str]) -> None:
-    """Keep the `.env` lines the staged project already has (a cloned source's or
+    """Keep the `.env` lines the staged workflow already has (a cloned source's or
     an overlay's; a repo source's was skipped), drop any line for a key set here,
     then append the values."""
     kept = []
@@ -600,12 +613,12 @@ def _write_env(path: Path, values: dict[str, str]) -> None:
     path.write_text("\n".join(lines))
 
 
-def query_for(project, workspace: Path):
-    """The query the project is checked with: project.yaml's `query`, else the
+def query_for(workflow, workspace: Path):
+    """The query the workflow is checked with: workflow.yaml's `query`, else the
     port's `config/test_query.txt`."""
-    if project.query is not None:
-        return project.query
-    return (project_root(workspace) / "config" / "test_query.txt").read_text().strip()
+    if workflow.query is not None:
+        return workflow.query
+    return (workflow_root(workspace) / "config" / "test_query.txt").read_text().strip()
 
 
 def as_argument(endpoint: Endpoint, query) -> str:
@@ -619,8 +632,8 @@ def as_argument(endpoint: Endpoint, query) -> str:
 
 
 def manifest(workspace: Path) -> dict:
-    """The project's parsed `config/workflow_config.yaml`."""
-    path = project_root(workspace) / "config" / "workflow_config.yaml"
+    """The workflow's parsed `config/workflow_config.yaml`."""
+    path = workflow_root(workspace) / "config" / "workflow_config.yaml"
     return yaml.safe_load(path.read_text())
 
 
@@ -638,7 +651,7 @@ def hash_api_key(api_key: str) -> str:
 @dataclass(frozen=True)
 class Endpoint:
     """The deployed endpoint: its base URL, its first route
-    (`<project>/<agent>/<method>`), the agent that route calls (`<project>.<agent>`),
+    (`<workflow>/<agent>/<method>`), the agent that route calls (`<workflow>.<agent>`),
     the name of that method's first argument (the one a query goes in), the API key
     it is called with (None for a deploy without one) and the names of all its
     arguments."""
@@ -657,8 +670,8 @@ class Endpoint:
 
 
 def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
-    """Run `script` with the checkout's CLI modules from the deployment folder, the
-    way the CLI itself would see the deployment. Python runs isolated (`-I`), so a project
+    """Run `script` with the checkout's CLI modules from the workflow group folder, the
+    way the CLI itself would see the workflow group. Python runs isolated (`-I`), so a workflow
     file such as `json.py` never shadows a module the script imports."""
     argv = [
         "uv",
@@ -682,7 +695,7 @@ def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str
 
 
 def deployment_group(recorder: Recorder, workspace: Path) -> str:
-    """The Docker group of the deployment in `workspace`, `canyonos-<folder>-`
+    """The Docker group of the workflow group in `workspace`, `canyonos-<folder>-`
     and the start of its deployment_id, which every container name starts with."""
     return cli_value(
         recorder,
@@ -692,11 +705,11 @@ def deployment_group(recorder: Recorder, workspace: Path) -> str:
     )
 
 
-def stop_project(
+def stop_workflow_group(
     recorder: Recorder, workspace: Path, *, timeout: int = 600
 ) -> Call | None:
-    """`canyonos stop <name>` for the deployment in `workspace`, named so the
-    stop never has to ask which deployment when others run too. None when the
+    """`canyonos stop <name>` for the workflow group in `workspace`, named so the
+    stop never has to ask which workflow group when others run too. None when the
     folder has no deploy record, so there is nothing to stop."""
     name = cli_value(
         recorder,
@@ -711,29 +724,23 @@ def stop_project(
     )
 
 
-def deployed_project_id(
-    recorder: Recorder, api: Api, workspace: Path, name: str
-) -> str:
-    """The dashboard id of the deployment in `workspace`: the `deployment_id`
-    `canyonos deploy` saved in its `deployment.yaml`, which the dashboard registers
-    it under. Fail unless the dashboard lists that id as `name`."""
-    project_id = cli_value(
-        recorder,
-        workspace,
-        "read_config(deployment_config_path()).get('deployment_id')",
-        "from canyonos.constants import deployment_config_path, read_config",
+def deployed_workflow_id(api: Api, workspace: Path) -> str:
+    """The dashboard id of the workflow in the workflow group folder `workspace`: the
+    `workflow_id` `canyonos deploy` saved for it in `workflow_group.yaml`, which the
+    dashboard registers it under. Fail unless the dashboard lists it by its name."""
+    name = workflow_name(workflow_dir(workspace))
+    config = yaml.safe_load((workspace / "workflow_group.yaml").read_text())
+    workflow_id = config["workflows"][name]["workflow_id"]
+    workflows = api.get("/workflows").json()
+    names = {workflow["id"]: workflow["name"] for workflow in workflows}
+    assert names.get(workflow_id) == name, (
+        f"the dashboard does not list {workflow_id} as {name}: {workflows}"
     )
-    assert project_id, f"no deployment_id in {workspace.name}'s deployment.yaml"
-    projects = api.get("/projects").json()
-    names = {project["id"]: project["name"] for project in projects}
-    assert names.get(project_id) == name, (
-        f"the dashboard does not list {project_id} as {name}: {projects}"
-    )
-    return project_id
+    return workflow_id
 
 
 def redis_port(recorder: Recorder, workspace: Path) -> int:
-    """The host port of the deployed project's Redis, as the CLI recorded it."""
+    """The host port of the deployed workflow group's Redis, as the CLI recorded it."""
     return cli_value(
         recorder,
         workspace,
@@ -743,7 +750,7 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
 
 
 def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
-    """The headers the CLI sends the deployment's Global Controller, with the secret
+    """The headers the CLI sends the workflow group's Global Controller, with the secret
     its state.json holds."""
     return cli_value(
         recorder,
@@ -754,7 +761,7 @@ def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
 
 
 def redis_client_files(recorder: Recorder, workspace: Path) -> dict[str, str] | None:
-    """A client certificate the deployment's CA signs, written to a private temp folder:
+    """A client certificate the workflow group's CA signs, written to a private temp folder:
     `{ca, cert, key}` file paths, or None when its Redis takes plaintext."""
     pems = cli_value(
         recorder,
@@ -775,7 +782,7 @@ def redis_client_files(recorder: Recorder, workspace: Path) -> dict[str, str] | 
 
 
 def redis_tls_context(recorder: Recorder, workspace: Path) -> ssl.SSLContext | None:
-    """The TLS context a host process reaches the deployment's Redis with, presenting the
+    """The TLS context a host process reaches the workflow group's Redis with, presenting the
     client certificate its CA signs; None when its Redis takes plaintext."""
     files = redis_client_files(recorder, workspace)
     if files is None:
@@ -786,14 +793,14 @@ def redis_tls_context(recorder: Recorder, workspace: Path) -> ssl.SSLContext | N
 
 
 def redis_password(recorder: Recorder, workspace: Path) -> str:
-    """The password the deployed project's Redis container was started with."""
+    """The password the deployed workflow group's Redis container was started with."""
     container = f"{deployment_group(recorder, workspace)}-redis-localhost"
     env = docker(recorder, ["inspect", "-f", "{{json .Config.Env}}", container]).json()
     return dict(entry.split("=", 1) for entry in env)["CANYONOS_REDIS_PASSWORD"]
 
 
-def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
-    """The deployed project's Redis, on the host port the CLI recorded for it, signed in
+def workflow_group_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
+    """The deployed workflow group's Redis, on the host port the CLI recorded for it, signed in
     with its container's password, over TLS with a client certificate its CA signs when
     its Redis takes only that."""
     files = redis_client_files(recorder, workspace)
@@ -819,7 +826,7 @@ def project_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
 def deployed_endpoint(
     recorder: Recorder, workspace: Path, *, keyed: bool = True
 ) -> Endpoint:
-    """Ask the running Global Controller for the endpoint, from the deployment folder,
+    """Ask the running Global Controller for the endpoint, from the workflow group folder,
     called with the session's API key unless `keyed` is False."""
     endpoint = cli_value(
         recorder,
@@ -830,8 +837,8 @@ def deployed_endpoint(
     route = endpoint["routes"][0]
     return Endpoint(
         url=f"http://127.0.0.1:{endpoint['api_port']}",
-        route=f"{route['project']}/{route['agent']}/{route['method']}",
-        agent=f"{route['project']}.{route['agent']}",
+        route=route["workflow_id"],
+        agent=f"{route['workflow']}.{route['agent']}",
         argument=route["arguments"][0],
         api_key=recorder.api_key if keyed else None,
         arguments=tuple(route["arguments"]),
@@ -914,7 +921,7 @@ def greets(recorder: Recorder, workspace: Path, name: str) -> None:
     assert result == {"greeting": f"Hello, {name}! I'm the HelloAgent!"}, result
 
 
-def project_containers(
+def workflow_group_containers(
     recorder: Recorder, group: str, *, every=False
 ) -> dict[str, str]:
     """The containers in the Docker group `group` by name, each with its state;

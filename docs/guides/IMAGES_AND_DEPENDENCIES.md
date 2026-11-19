@@ -6,7 +6,7 @@ start with an import error or a missing file.
 
 ## What `/app` can import
 
-Each image is built on the [Python version](#python-version) the project asks for,
+Each image is built on the [Python version](#python-version) the workflow asks for,
 copies its build context into `/app`, and starts there. The agent's controller puts
 `/app` and `/app/grpc_stubs` on `sys.path`.
 Nothing sets `PYTHONPATH` and nothing is installed from your source tree, so every

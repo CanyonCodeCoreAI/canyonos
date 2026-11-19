@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Error(BaseModel):
-    """Every error answer; `findings` and `warnings` only come with `project_invalid`."""
+    """Every error answer; `findings` and `warnings` only come with
+    `workflow_invalid`."""
 
     error: str
     code: str
@@ -20,44 +21,44 @@ class Error(BaseModel):
     warnings: list[str] | None = None
 
 
-class DeploymentBody(BaseModel):
-    """`config` is `deployment.yaml`'s text and `env` the `.env` beside it, null for
-    none. `projects`, when given, is every project the deployment has; the uploaded
-    projects it leaves out are removed. `api_key_hash`, when given, is the SHA-256 of the
-    deploy's API key, "" for none, used only on Kubernetes, where a change restarts the
-    deploy."""
+class WorkflowGroupBody(BaseModel):
+    """`config` is `workflow_group.yaml`'s text and `env` the `.env` beside it, null for
+    none. `workflows`, when given, is every workflow the workflow group has; the
+    uploaded workflows it leaves out are removed. `api_key_hash`, when given, is the
+    SHA-256 of the deploy's API key, "" for none, used only on Kubernetes, where a
+    change restarts the deploy."""
 
     name: str
     config: str
     env: str | None
-    projects: list[str] | None = None
+    workflows: list[str] | None = None
     api_key_hash: str | None = None
 
 
-class DeploymentPath(BaseModel):
-    deployment_id: str
+class WorkflowGroupPath(BaseModel):
+    workflow_group_id: str
 
 
-class Deployment(BaseModel):
-    """`name` is what the deployment's `PUT` last sent, empty before one."""
+class WorkflowGroup(BaseModel):
+    """`name` is what the workflow group's `PUT` last sent, empty before one."""
 
-    deployment_id: str
+    workflow_group_id: str
     name: str
 
 
-class Deployments(BaseModel):
-    deployments: list[Deployment]
+class WorkflowGroups(BaseModel):
+    workflow_groups: list[WorkflowGroup]
 
 
-class ProjectPath(DeploymentPath):
+class WorkflowPath(WorkflowGroupPath):
     # Python's regex engine, for the look-ahead that refuses `.` and `..`.
     model_config = ConfigDict(regex_engine="python-re")
 
     name: str = Field(pattern=r"^(?!\.\.?$)[^/]+$")
 
 
-class ProjectArchive(RawModel):
-    """A gzip tar of a project's folder, paths relative to it, with its `.env`."""
+class WorkflowArchive(RawModel):
+    """A gzip tar of a workflow's folder, paths relative to it, with its `.env`."""
 
     mimetypes = ["application/gzip"]
 
@@ -78,9 +79,13 @@ class DashboardBody(BaseModel):
     url: str
 
 
-class DashboardProject(BaseModel):
-    project_id: str
+class DashboardWorkflow(BaseModel):
+    workflow_id: str
     name: str
+
+
+class DashboardWorkflows(BaseModel):
+    workflows: list[DashboardWorkflow]
 
 
 class TailQuery(BaseModel):
@@ -92,7 +97,7 @@ class LogsQuery(TailQuery):
     follow: bool = False
 
 
-class AgentPath(DeploymentPath):
+class AgentPath(WorkflowGroupPath):
     name: str
 
 
@@ -102,7 +107,8 @@ class SlowestStep(BaseModel):
 
 
 class Route(BaseModel):
-    project: str
+    workflow: str
+    workflow_id: str | None
     agent: str
     method: str
     arguments: list[str]
@@ -141,9 +147,9 @@ class LastApply(BaseModel):
 
 
 class Status(BaseModel):
-    """`name` and `config` are what the deployment's `PUT` last sent, without the `.env`;
-    `running` is whether the deploy process is alive, so a failed deploy can still be
-    running while it stops itself."""
+    """`name` and `config` are what the workflow group's `PUT` last sent, without the
+    `.env`; `running` is whether the deploy process is alive, so a failed deploy can
+    still be running while it stops itself."""
 
     version: str
     name: str
@@ -193,14 +199,14 @@ class ReplicaLogs(BaseModel):
 
 
 class Fingerprints(BaseModel):
-    """Digests over a project's uploaded files: `config` over its `config/` files and
+    """Digests over a workflow's uploaded files: `config` over its `config/` files and
     `.env`, which a reload applies, and `code` over the rest."""
 
     code: str
     config: str
 
 
-class Project(BaseModel):
+class Workflow(BaseModel):
     """`test_query` is its `config/test_query.txt`, null when it has none."""
 
     name: str
@@ -208,8 +214,8 @@ class Project(BaseModel):
     test_query: str | None
 
 
-class Projects(BaseModel):
-    projects: list[Project]
+class Workflows(BaseModel):
+    workflows: list[Workflow]
 
 
 TEXT = {"content": {"text/plain": {"schema": {"type": "string"}}}}

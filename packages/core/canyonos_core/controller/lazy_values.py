@@ -13,14 +13,14 @@ agent's own modules through this module, which rewrites each one as it is import
   blocking the event loop.
 - A line that only passes a value along (`x = a`, `[a, b]`, `return a`) leaves it
   a Future, so nothing waits.
-- A call decides when it runs. Another agent's call and the project's own functions
+- A call decides when it runs. Another agent's call and the workflow's own functions
   take Futures as they are: the called agent's replica waits for them just before
-  it runs, and the project's code is rewritten too. Anything else, such as a library,
+  it runs, and the workflow's code is rewritten too. Anything else, such as a library,
   `print` or `json.dumps`, gets the results, inside dicts, lists and tuples too, and
-  in the attributes of the project's own objects.
+  in the attributes of the workflow's own objects.
 
-Only the project's files that call an agent are rewritten: those that import an
-agent's stub, directly or through another of the project's files that does. Every
+Only the workflow's files that call an agent are rewritten: those that import an
+agent's stub, directly or through another of the workflow's files that does. Every
 other file, such as a helper module or an agent that calls no other, is loaded as
 written and runs at full speed; a call from rewritten code hands it results, as it
 does a library. The standard library, installed packages, CanyonOS's own modules and
@@ -76,8 +76,8 @@ CANYONOS_FLAT_FILES = frozenset(
     }
 )
 
-# Directories under the project that hold someone else's code: the image's copy of
-# the LLM Gateway, and a virtualenv left in the project.
+# Directories under the workflow that hold someone else's code: the image's copy of
+# the LLM Gateway, and a virtualenv left in the workflow.
 _SKIPPED_DIRECTORIES = frozenset(
     {"canyonos_core", "site-packages", "dist-packages", ".venv", "venv"}
 )
@@ -106,9 +106,9 @@ FUTURE_ATTRIBUTES = frozenset({"value", "resolved", "is_available"})
 
 _REWRITTEN_FILES = set()
 _REWRITTEN_MODULES = set()
-# Every module loaded from the project's files, rewritten or not: a library handed
+# Every module loaded from the workflow's files, rewritten or not: a library handed
 # one of their objects gets the Futures on it resolved (see _replace_attributes).
-_PROJECT_MODULES = set()
+_WORKFLOW_MODULES = set()
 _install_lock = threading.Lock()
 _installed_roots = set()
 
@@ -173,18 +173,18 @@ _CONTAINERS = (dict, list, tuple, set, frozenset)
 
 def _may_hold_futures(kind):
     """True for a type whose objects can be or hold a Future: a Future, a container,
-    or one of the project's own classes."""
+    or one of the workflow's own classes."""
     return (
         issubclass(kind, Future)
         or kind in _CONTAINERS
-        or kind.__module__ in _PROJECT_MODULES
+        or kind.__module__ in _WORKFLOW_MODULES
     )
 
 
 def _replace_futures(value, seen):
     """`value` with every Future in it, at any depth of dicts, lists, tuples and sets,
     replaced by its result. The same object when it holds none. An object of one of
-    the project's own classes is kept, with the Futures in its attributes replaced in
+    the workflow's own classes is kept, with the Futures in its attributes replaced in
     place (see _replace_attributes)."""
     if isinstance(value, Future):
         return value.resolved()
@@ -192,7 +192,7 @@ def _replace_futures(value, seen):
     if id(value) in seen:
         return value
     if kind not in _CONTAINERS:
-        if kind.__module__ in _PROJECT_MODULES:
+        if kind.__module__ in _WORKFLOW_MODULES:
             _replace_attributes(value, seen)
         return value
     # The kinds of items, gathered at C speed, so a list of 20,000 strings is not
@@ -221,9 +221,9 @@ def _replace_futures(value, seen):
 
 
 def _replace_attributes(value, seen):
-    """Replace each Future in the attributes of `value`, an object of a project class,
+    """Replace each Future in the attributes of `value`, an object of a workflow class,
     by its result, in the object itself: a library it is handed may keep it, so the
-    project's code and the library go on seeing the same object. Written straight to
+    workflow's code and the library go on seeing the same object. Written straight to
     `__dict__`, so a frozen dataclass or a model that checks assignments takes it."""
     attributes = getattr(value, "__dict__", None)
     if not isinstance(attributes, dict):
@@ -364,10 +364,10 @@ def _code_is_rewritten(func):
     return code is not None and code.co_filename in _REWRITTEN_FILES
 
 
-def _is_project_code(func):
+def _is_workflow_code(func):
     """True when calling `func` runs rewritten code first, which waits for a Future
-    where it uses it: a project function or method, a project class whose own
-    `__init__` takes the arguments, or a project object's `__call__`. A class whose
+    where it uses it: a workflow function or method, a workflow class whose own
+    `__init__` takes the arguments, or a workflow object's `__call__`. A class whose
     arguments reach a library first, such as a pydantic model, is not."""
     if isinstance(func, functools.partial):
         func = func.func
@@ -398,7 +398,7 @@ def _treatment(func):
         if type(owner) is kind and getattr(func, "__name__", None) in methods:
             treatment = methods[func.__name__]
             return treatment, (_KEEP if treatment == _KEEP else _SHALLOW)
-    if _is_project_code(func):
+    if _is_workflow_code(func):
         return _KEEP, _KEEP
     return _DEEP, _DEEP
 
@@ -828,7 +828,7 @@ def compile_source(source, path, module_name=None):
 
 
 class _RewritingLoader(importlib.machinery.SourceFileLoader):
-    """Loads a project file rewritten. Nothing is cached in `__pycache__`, so a
+    """Loads a workflow file rewritten. Nothing is cached in `__pycache__`, so a
     rewritten module never stands in for the file as written."""
 
     def get_code(self, fullname):
@@ -840,8 +840,8 @@ class _RewritingLoader(importlib.machinery.SourceFileLoader):
         super().exec_module(module)
 
 
-def _is_project_file(path, root):
-    """True when `path` is the project's own Python code under `root`."""
+def _is_workflow_file(path, root):
+    """True when `path` is the workflow's own Python code under `root`."""
     path, root = os.path.realpath(path), os.path.realpath(root)
     if not path.endswith(".py") or os.path.commonpath([path, root]) != root:
         return False
@@ -857,7 +857,7 @@ def _is_project_file(path, root):
 # A generated stub's class carries this line (stub_generator._build_stub_class).
 _STUB_MARKER = re.compile(r"^\s*__canyon_stub__\s*=\s*True\s*$", re.M)
 
-# By file: whether it is a stub, and the project files it imports.
+# By file: whether it is a stub, and the workflow files it imports.
 _IMPORTS = {}
 # By file: whether it calls an agent (see calls_agents).
 _CALLS_AGENTS = {}
@@ -900,7 +900,7 @@ def _imported_names(tree, package):
 
 
 def _scan(path, root):
-    """Whether the file at `path` is a stub, and the project files it imports."""
+    """Whether the file at `path` is a stub, and the workflow files it imports."""
     if path not in _IMPORTS:
         try:
             with open(path, "rb") as file:
@@ -921,8 +921,8 @@ def _scan(path, root):
 
 
 def calls_agents(path, root):
-    """True when the project file at `path` imports an agent's stub, directly or
-    through another of the project's files that does: only such a file can get a
+    """True when the workflow file at `path` imports an agent's stub, directly or
+    through another of the workflow's files that does: only such a file can get a
     Future from a call, so only it is rewritten."""
     path, root = os.path.realpath(path), os.path.realpath(root)
     if path not in _CALLS_AGENTS:
@@ -932,16 +932,16 @@ def calls_agents(path, root):
                 if _scan(imported, root)[0]:
                     found = True
                     break
-                if imported not in seen and _is_project_file(imported, root):
+                if imported not in seen and _is_workflow_file(imported, root):
                     seen.add(imported)
                     pending.append(imported)
         _CALLS_AGENTS[path] = found
     return _CALLS_AGENTS[path]
 
 
-class _ProjectFinder(importlib.abc.MetaPathFinder):
-    """Finds a module the usual way and, when it is the project's own code that
-    calls an agent, loads it rewritten. Other project code loads as written."""
+class _WorkflowFinder(importlib.abc.MetaPathFinder):
+    """Finds a module the usual way and, when it is the workflow's own code that
+    calls an agent, loads it rewritten. Other workflow code loads as written."""
 
     def __init__(self, root):
         self.root = root
@@ -952,10 +952,10 @@ class _ProjectFinder(importlib.abc.MetaPathFinder):
             spec is None
             or spec.origin is None
             or not isinstance(spec.loader, importlib.machinery.SourceFileLoader)
-            or not _is_project_file(spec.origin, self.root)
+            or not _is_workflow_file(spec.origin, self.root)
         ):
             return None
-        _PROJECT_MODULES.add(fullname)
+        _WORKFLOW_MODULES.add(fullname)
         if not calls_agents(spec.origin, self.root):
             return None
         spec.loader = _RewritingLoader(fullname, spec.origin)
@@ -973,7 +973,7 @@ def enabled():
 
 
 def install(root):
-    """Rewrite every module imported from under `root`, the project's directory, that
+    """Rewrite every module imported from under `root`, the workflow's directory, that
     calls an agent, from now on. Does nothing when turned off, or when already done
     for `root`."""
     if not enabled():
@@ -982,7 +982,7 @@ def install(root):
         if root in _installed_roots:
             return
         _installed_roots.add(root)
-        sys.meta_path.insert(0, _ProjectFinder(root))
+        sys.meta_path.insert(0, _WorkflowFinder(root))
 
 
 def loader_for(module_name, path):
@@ -991,7 +991,7 @@ def loader_for(module_name, path):
     the entrypoint calls no agent."""
     if not enabled():
         return None
-    _PROJECT_MODULES.add(module_name)
+    _WORKFLOW_MODULES.add(module_name)
     if not calls_agents(path, os.path.dirname(os.path.abspath(path))):
         return None
     return _RewritingLoader(module_name, path)

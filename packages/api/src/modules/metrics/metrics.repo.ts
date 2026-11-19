@@ -11,7 +11,6 @@ import type { GridQuery, TimeRange } from '@core/time-range';
 import { distribution_sql } from './metrics.distribution';
 import {
   isModelSpan,
-  projectRequestSpans,
   requestStart,
   spanAgentId,
   spanCacheHitRatio,
@@ -23,6 +22,7 @@ import {
   spanServerCost,
   spanTokenCost,
   spanTotalTokens,
+  workflowRequestSpans,
 } from './metrics.sql';
 import { DistributionMetricSchema } from './metrics.types';
 import type {
@@ -118,7 +118,7 @@ const timeseries_sql = ({
   query,
   prelude,
 }: {
-  /** Spans read through `projectRequestSpans`, which carry `request_start_unix_nano`. */
+  /** Spans read through `workflowRequestSpans`, which carry `request_start_unix_nano`. */
   source: string;
   query: GridQuery;
   /** Already comma-terminated: this statement owns its own `with`. */
@@ -183,10 +183,10 @@ const AGENT_DISTRIBUTION_COLUMNS = AGENT_DISTRIBUTIONS.map((d) => `${d.json} as 
 );
 
 export const metrics_repo = {
-  async kpis_by_project(project_id: string, range: TimeRange): Promise<MetricsKpis> {
+  async kpis_by_workflow(workflow_id: string, range: TimeRange): Promise<MetricsKpis> {
     const per = run_rate_per(range);
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, range)})
+      with scoped as (${workflowRequestSpans(workflow_id, range)})
       select now()::text as generated_at,
         ${sql.raw(KPI_COLUMNS)},
         ${sql.raw(KPI_COST_PER_REQUEST_COLUMN)},
@@ -196,29 +196,29 @@ export const metrics_repo = {
     const row = (
       rows as unknown as [MetricsKpi & { generated_at: string; run_rate: string | null }]
     )[0];
-    return { project_id, from: range.from, to: range.to, ...row, run_rate_per: per };
+    return { workflow_id, from: range.from, to: range.to, ...row, run_rate_per: per };
   },
 
-  async distribution_by_project(
-    project_id: string,
+  async distribution_by_workflow(
+    workflow_id: string,
     metric: DistributionMetric,
     range: TimeRange,
     buckets: number
   ): Promise<MetricsDistribution> {
     const distribution = distribution_sql({ metric, source: 'scoped s', buckets });
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, range)}),
+      with scoped as (${workflowRequestSpans(workflow_id, range)}),
       ${sql.raw(distribution.ctes)}
       select ${sql.raw(distribution.json)} as stats
     `);
     const row = (rows as unknown as [{ stats: DistributionStats }])[0];
-    return { project_id, metric, ...range, ...row.stats };
+    return { workflow_id, metric, ...range, ...row.stats };
   },
 
-  async timeseries_by_project(project_id: string, query: GridQuery): Promise<MetricsTimeseries> {
+  async timeseries_by_workflow(workflow_id: string, query: GridQuery): Promise<MetricsTimeseries> {
     const rows = await db.execute(
       timeseries_sql({
-        prelude: sql`scoped as (${projectRequestSpans(project_id, query)}), `,
+        prelude: sql`scoped as (${workflowRequestSpans(workflow_id, query)}), `,
         source: 'scoped s',
         query,
       })
@@ -227,7 +227,7 @@ export const metrics_repo = {
       rows as unknown as [{ bucket_seconds: number; points: MetricsTimeseries['points'] }]
     )[0];
     return {
-      project_id,
+      workflow_id,
       from: query.from,
       to: query.to,
       bucket_seconds: row.bucket_seconds,
@@ -235,9 +235,9 @@ export const metrics_repo = {
     };
   },
 
-  async blocks_by_project(project_id: string, range: TimeRange): Promise<MetricsBlocks> {
+  async blocks_by_workflow(workflow_id: string, range: TimeRange): Promise<MetricsBlocks> {
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, range)}),
+      with scoped as (${workflowRequestSpans(workflow_id, range)}),
       ${sql.raw(AGENTS_CTE)},
       grouped as (
         select
@@ -273,16 +273,16 @@ export const metrics_repo = {
         ), '[]'::json) as blocks
     `);
     const row = (rows as unknown as [{ total_cost: string; blocks: MetricsBlocks['blocks'] }])[0];
-    return { project_id, ...range, total_cost: row.total_cost, blocks: row.blocks };
+    return { workflow_id, ...range, total_cost: row.total_cost, blocks: row.blocks };
   },
 
-  async agent_details_by_project(
-    project_id: string,
+  async agent_details_by_workflow(
+    workflow_id: string,
     agent_id: string,
     query: GridQuery
   ): Promise<MetricsAgentDetails | null> {
     const rows = await db.execute(sql`
-      with scoped as (${projectRequestSpans(project_id, query)}),
+      with scoped as (${workflowRequestSpans(workflow_id, query)}),
       ${sql.raw(AGENTS_CTE)},
       agent_rows as (
         select s.*
@@ -290,7 +290,7 @@ export const metrics_repo = {
         join agents a on a.name = s.name
         where a.agent_id = ${agent_id}
       ),
-      project_totals as (
+      workflow_totals as (
         select
           count(distinct s.trace_id)::int as request_count,
           coalesce(sum(${sql.raw(spanCost('s'))}), 0)::numeric(20, 10)::text as total_cost
@@ -312,8 +312,8 @@ export const metrics_repo = {
           order by count(*) desc, s.name
           limit 1
         ) as label,
-        pt.request_count as project_request_count,
-        pt.total_cost as project_total_cost,
+        pt.request_count as workflow_request_count,
+        pt.total_cost as workflow_total_cost,
         a.request_count,
         a.replica_count,
         a.cost,
@@ -330,15 +330,15 @@ export const metrics_repo = {
         ts.points,
         ${sql.raw(AGENT_DISTRIBUTION_COLUMNS)}
       from agent_summary a
-      cross join project_totals pt
+      cross join workflow_totals pt
       cross join series ts
     `);
     const row = (
       rows as unknown as [
         | (Record<DistributionMetric, DistributionStats> & {
             label: string | null;
-            project_request_count: number;
-            project_total_cost: string;
+            workflow_request_count: number;
+            workflow_total_cost: string;
             request_count: number;
             replica_count: number;
             cost: string;
@@ -361,14 +361,14 @@ export const metrics_repo = {
     if (!row || row.block_count === 0 || row.label === null) return null;
 
     return {
-      project_id,
+      workflow_id,
       agent_id,
       label: row.label,
       from: query.from,
       to: query.to,
-      project: {
-        request_count: row.project_request_count,
-        total_cost: row.project_total_cost,
+      workflow: {
+        request_count: row.workflow_request_count,
+        total_cost: row.workflow_total_cost,
       },
       agent: {
         request_count: row.request_count,

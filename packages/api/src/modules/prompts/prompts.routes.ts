@@ -5,7 +5,7 @@ import { Elysia } from 'elysia';
 import { z } from 'zod';
 
 import { authPlugin } from '../auth/auth.middleware';
-import { resolveProjectAccess } from '../auth/project-access';
+import { resolveWorkflowAccess } from '../auth/workflow-access';
 import { create_system_prompt, get_prompt, list_prompts, set_live } from './prompts.service';
 import {
   PromptListItemSchema,
@@ -16,29 +16,29 @@ import {
 } from './prompts.types';
 
 const doc = { tags: ['Prompts'], security: [{ bearerAuth: [] }] };
-const ProjectParams = z.object({ project_id: z.string().uuid() });
-const PromptParams = ProjectParams.extend({ name: z.string().min(1) });
+const WorkflowParams = z.object({ workflow_id: z.string().uuid() });
+const PromptParams = WorkflowParams.extend({ name: z.string().min(1) });
 
 export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
   .use(authPlugin)
-  .resolve(resolveProjectAccess)
-  .get('/:project_id/prompts', ({ params }) => list_prompts(params.project_id), {
-    params: ProjectParams,
+  .resolve(resolveWorkflowAccess)
+  .get('/:workflow_id/prompts', ({ params }) => list_prompts(params.workflow_id), {
+    params: WorkflowParams,
     response: { 200: z.array(PromptListItemSchema) },
     detail: {
       ...doc,
-      summary: 'List the prompts of the running deployment with the system prompt agents get',
+      summary: 'List the prompts of the running workflow with the system prompt agents get',
     },
   })
-  .get('/:project_id/prompts/:name', ({ params }) => get_prompt(params.project_id, params.name), {
+  .get('/:workflow_id/prompts/:name', ({ params }) => get_prompt(params.workflow_id, params.name), {
     params: PromptParams,
     response: { 200: PromptSchema },
     detail: { ...doc, summary: 'Get one prompt with every stored system prompt' },
   })
   .post(
-    '/:project_id/prompts/:name/versions',
+    '/:workflow_id/prompts/:name/versions',
     async ({ params, body, set }) => {
-      const created = await create_system_prompt(params.project_id, params.name, body);
+      const created = await create_system_prompt(params.workflow_id, params.name, body);
       set.status = 201;
       return created;
     },
@@ -50,8 +50,8 @@ export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
     }
   )
   .put(
-    '/:project_id/prompts/:name/live',
-    ({ params, body }) => set_live(params.project_id, params.name, body),
+    '/:workflow_id/prompts/:name/live',
+    ({ params, body }) => set_live(params.workflow_id, params.name, body),
     {
       params: PromptParams,
       body: PromptLiveSchema,

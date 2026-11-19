@@ -96,7 +96,7 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboa
 		Containers: []corev1.Container{{
 			Name:    "global-controller",
 			Image:   image,
-			Command: []string{pythonCommand, "-m", "canyonos_core.cli", "run-gc", "-c", gcConfigPath + "/deployment.yaml"},
+			Command: []string{pythonCommand, "-m", "canyonos_core.cli", "run-gc", "-c", gcConfigPath + "/workflow_group.yaml"},
 			Env:     gcEnv(p, endpointURL, dashboardNamespace),
 			EnvFrom: appEnv(p.Spec.EnvSecretRef),
 			Ports:   []corev1.ContainerPort{{Name: portHealth, ContainerPort: HealthPort}},

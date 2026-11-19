@@ -37,7 +37,7 @@ export const RunRatePerSchema = z.enum(['hour', 'day']);
 // `run_rate` is `total_cost` over the range's own length, per hour for a range of a day or less and
 // per day beyond. Null when blocks ran and none reported a cost.
 export const MetricsKpisSchema = MetricsKpiSchema.extend({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   run_rate: z.string().nullable(),
   run_rate_per: RunRatePerSchema,
   generated_at: z.string(),
@@ -65,7 +65,7 @@ export const DistributionStatsSchema = z.object({
 });
 
 export const MetricsDistributionSchema = DistributionStatsSchema.extend({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   metric: DistributionMetricSchema,
   ...TIME_RANGE_FIELDS,
 });
@@ -89,7 +89,7 @@ export const TimeseriesPointSchema = z.object({
 });
 
 export const MetricsTimeseriesSchema = z.object({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   ...TIME_RANGE_FIELDS,
   bucket_seconds: z.number().positive(),
   points: z.array(TimeseriesPointSchema),
@@ -117,7 +117,7 @@ export const MetricsBlockSchema = z.object({
 });
 
 export const MetricsBlocksSchema = z.object({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   ...TIME_RANGE_FIELDS,
   total_cost: z.string(),
   blocks: z.array(MetricsBlockSchema),
@@ -140,11 +140,11 @@ export const MetricsAgentTimeseriesSchema = z.object({
 });
 
 export const MetricsAgentDetailsSchema = z.object({
-  project_id: z.string().uuid(),
+  workflow_id: z.string().uuid(),
   agent_id: z.string(),
   label: z.string(),
   ...TIME_RANGE_FIELDS,
-  project: z.object({
+  workflow: z.object({
     request_count: z.number().int().nonnegative(),
     total_cost: z.string(),
   }),

@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 from canyonos_api_interface.client import Client
-from canyonos_api_interface.models import DashboardBody, DeploymentBody
+from canyonos_api_interface.models import DashboardBody, WorkflowGroupBody
 
 from canyonos import deployment, env
 from canyonos.init import load_state
@@ -27,7 +27,7 @@ DASHBOARD_REQUEST_TIMEOUT_SECONDS = 90
 
 class GCError(RuntimeError):
     """A failed Global Controller request, carrying a message fit to print, the HTTP
-    status as `code`, the controller's `error_code` and, for a rejected project, its
+    status as `code`, the controller's `error_code` and, for a rejected workflow, its
     `findings` and `warnings`."""
 
     def __init__(self, message, code=None, findings=(), error_code=None, warnings=()):
@@ -79,7 +79,7 @@ def _request(action, call, *args):
 
 
 class NoDeployError(RuntimeError):
-    """No deploy of this deployment is running; `canyonos` exits with 3."""
+    """No deploy of this workflow group is running; `canyonos` exits with 3."""
 
     exit_code = 3
     error_code = "no_deploy"
@@ -91,7 +91,8 @@ def require_state():
         return load_state()
     except FileNotFoundError:
         raise NoDeployError(
-            "No deploy is running. Run `canyonos deploy <project folder>...` first."
+            "No workflow group is running. Run `canyonos deploy <workflow folder>...` "
+            "first."
         ) from None
 
 
@@ -106,10 +107,11 @@ def existing_deploy():
     return None
 
 
-def put_deployment(state, config, env, projects=None, api_key_hash=None):
-    """Upload the deployment's name, the text `config` of its `deployment.yaml` and the
-    text `env` of the `.env` beside it (None when there is none); with `projects`, the
-    container removes the uploaded projects not among them; with `api_key_hash`, the
+def put_workflow_group(state, config, env, workflows=None, api_key_hash=None):
+    """Upload the workflow group's name, the text `config` of its `workflow_group.yaml`
+    and the text `env` of the `.env` beside it (None when there is none); with
+    `workflows`, the container removes the uploaded workflows not among them; with
+    `api_key_hash`, the
     SHA-256 of the deploy's API key ("" for none), it keeps that as the deploy's key.
     Return the new generation and the upload's warnings. Raises GCError on failure."""
     client = Client(
@@ -117,33 +119,35 @@ def put_deployment(state, config, env, projects=None, api_key_hash=None):
         state.get("headers"),
         REQUEST_TIMEOUT_SECONDS,
     )
-    body = DeploymentBody(
+    body = WorkflowGroupBody(
         name=deployment.folder_name(),
         config=config,
         env=env,
-        projects=projects,
+        workflows=workflows,
         api_key_hash=api_key_hash,
     )
-    return _request("Sync", client.put_deployment, state["deployment_id"], body)
+    return _request("Sync", client.put_workflow_group, state["workflow_group_id"], body)
 
 
-def put_project(state, name, archive):
-    """Make `archive`, an open gzip tar file of project `name`'s folder, that project's
+def put_workflow(state, name, archive):
+    """Make `archive`, an open gzip tar file of workflow `name`'s folder, that workflow's
     files in the container and return the new generation and the upload's warnings.
     Raises GCError on failure, with the `findings` `canyonos validate` would print when
-    the project breaks the contract."""
+    the workflow breaks the contract."""
     client = Client(
         f"http://127.0.0.1:{state['port']}",
         state.get("headers"),
         REQUEST_TIMEOUT_SECONDS,
     )
-    return _request("Sync", client.put_project, state["deployment_id"], name, archive)
+    return _request(
+        "Sync", client.put_workflow, state["workflow_group_id"], name, archive
+    )
 
 
 def put_dashboard(state, url):
     """Have the Global Controller register its Redis with the dashboard api at `url`,
-    the address the controller reaches it at, and return the api's `{project_id,
-    name}`. Raises GCError on failure."""
+    the address the controller reaches it at, and return the api's `{workflow_id,
+    name}` of each workflow under `workflows`. Raises GCError on failure."""
     client = Client(
         f"http://127.0.0.1:{state['port']}",
         state.get("headers"),
@@ -152,19 +156,21 @@ def put_dashboard(state, url):
     return _request(
         "Dashboard registration",
         client.put_dashboard,
-        state["deployment_id"],
+        state["workflow_group_id"],
         DashboardBody(url=url),
     )
 
 
-def list_deployments(port, headers):
-    """Return the deployments the Global Controller on `port` holds, each with its
-    `deployment_id` and `name`, sending it `headers`. Raises GCError on failure."""
+def list_workflow_groups(port, headers):
+    """Return the workflow groups the Global Controller on `port` holds, each with its
+    `workflow_group_id` and `name`, sending it `headers`. Raises GCError on failure."""
     client = Client(f"http://127.0.0.1:{port}", headers, REQUEST_TIMEOUT_SECONDS)
-    return _request("List deployments", client.list_deployments)["deployments"]
+    return _request("List workflow groups", client.list_workflow_groups)[
+        "workflow_groups"
+    ]
 
 
-def delete_deployment(state):
+def delete_workflow_group(state):
     """Stop the running deploy and remove every upload, waiting until the deploy has
     stopped. This is what removes the local controller and Redis containers a deploy
     spawned via docker-outside-of-docker."""
@@ -173,11 +179,11 @@ def delete_deployment(state):
         state.get("headers"),
         CLEAN_REQUEST_TIMEOUT_SECONDS,
     )
-    return _request("Stop", client.delete_deployment, state["deployment_id"])
+    return _request("Stop", client.delete_workflow_group, state["workflow_group_id"])
 
 
 def deploy_status(state):
-    """The deploy's GET /deployment: whether it runs, its phase, progress, verdict,
+    """The deploy's GET /v1/workflow-groups/<workflow_group_id>: whether it runs, its phase, progress, verdict,
     endpoint, agents and what the last apply did. None when the container can't be
     read; raises GCError when it runs another CanyonOS release than this CLI, outside
     development.
@@ -185,7 +191,10 @@ def deploy_status(state):
     A malformed body is as uninformative as an unreachable one, so both answer
     None rather than raising at a caller whose contract is "couldn't tell".
     """
-    url = f"http://127.0.0.1:{state['port']}/v1/deployments/{state['deployment_id']}"
+    url = (
+        f"http://127.0.0.1:{state['port']}/v1/workflow-groups/"
+        f"{state['workflow_group_id']}"
+    )
     request = urllib.request.Request(url, headers=state.get("headers", {}))
     try:
         with urllib.request.urlopen(request, timeout=5) as resp:
@@ -197,9 +206,9 @@ def deploy_status(state):
     # A checkout's CLI runs whatever core image it is pointed at, as on Kubernetes.
     if not env.is_development and status.get("version") != env.VERSION:
         raise GCError(
-            "This deployment's Global Controller runs CanyonOS "
+            "This workflow group's Global Controller runs CanyonOS "
             f"{status.get('version') or 'an older release'} and this CLI is "
-            f"{env.VERSION}. Run `canyonos deploy <project folder>...` to restart it on "
+            f"{env.VERSION}. Run `canyonos deploy <workflow folder>...` to restart it on "
             f"{env.VERSION}.",
             error_code="version_mismatch",
         )
@@ -220,22 +229,22 @@ def deployed_endpoint(state):
 
 
 def test_queries(state):
-    """Return the query each uploaded project ships in its `config/test_query.txt`, by
-    project, leaving out a project with none, from the deployment's projects; raise
-    GCError when the container can't say."""
+    """Return the query each uploaded workflow ships in its `config/test_query.txt`, by
+    workflow, leaving out a workflow with none, from the workflow group's workflows;
+    raise GCError when the container can't say."""
     client = Client(f"http://127.0.0.1:{state['port']}", state.get("headers"), 10)
-    projects = _request(
-        "Read test queries", client.list_projects, state["deployment_id"]
-    )["projects"]
+    workflows = _request(
+        "Read test queries", client.list_workflows, state["workflow_group_id"]
+    )["workflows"]
     return {
-        project["name"]: project["test_query"]
-        for project in projects
-        if project["test_query"]
+        workflow["name"]: workflow["test_query"]
+        for workflow in workflows
+        if workflow["test_query"]
     }
 
 
 def deploy_health(state):
-    """Return GET /deployment/health for `canyonos doctor`: `ok`, and under `checks`
+    """Return GET .../health for `canyonos doctor`: `ok`, and under `checks`
     each part of the running deploy with its `name`, `ok`, `detail` and `fix`; raise
     GCError when the container can't say, including when no deploy runs."""
     client = Client(
@@ -243,7 +252,7 @@ def deploy_health(state):
         state.get("headers"),
         REQUEST_TIMEOUT_SECONDS,
     )
-    return _request("Health check", client.health, state["deployment_id"])
+    return _request("Health check", client.health, state["workflow_group_id"])
 
 
 def controller_log(state, tail="all", follow=False):
@@ -257,7 +266,7 @@ def controller_log(state, tail="all", follow=False):
         None if follow else REQUEST_TIMEOUT_SECONDS,
     )
     try:
-        yield from client.controller_log(state["deployment_id"], tail, follow)
+        yield from client.controller_log(state["workflow_group_id"], tail, follow)
     except OSError as e:
         raise GCError(f"Could not read the Global Controller log: {e}") from None
 
@@ -272,6 +281,6 @@ def deployed_logs(state, name, tail):
         LOGS_REQUEST_TIMEOUT_SECONDS,
     )
     replica_logs = _request(
-        "Read logs", client.agent_logs, state["deployment_id"], name, tail
+        "Read logs", client.agent_logs, state["workflow_group_id"], name, tail
     )
     return replica_logs["logs"]

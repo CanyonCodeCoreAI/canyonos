@@ -54,8 +54,8 @@ and what it deploys:
 ## Run the CLI from a checkout
 
 In the dev shell, `canyonos` works from any folder. Deploy a copy of an example, since a
-deploy writes a `deployment_id` into its `deployment.yaml` and default resources into
-its project's `config/workflow_config.yaml`:
+deploy writes a `workflow_group_id` into its `workflow_group.yaml` and default resources into
+its workflow's `config/workflow_config.yaml`:
 
 ```bash
 cp -R examples/helloworld ../helloworld   # needs no LLM and no API keys
@@ -65,7 +65,7 @@ canyonos test "hi"
 ```
 
 The CLI reads its own `.env` from `packages/cli/`, never from the folder you run it in;
-a project's `.env` belongs to the project. A variable set in your shell wins over the
+a workflow's `.env` belongs to the workflow. A variable set in your shell wins over the
 file, so `export CANYONOS_CORE_IMAGE=prod` deploys the released image even in
 development.
 
@@ -132,18 +132,18 @@ instead.
 
 **Send the workflow's telemetry to the host.** By default the Global Controller sends
 it to the dashboard image's API, `http://canyonos-dashboard-api:3000`, which isn't
-running. Set the deployment's
+running. Set the workflow group's
 [`otel.destinations`](../guides/WORKFLOW_CONFIG.md#oteldestinations) to
 `http://host.docker.internal:3000`.
 
-**Register the deployment.** At start, the API registers only a project on the default
-Redis that has no password. A deployment's Redis has one, so register it while the API
-runs, with the deployment's `redis.port`:
+**Register the workflow group.** At start, the API registers only the
+workflows on the default Redis, which has no password. A workflow group's Redis has one, so
+register its workflows while the API runs, with the workflow group's `redis.port`:
 
 ```bash
-curl -X POST http://localhost:3000/canyonos/projects \
+curl -X POST http://localhost:3000/canyonos/workflows \
   -H 'Content-Type: application/json' \
-  -d "{\"redis_port\":6379,\"redis_password\":\"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' canyonos-<deployment>-redis-localhost | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')\"}"
+  -d "{\"redis_port\":6379,\"redis_password\":\"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' canyonos-<workflow group>-redis-localhost | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')\"}"
 ```
 
 The API stores the password encrypted, with a fixed development key unless
@@ -165,7 +165,7 @@ Good to know:
   workflow's `8080` and `6379`. Free them, or change them, first.
 - `scripts/dashboard-dev.ts` sets the local defaults: no deploy worker, no API
   key, and `127.0.0.1:6379` as the default Redis, the one read at start and for
-  projects that never registered. A variable in your shell wins over them, and they win over
+  workflows that never registered. A variable in your shell wins over them, and they win over
   `packages/api/.env` and `packages/web/.env`.
 - Unlike `bun run docker:*`, it doesn't need `.docker/.env`: without it, Compose uses
   its default ports and volume.
@@ -209,16 +209,16 @@ scripts/kind/up.sh       # once: the cluster, its registry, and CanyonOS on it
 bun run canyonos:dev     # every day: rebuilds the images, updates the cluster, opens the shell
 ```
 
-In the dev shell, point a project at the cluster once, then use the commands as on
+In the dev shell, point a workflow group at the cluster once, then use the commands as on
 Docker:
 
 ```bash
 canyonos target kubernetes   # namespace: the folder's name; registry: localhost:5001
 canyonos deploy              # builds its images in the cluster, waits until ready
 canyonos status              # its agents and replicas
-canyonos test "hi"           # one query to the deployed project, and its result
+canyonos test "hi"           # one query to the deployed workflow, and its result
 canyonos logs                # the Global Controller's logs (or an agent's, or a replica's)
-canyonos doctor              # the cluster, the operator, the project, its agents and endpoint
+canyonos doctor              # the cluster, the operator, the workflow group, its agents and endpoint
 canyonos serve               # the dashboard, on http://127.0.0.1:8081
 canyonos clean               # when done
 ```
@@ -226,8 +226,8 @@ canyonos clean               # when done
 The endpoint stays on `http://127.0.0.1:8080` and the dashboard on `8081`, through
 port-forwards a background `canyonos` process holds open until `canyonos stop`.
 `canyonos sync`, `stop --all` and `clean --all` work only on Docker, so deploy again
-after a change. [Kubernetes deployment](../guides/KUBERNETES.md) has the other settings.
-Kubernetes deploys don't support multi-folder deployments yet.
+after a change. [Kubernetes workflow group](../guides/KUBERNETES.md) has the other settings.
+Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ### What `up.sh` makes
 
@@ -256,7 +256,7 @@ so switching branches never stops the cluster from starting.
 
 `bun run canyonos:dev` updates the cluster too while it exists, so what changed rolls
 out there and nothing else restarts. `scripts/kind/operator.sh` alone does the same
-without opening the shell. Projects on the cluster pick up a new Core image on their
+without opening the shell. Workflow groups on the cluster pick up a new Core image on their
 next deploy.
 
 A released CLI makes the same cluster without a checkout: `canyonos cluster up`
@@ -271,6 +271,6 @@ A deploy that waits with "no node to run on" needs more CPU or memory from Docke
 look inside:
 
 ```bash
-kubectl get pods -n my-project                                      # the project's pods
+kubectl get pods -n my-group                                        # the workflow group's pods
 kubectl -n canyonos-system logs deploy/canyonos-controller-manager  # the operator's log
 ```

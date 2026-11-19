@@ -6,7 +6,7 @@ import type { RedisClient } from 'bun';
 
 import { badGateway, conflict, notFound } from '@core/errors';
 
-import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
+import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
 import { ScalingPolicySchema } from './scaling.types';
 import type {
   ScalingAgent,
@@ -21,15 +21,20 @@ const CONFIG_KEY = 'scaling:config';
 const ACTIVE_AGENTS_KEY = 'agents:active';
 const SAVE_ATTEMPTS = 5;
 
-// Each project's config/scaling.yaml as the GC published it, by project name: other top-level
+// Each workflow's config/scaling.yaml as the GC published it, by workflow name: other top-level
 // keys are kept untouched on save.
 const ScalingConfigSchema = z
-  .object({ projects: z.record(z.string(), z.unknown()).default({}) })
+  .object({ workflows: z.record(z.string(), z.unknown()).default({}) })
   .passthrough();
 type ScalingConfig = z.infer<typeof ScalingConfigSchema>;
 
-// The entries the controller publishes for each agent; a database is never scaled.
-const AgentSpecSchema = z.object({ type: z.string().optional(), replicas: z.unknown() });
+// The entries the controller publishes for each agent: `workflow` is its workflow, and a database
+// is never scaled.
+const AgentSpecSchema = z.object({
+  type: z.string().optional(),
+  replicas: z.unknown(),
+  workflow: z.string().optional(),
+});
 
 // The newest `agent:<name>:samples` entry, as the controller rolls one up each poll.
 const AgentSampleSchema = z.object({
@@ -80,7 +85,7 @@ function status_of(stored: unknown): ScalingStatus {
     const names = Object.keys(keyed.data).join(', ');
     return {
       status: 'invalid',
-      reason: `the policy is keyed by agent name (${names}); scaling.yaml now holds one policy for the whole project, so move one agent's fields up to the top level`,
+      reason: `the policy is keyed by agent name (${names}); scaling.yaml now holds one policy for the whole workflow, so move one agent's fields up to the top level`,
     };
   }
   return { status: 'invalid', reason: invalid_reason(result.error) };
@@ -107,63 +112,37 @@ async function update_config(
   );
 }
 
-/**
- * The deployment's projects: those its active agents, named `<project>.<agent>`, belong to. The
- * endpoint's own agent is in no project.
- */
-async function project_names(redis: RedisClient): Promise<string[]> {
-  const agents = parse_names(await redis.get(ACTIVE_AGENTS_KEY)).filter((name) =>
-    name.includes('.')
-  );
-  return [...new Set(agents.map((name) => name.split('.')[0]!))].sort();
-}
-
-async function assert_project(redis: RedisClient, project: string): Promise<void> {
-  if (!(await project_names(redis)).includes(project)) {
-    throw notFound('scaling.project_not_found', `No project ${project} is deployed`);
-  }
-}
-
-export async function get_scaling(project_id: string): Promise<ScalingResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    const { projects } = parse_config(await redis.get(CONFIG_KEY));
-    const names = await project_names(redis);
-    return {
-      projects: Object.fromEntries(names.map((name) => [name, status_of(projects[name])])),
-    };
+export async function get_scaling(workflow_id: string): Promise<ScalingResponse> {
+  return with_redis(workflow_id, async (redis) => {
+    const workflow = await assert_workflow_running(redis, workflow_id);
+    const { workflows } = parse_config(await redis.get(CONFIG_KEY));
+    return { workflows: { [workflow]: status_of(workflows[workflow]) } };
   });
 }
 
 export async function save_scaling_policy(
-  project_id: string,
-  project: string,
+  workflow_id: string,
   policy: ScalingPolicy
 ): Promise<ScalingPolicy> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    await assert_project(redis, project);
+  return with_redis(workflow_id, async (redis) => {
+    const workflow = await assert_workflow_running(redis, workflow_id);
     await update_config(redis, (config) => ({
       ...config,
-      projects: { ...config.projects, [project]: policy },
+      workflows: { ...config.workflows, [workflow]: policy },
     }));
     return policy;
   });
 }
 
-export async function delete_scaling_policy(
-  project_id: string,
-  project: string
-): Promise<ScalingDeleteResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    await assert_project(redis, project);
+export async function delete_scaling_policy(workflow_id: string): Promise<ScalingDeleteResponse> {
+  return with_redis(workflow_id, async (redis) => {
+    const workflow = await assert_workflow_running(redis, workflow_id);
     await update_config(redis, (config) => {
-      if (config.projects[project] == null) {
-        throw notFound('scaling.policy_not_found', `No scaling policy is stored for ${project}`);
+      if (config.workflows[workflow] == null) {
+        throw notFound('scaling.policy_not_found', `No scaling policy is stored for ${workflow}`);
       }
-      const { [project]: _, ...projects } = config.projects;
-      return { ...config, projects };
+      const { [workflow]: _, ...workflows } = config.workflows;
+      return { ...config, workflows };
     });
     return { status: 'none' };
   });
@@ -195,14 +174,20 @@ function parse_names(raw: string | null): string[] {
 export type AgentReading = ScalingAgent & { readonly replicas_configured: number };
 
 // A spec or sample the controller wrote badly hides that agent's figures, never the whole list.
-async function read_agent(redis: RedisClient, name: string): Promise<AgentReading | null> {
+async function read_agent(
+  redis: RedisClient,
+  name: string,
+  workflow: string
+): Promise<AgentReading | null> {
   const [spec_raw, desired_raw, [sample_raw]] = await Promise.all([
     redis.get(`agent:${name}:spec`),
     redis.get(`agent:${name}:desired_replicas`),
     redis.lrange(`agent:${name}:samples`, 0, 0),
   ]);
   const spec = AgentSpecSchema.safeParse(parse_json(spec_raw));
-  if (!spec.success || (spec.data.type ?? 'agent') !== 'agent') return null;
+  if (!spec.success || (spec.data.type ?? 'agent') !== 'agent' || spec.data.workflow !== workflow) {
+    return null;
+  }
 
   const sample = AgentSampleSchema.safeParse(parse_json(sample_raw));
   const configured =
@@ -225,18 +210,17 @@ async function read_agent(redis: RedisClient, name: string): Promise<AgentReadin
   };
 }
 
-/** The active agents (databases excluded) with what each one is running right now. */
-export async function read_agents(redis: RedisClient): Promise<AgentReading[]> {
+/** The workflow's active agents (databases excluded) with what each one is running right now. */
+export async function read_agents(redis: RedisClient, workflow: string): Promise<AgentReading[]> {
   const names = parse_names(await redis.get(ACTIVE_AGENTS_KEY));
-  const agents = await Promise.all(names.map((name) => read_agent(redis, name)));
+  const agents = await Promise.all(names.map((name) => read_agent(redis, name, workflow)));
   return agents.filter((agent) => agent !== null);
 }
 
 /** The agents the policy applies to, with what each one is running right now. */
-export async function list_scaling_agents(project_id: string): Promise<ScalingAgentsResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    const agents = await read_agents(redis);
+export async function list_scaling_agents(workflow_id: string): Promise<ScalingAgentsResponse> {
+  return with_redis(workflow_id, async (redis) => {
+    const agents = await read_agents(redis, await assert_workflow_running(redis, workflow_id));
     return { agents: agents.map(({ replicas_configured: _, ...agent }) => agent) };
   });
 }

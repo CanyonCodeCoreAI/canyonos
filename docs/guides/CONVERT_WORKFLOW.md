@@ -26,7 +26,7 @@ canyonos convert
 ```
 
 It asks two questions: which coding agent to use, and whether to install the CanyonOS
-skill for this folder only or for every project. Then the agent reads your code and
+skill for this folder only or for every workflow. Then the agent reads your code and
 writes the CanyonOS version. This takes 2 to 10 minutes.
 
 To skip the questions, give the answers up front:
@@ -82,26 +82,26 @@ else, set that up first:
 
 | Where                | What to do                                                                                                                             | Details                     |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, set `target: docker` in `deployment.yaml`                                    | [Local](LOCAL.md)           |
-| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the project there, and set `provider` in `deployment.yaml`    | [EC2](EC2.md)               |
-| Kubernetes           | Set `target: kubernetes` in `deployment.yaml` for your cluster; `canyonos cluster up` makes a local one to try it                      | [Kubernetes](KUBERNETES.md) |
+| Locally, with Docker | Nothing; it's the default. If you switched to Kubernetes, set `target: docker` in `workflow_group.yaml`                                | [Local](LOCAL.md)           |
+| EC2                  | Run `canyonos provision` to create a machine on AWS to deploy from, copy the workflow there, and set `provider` in `workflow_group.yaml`   | [EC2](EC2.md)               |
+| Kubernetes           | Set `target: kubernetes` in `workflow_group.yaml` for your cluster; `canyonos cluster up` makes a local one to try it                  | [Kubernetes](KUBERNETES.md) |
 
 [Where a workflow deploys](LOCAL.md#where-a-workflow-deploys) explains the `target` and
 `provider` settings behind these.
 
 The next steps are for Docker and EC2. On Kubernetes, `canyonos deploy` builds and
 starts it in the cluster without the resource step below; see
-[Kubernetes](KUBERNETES.md). Kubernetes deploys don't support multi-folder deployments
+[Kubernetes](KUBERNETES.md). Kubernetes deploys don't support multi-folder workflow groups
 yet.
 
 ## 5. Deploy
 
-From the folder above `my-app/`, deploy it as a deployment of its own, in a folder beside it:
+From the folder above `my-app/`, deploy it as a workflow group of its own, in a folder beside it:
 
 ```bash
 cd ..
-canyonos deploy my-app --folder my-app-deployment --api-key <your api key>
-cd my-app-deployment
+canyonos deploy my-app --workflow-group my-app-group --api-key <your api key>
+cd my-app-group
 ```
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
@@ -148,7 +148,7 @@ canyonos serve
 
 ```bash
 canyonos stop     # remove the containers, keep everything else
-canyonos clean    # also delete the agents' images and the deployment's records
+canyonos clean    # also delete the agents' images and the workflow group's records
 ```
 
 `convert` normally adds `.canyon/` to `.gitignore`, so git won't keep a copy: remove

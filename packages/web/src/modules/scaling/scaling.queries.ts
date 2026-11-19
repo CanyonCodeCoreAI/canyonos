@@ -12,13 +12,16 @@ import type {
 
 import { toast } from '@repo/ui/shadcn/sonner';
 import { apiCall, forgeAuthApi } from '@/api';
-import { dashboardPollInterval, projectQueryKeys } from '@/modules/projects/projects.query-cache';
+import {
+  dashboardPollInterval,
+  workflowQueryKeys,
+} from '@/modules/workflows/workflows.query-cache';
 
 const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.project_not_running':
-    'This deployment is not running, so its scaling policy cannot be read. Deploy it, then retry.',
+  'canyonos.workflow_not_running':
+    'This workflow is not running, so its scaling policy cannot be read. Deploy it, then retry.',
   'canyonos.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'scaling.config_invalid':
@@ -33,36 +36,37 @@ export function scalingErrorMessage(
   return ERROR_MESSAGES[error?.code ?? ''] ?? (error?.message || fallback);
 }
 
-export const scalingQueryOptions = (project_id: string) =>
+export const scalingQueryOptions = (workflow_id: string) =>
   queryOptions({
-    queryKey: projectQueryKeys.scaling(project_id),
-    queryFn: () => apiCall<ScalingResponse>(() => forgeAuthApi.projects[project_id]!.scaling.get()),
+    queryKey: workflowQueryKeys.scaling(workflow_id),
+    queryFn: () =>
+      apiCall<ScalingResponse>(() => forgeAuthApi.workflows[workflow_id]!.scaling.get()),
     retry: false,
   });
 
 // Polled: this is where the operator watches the replica counts move after a change.
-export const scalingAgentsQueryOptions = (project_id: string) =>
+export const scalingAgentsQueryOptions = (workflow_id: string) =>
   queryOptions({
-    queryKey: projectQueryKeys.scalingAgents(project_id),
+    queryKey: workflowQueryKeys.scalingAgents(workflow_id),
     queryFn: () =>
-      apiCall<ScalingAgentsResponse>(() => forgeAuthApi.projects[project_id]!.scaling.agents.get()),
+      apiCall<ScalingAgentsResponse>(() =>
+        forgeAuthApi.workflows[workflow_id]!.scaling.agents.get()
+      ),
     retry: false,
     refetchInterval: dashboardPollInterval,
   });
 
 // The agents key sits under the policy key, so one invalidation re-reads both.
-function useInvalidateScaling(project_id: string) {
+function useInvalidateScaling(workflow_id: string) {
   const query_client = useQueryClient();
-  return () => query_client.invalidateQueries({ queryKey: projectQueryKeys.scaling(project_id) });
+  return () => query_client.invalidateQueries({ queryKey: workflowQueryKeys.scaling(workflow_id) });
 }
 
-export function useSaveScalingPolicy(project_id: string, project: string) {
-  const invalidate = useInvalidateScaling(project_id);
+export function useSaveScalingPolicy(workflow_id: string) {
+  const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
     mutationFn: (policy: ScalingPolicy) =>
-      apiCall<ScalingPolicy>(() =>
-        forgeAuthApi.projects[project_id]!.scaling[project]!.put(policy)
-      ),
+      apiCall<ScalingPolicy>(() => forgeAuthApi.workflows[workflow_id]!.scaling.put(policy)),
     // Toasted here: the re-read remounts the card, so a callback on the call site never runs.
     onSuccess: () => {
       toast.success(
@@ -74,13 +78,11 @@ export function useSaveScalingPolicy(project_id: string, project: string) {
   });
 }
 
-export function useDeleteScalingPolicy(project_id: string, project: string) {
-  const invalidate = useInvalidateScaling(project_id);
+export function useDeleteScalingPolicy(workflow_id: string) {
+  const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
     mutationFn: () =>
-      apiCall<ScalingDeleteResponse>(() =>
-        forgeAuthApi.projects[project_id]!.scaling[project]!.delete()
-      ),
+      apiCall<ScalingDeleteResponse>(() => forgeAuthApi.workflows[workflow_id]!.scaling.delete()),
     onSuccess: () => {
       toast.success(
         'Scaling policy deleted. Agents keep their current replicas until the next reload.',

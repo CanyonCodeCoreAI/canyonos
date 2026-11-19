@@ -16,9 +16,15 @@ export const GOVERNANCE_SPEND_KEY = 'governance:spend';
 export const LLMS_CONFIG_KEY = 'llms:config';
 export const UP_AGENTS_KEY = 'routing_table:up';
 
+/** The workflow group, and the name of the workflow, a seeded workflow runs as. */
+export const TEST_WORKFLOW_GROUP_ID = '00000000-0000-4000-8000-000000000000';
+export const TEST_WORKFLOW = 'app';
+
 /** An agent as the controller publishes it: its spec, desired count and newest load sample. */
 export interface SeededAgent {
   readonly name: string;
+  /** Its workflow, TEST_WORKFLOW unless given. */
+  readonly workflow?: string;
   readonly type?: 'agent' | 'database';
   readonly replicas?: number;
   readonly desired?: number;
@@ -66,23 +72,26 @@ async function with_test_redis<T>(operation: (redis: RedisClient) => Promise<T>)
   }
 }
 
-/** Publishes project_id as the running controller, with prompts_yaml as its prompts.yaml. */
-export async function seed_running_project(
-  project_id: string,
-  prompts_yaml: PromptsConfig
+/** Publishes workflow_id as the running controller's one workflow, named `name`, with
+ * prompts_yaml as its prompts.yaml. */
+export async function seed_running_workflow(
+  workflow_id: string,
+  prompts_yaml: PromptsConfig,
+  name: string = TEST_WORKFLOW
 ): Promise<void> {
   // A freshly started controller carries no leftovers from whatever the previous test corrupted.
   await reset_controller();
   await with_test_redis(async (redis) => {
-    await redis.hset(CONTROLLER_IDENTITY_KEY, 'project_id', project_id);
+    await redis.hset(CONTROLLER_IDENTITY_KEY, 'workflow_group_id', TEST_WORKFLOW_GROUP_ID);
     await redis.set(PROMPTS_YAML_KEY, JSON.stringify(prompts_yaml));
   });
+  await seed_workflows({ [workflow_id]: name });
 }
 
-/** Publishes project_name as the running controller's project name. */
-export async function seed_project_name(project_name: string): Promise<void> {
+/** Publishes workflows, each name by its workflow_id, as the running controller's. */
+export async function seed_workflows(workflows: Record<string, string>): Promise<void> {
   await with_test_redis((redis) =>
-    redis.hset(CONTROLLER_IDENTITY_KEY, 'project_name', project_name)
+    redis.hset(CONTROLLER_IDENTITY_KEY, 'workflows', JSON.stringify(workflows))
   );
 }
 
@@ -111,7 +120,12 @@ export async function seed_scaling_agents(agents: readonly SeededAgent[]): Promi
       await redis.set(
         `agent:${agent.name}:spec`,
         agent.raw_spec ??
-          JSON.stringify({ name: agent.name, type: agent.type, replicas: agent.replicas ?? 1 })
+          JSON.stringify({
+            name: agent.name,
+            type: agent.type,
+            replicas: agent.replicas ?? 1,
+            workflow: agent.workflow ?? TEST_WORKFLOW,
+          })
       );
       if (agent.desired !== undefined) {
         await redis.set(`agent:${agent.name}:desired_replicas`, String(agent.desired));

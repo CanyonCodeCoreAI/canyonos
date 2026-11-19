@@ -5,11 +5,11 @@ the dashboard. CanyonOS checks one API key per machine, as vLLM does:
 
 - The key is any string you choose. A request passes when it carries
   `Authorization: Bearer <your api key>` with that exact string.
-- One key opens everything on the machine: every deployment's endpoint and the
+- One key opens everything on the machine: every workflow group's endpoint and the
   dashboard API. There are no scopes and no users.
 - With no key set, nothing is checked and everyone who reaches the endpoint or the
   dashboard can use it. `deploy` and `serve` warn about it.
-- One key per deployment is planned, not there yet.
+- One key per workflow group is planned, not there yet.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ Pick a key, for example with `openssl rand -hex 32`, and pass it to a deploy or 
 `serve`:
 
 ```bash
-canyonos deploy my-project --folder my-deployment --api-key <your api key>
+canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>
 canyonos serve --api-key <your api key>
 ```
 
@@ -44,20 +44,20 @@ canyonos serve --api-key <your api key>
 
 Pass a new key to `deploy` or `serve` the same way. It replaces the saved one:
 
-- The dashboard and the deployment you deploy use the new key at once.
-- Every other running deployment keeps the old key until you redeploy it.
+- The dashboard and the workflow group you deploy use the new key at once.
+- Every other running workflow group keeps the old key until you redeploy it.
 
 `--no-api-key` on `deploy` or `serve` deletes `~/.canyonos/api_key`, and that deploy or
 serve runs open. `--api-key` and `--no-api-key` don't mix.
 
-`canyonos list` marks a deployment deployed without a key `(unauthenticated)`.
+`canyonos list` marks a workflow group deployed without a key `(unauthenticated)`.
 
 ## Send the key
 
 To the endpoint, on port `8080` on a Docker deploy:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/<project>/<agent>/<method> \
+curl -X POST http://127.0.0.1:8080/<workflow_id> \
   -H "Authorization: Bearer <your api key>" \
   -H "Content-Type: application/json" -d '{"query": "your query"}'
 curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
@@ -66,7 +66,7 @@ curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<req
 To the dashboard API, on port `3000`, from a script:
 
 ```bash
-curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:3000/projects
+curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:3000/workflows
 ```
 
 - The `curl` lines the CLI prints show the `<your api key>` placeholder, never the key.

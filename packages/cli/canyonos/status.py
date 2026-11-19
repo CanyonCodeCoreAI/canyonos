@@ -17,7 +17,7 @@ from canyonos.gc import GCError, NoDeployError, deploy_status, require_state
 def run_status(as_json=False):
     """Run `canyonos status`: show in the terminal whether a deploy is running, where to
     reach it, how to query it, and each agent's last launch error; with `as_json`, print
-    the Global Controller's whole /deployment and where to reach it as one JSON object
+    the Global Controller's whole status and where to reach it as one JSON object
     instead. Returns True when a deploy is running."""
     ui.set_quiet(as_json)
     try:
@@ -31,12 +31,12 @@ def run_status(as_json=False):
 
 def _report_status():
     """Show the status in the terminal and return it: the Global Controller's
-    /deployment, with why any part of it could not be read under `errors`, plus the
-    target, the deployment and where the controller and the dashboard answer."""
+    status, with why any part of it could not be read under `errors`, plus the
+    target, the workflow group and where the controller and the dashboard answer."""
     report = {
         "running": False,
         "target": deployment.configured_target(),
-        "deployment": deployment.deployment_name(),
+        "workflow_group": deployment.deployment_name(),
         "controller_url": None,
         "endpoint": None,
         "dashboard_url": None,
@@ -56,15 +56,15 @@ def _report_status():
         report["errors"].append(str(e))
         return report
     if not report["running"]:
-        ui.warn("No deploy is currently running.")
+        ui.warn("No workflow group is currently running.")
         return report
 
     report["controller_url"] = f"http://127.0.0.1:{state['port']}"
-    ui.ok("Deploy is running.")
+    ui.ok("Workflow group is running.")
 
     if report["endpoint"] is None:
         ui.warn(
-            "Could not read the running deploy's endpoint. Run `canyonos logs` to see why."
+            "Could not read the running workflow group's endpoint. Run `canyonos logs` to see why."
         )
     for name, agent in (report["agents"] or {}).items():
         if agent["launch_error"]:

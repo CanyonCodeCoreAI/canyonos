@@ -13,22 +13,15 @@ const LEGACY_TABLES = ['agent_information', 'runtime_information', 'session'];
 
 // Neither drizzle-kit nor the schema can express these, so they live in a custom migration and only
 // this test proves the baseline still ships them.
-const FUNCTIONS = [
-  'enforce_project_workflow_source_kind',
-  'notify_deploy_event',
-  'notify_deploy_job',
-  'prevent_backing_file_reclassification',
-];
+const FUNCTIONS = ['notify_deploy_event', 'notify_deploy_job'];
 
 const TRIGGERS = [
   ['deployment_events', 'deployment_events_notify'],
   ['deployments', 'deployments_notify_job'],
   ['deployments', 'deployments_notify_stop'],
-  ['files', 'files_workflow_source_invariant_trigger'],
-  ['project_workflows', 'project_workflows_source_kind_trigger'],
 ];
 
-// The statuses that hold a project's only deploy slot.
+// The statuses that hold a workflow's only deploy slot.
 const ACTIVE_STATUSES = [
   'pending',
   'receiving_files',
@@ -76,7 +69,7 @@ describe('migration baseline', () => {
     expect(types.map((row) => row.typname)).toEqual([]);
   });
 
-  test('the workflow and deploy functions survive the baseline', async () => {
+  test('the deploy functions survive the baseline', async () => {
     const functions = await postgres<{ proname: string }[]>`
       SELECT p.proname
       FROM pg_proc p
@@ -103,9 +96,9 @@ describe('migration baseline', () => {
     const indexes = await deployment_indexes();
     const by_name = new Map(indexes.map((row) => [row.name, row]));
 
-    const guard = by_name.get('uq_deployments_active_per_project');
+    const guard = by_name.get('uq_deployments_active_per_workflow');
     expect(guard?.is_unique).toBe(true);
-    expect(guard?.columns).toEqual(['project_id']);
+    expect(guard?.columns).toEqual(['workflow_id']);
     for (const status of ACTIVE_STATUSES) expect(guard?.predicate).toContain(`'${status}'`);
     expect(guard?.predicate).not.toContain(`'stopped'`);
     expect(guard?.predicate).not.toContain(`'stopping'`);
@@ -119,7 +112,7 @@ describe('migration baseline', () => {
     expect(status_updated?.predicate).toBeNull();
   });
 
-  test('companies, auth_challenges, users and the project columns pointing at them are gone', async () => {
+  test('companies, auth_challenges, users and the workflow columns pointing at them are gone', async () => {
     const tables = await postgres<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name IN ('companies', 'auth_challenges', 'users')
@@ -132,8 +125,8 @@ describe('migration baseline', () => {
       SELECT table_name, column_name, is_nullable FROM information_schema.columns
       WHERE table_schema = 'public'
         AND (table_name, column_name) IN (
-          ('projects', 'company_id'),
-          ('projects', 'created_by')
+          ('workflows', 'company_id'),
+          ('workflows', 'created_by')
         )
       ORDER BY table_name, column_name
     `;

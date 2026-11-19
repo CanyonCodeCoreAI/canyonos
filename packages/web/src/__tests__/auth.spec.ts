@@ -7,20 +7,20 @@ import type { Page, Request } from '@playwright/test';
 import type { ScalingResponse } from '@canyonos/api/scaling';
 
 import { readStoredApiKey, setApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
-import { apiBaseUrl, fulfillJson } from './helpers/projects';
 import {
   expectPath,
-  PROJECT,
   stubFleetSpend,
-  stubProjectDashboard,
-  stubProjectsList,
+  stubWorkflowDashboard,
+  stubWorkflowsList,
+  WORKFLOW,
 } from './helpers/session';
+import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WRONG_KEY = 'not-the-api-key';
 const INVALID_KEY = 'This API key is not the one this API was started with';
-const SCALING = `/projects/${PROJECT.id}/scaling`;
-const NO_POLICY = { projects: { app: { status: 'none' } } } satisfies ScalingResponse;
+const SCALING = `/workflows/${WORKFLOW.id}/scaling`;
+const NO_POLICY = { workflows: { app: { status: 'none' } } } satisfies ScalingResponse;
 
 const keyField = (page: Page) => page.getByTestId('auth-api-key');
 const submit = (page: Page) => page.getByTestId('auth-submit');
@@ -38,16 +38,16 @@ function countKeyChecks(page: Page): () => number {
   return () => checks;
 }
 
-async function stubProject(page: Page): Promise<void> {
-  await stubProjectsList(page, [PROJECT]);
-  await stubProjectDashboard(page, PROJECT);
+async function stubWorkflow(page: Page): Promise<void> {
+  await stubWorkflowsList(page, [WORKFLOW]);
+  await stubWorkflowDashboard(page, WORKFLOW);
   await stubFleetSpend(page);
 }
 
 test('@smoke a signed-out visit asks for one API key, and nothing about an account', async ({
   page,
 }) => {
-  await page.goto('/projects');
+  await page.goto('/workflows');
 
   await expectPath(page, '/login');
   await expect(page.getByLabel('API key')).toHaveAttribute('type', 'password');
@@ -65,12 +65,12 @@ test('@smoke the API key sent with Enter signs in, is stored, and survives a rel
   await keyField(page).fill(TEST_API_KEY);
   await keyField(page).press('Enter');
 
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
   await page.reload();
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
   await page.getByTestId('sidebar-user-menu').click();
   await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with the API key');
 });
@@ -98,7 +98,7 @@ test('a key pasted with surrounding whitespace signs in and is stored trimmed', 
   await keyField(page).fill(`  ${TEST_API_KEY}\n`);
   await submit(page).click();
 
-  await expectPath(page, '/projects');
+  await expectPath(page, '/workflows');
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
 });
 
@@ -118,19 +118,19 @@ test('an empty or blank field sends no key check and stays on the sign-in screen
 });
 
 test('a deep link survives the sign-in screen', async ({ page }) => {
-  await stubProject(page);
+  await stubWorkflow(page);
 
-  await page.goto(`/projects/${PROJECT.id}`);
+  await page.goto(`/workflows/${WORKFLOW.id}`);
   await expectPath(page, '/login');
   expect(new URL(page.url()).searchParams.get('redirect')).toMatch(
-    new RegExp(`^/projects/${PROJECT.id}`)
+    new RegExp(`^/workflows/${WORKFLOW.id}`)
   );
 
   await keyField(page).fill(TEST_API_KEY);
   await submit(page).click();
 
-  await expectPath(page, `/projects/${PROJECT.id}`);
-  await expect(page.getByTestId('project-screen')).toBeVisible();
+  await expectPath(page, `/workflows/${WORKFLOW.id}`);
+  await expect(page.getByTestId('workflow-screen')).toBeVisible();
 });
 
 test('a redirect to another origin is dropped after sign-in', async ({ page }) => {
@@ -139,15 +139,15 @@ test('a redirect to another origin is dropped after sign-in', async ({ page }) =
   await keyField(page).fill(TEST_API_KEY);
   await submit(page).click();
 
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
 });
 
 test('a stored key the API refuses is dropped once, with no redirect loop', async ({ page }) => {
   const keyChecks = countKeyChecks(page);
   await setApiKey(page, WRONG_KEY);
 
-  await page.goto('/projects');
+  await page.goto('/workflows');
 
   await expectPath(page, '/login');
   await expect(keyField(page)).toBeVisible();
@@ -163,24 +163,24 @@ test('a 401 in a session signs out and comes back to the page after a new sign-i
   await stubFleetSpend(page);
   let refuse = true;
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/projects',
+    (url) => url.origin === apiOrigin && url.pathname === '/workflows',
     (route) =>
       refuse
         ? fulfillJson(route, { error: 'auth.invalid_key', message: INVALID_KEY }, 401)
-        : fulfillJson(route, [PROJECT])
+        : fulfillJson(route, [WORKFLOW])
   );
   await setApiKey(page, TEST_API_KEY);
 
-  await page.goto('/projects');
+  await page.goto('/workflows');
 
   await expectPath(page, '/login');
-  expect(new URL(page.url()).searchParams.get('redirect')).toBe('/projects');
+  expect(new URL(page.url()).searchParams.get('redirect')).toBe('/workflows');
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(null));
   refuse = false;
   await keyField(page).fill(TEST_API_KEY);
   await submit(page).click();
-  await expectPath(page, '/projects');
-  await expect(page.getByTestId('projects-overview')).toContainText(PROJECT.name);
+  await expectPath(page, '/workflows');
+  await expect(page.getByTestId('workflows-overview')).toContainText(WORKFLOW.name);
 });
 
 test('every API call carries the API key, reads and writes alike', async ({ page }) => {
@@ -188,14 +188,14 @@ test('every API call carries the API key, reads and writes alike', async ({ page
   page.on('request', (request) => {
     if (isApiCall(request) && !isKeyCheck(request)) calls.push(request);
   });
-  await stubProject(page);
+  await stubWorkflow(page);
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === SCALING,
-    (route) => fulfillJson(route, NO_POLICY)
-  );
-  await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === `${SCALING}/app`,
-    (route) => fulfillJson(route, route.request().postDataJSON())
+    (route) =>
+      fulfillJson(
+        route,
+        route.request().method() === 'PUT' ? route.request().postDataJSON() : NO_POLICY
+      )
   );
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === `${SCALING}/agents`,
@@ -204,7 +204,7 @@ test('every API call carries the API key, reads and writes alike', async ({ page
   await page.goto('/login');
   await keyField(page).fill(TEST_API_KEY);
   await submit(page).click();
-  await expectPath(page, '/projects');
+  await expectPath(page, '/workflows');
   const signedIn = calls.length;
 
   await page.goto(SCALING);
@@ -228,8 +228,8 @@ test('every API call carries the API key, reads and writes alike', async ({ page
 
 test('logging out forgets the key, and Back does not reopen the dashboard', async ({ page }) => {
   await setApiKey(page, TEST_API_KEY);
-  await page.goto('/projects');
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
+  await page.goto('/workflows');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
 
   await page.getByTestId('sidebar-user-menu').click();
   await page.getByTestId('sidebar-logout').click();
@@ -254,13 +254,13 @@ test('an API that cannot answer the key check keeps the key and offers a retry',
   );
   await setApiKey(page, TEST_API_KEY);
 
-  await page.goto('/projects');
+  await page.goto('/workflows');
 
   await expect(page.getByTestId('dashboard-error')).toBeVisible();
-  await expectPath(page, '/projects');
+  await expectPath(page, '/workflows');
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
   down = false;
   await page.getByTestId('dashboard-retry').click();
-  await expect(page.getByTestId('projects-overview')).toBeVisible();
-  await expectPath(page, '/projects');
+  await expect(page.getByTestId('workflows-overview')).toBeVisible();
+  await expectPath(page, '/workflows');
 });

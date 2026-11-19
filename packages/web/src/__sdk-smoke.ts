@@ -18,13 +18,13 @@ const _client = edenTreaty<ForgeApi>('http://localhost:3000');
 // If `ForgeApi` doesn't resolve, web typecheck fails here loudly and locally.
 export type _HealthzReturn = Awaited<ReturnType<typeof _client.healthz.get>>;
 
-function _project_contract(project_id: string) {
-  const project = _client.projects[project_id]!;
+function _workflow_contract(workflow_id: string) {
+  const workflow = _client.workflows[workflow_id]!;
   const range = { from: '2026-09-01T00:00:00Z', to: '2026-10-01T00:00:00Z' };
-  void project.get();
-  void project.stats.get();
-  void project.requests.get({ $query: { ...range, limit: 20, offset: 0 } });
-  void project.requests.get({
+  void workflow.get();
+  void workflow.stats.get();
+  void workflow.requests.get({ $query: { ...range, limit: 20, offset: 0 } });
+  void workflow.requests.get({
     $query: {
       limit: 20,
       offset: 0,
@@ -34,17 +34,17 @@ function _project_contract(project_id: string) {
       ...range,
     },
   });
-  void project.requests['session-1']!.get({ $query: range });
-  void project.metrics.kpis.get({ $query: range });
-  void project.metrics.distribution.get({
+  void workflow.requests['session-1']!.get({ $query: range });
+  void workflow.metrics.kpis.get({ $query: range });
+  void workflow.metrics.distribution.get({
     $query: { metric: 'latency', ...range, buckets: 20 },
   });
-  void project.metrics.timeseries.get({ $query: range });
-  void project.metrics.blocks.get({ $query: range });
-  void project.metrics.agents['agent-1']!.get({ $query: range });
+  void workflow.metrics.timeseries.get({ $query: range });
+  void workflow.metrics.blocks.get({ $query: range });
+  void workflow.metrics.agents['agent-1']!.get({ $query: range });
 }
 
-void _project_contract;
+void _workflow_contract;
 
 // The cost dashboard renders straight off these, so the subpath has to keep exporting them.
 function _metrics_contract(
@@ -57,9 +57,9 @@ function _metrics_contract(
   void `${series.bucket_seconds} ${point?.start_at} ${point?.total_cost}`;
   const block = blocks.blocks[0];
   void `${blocks.total_cost} ${block?.agent_id} ${block?.kind} ${block?.recoverable_cost} ${block?.retry_rate}`;
-  // The block drawer reads the agent's own range, the project denominators it divides by, and the
+  // The block drawer reads the agent's own range, the workflow denominators it divides by, and the
   // cost-per-request histogram it plots.
-  void `${agent.label} ${agent.from} ${agent.to} ${agent.project.request_count} ${agent.project.total_cost}`;
+  void `${agent.label} ${agent.from} ${agent.to} ${agent.workflow.request_count} ${agent.workflow.total_cost}`;
   void `${agent.agent.cost} ${agent.agent.request_count} ${agent.agent.cache_hit_ratio}`;
   void `${agent.cost_per_request.p95} ${agent.cost_per_request.buckets[0]?.lower}`;
   // The coverage badge divides the costed counts by the range's own, and the cost-per-query cells
@@ -82,7 +82,7 @@ function _requests_contract(query: ListRequestsQuery, page: RequestList) {
 void _requests_contract;
 
 // The query trace drawer renders straight off these: the median it compares the query against —
-// null when the project billed nothing in the trailing window — and one timeline row per block.
+// null when the workflow billed nothing in the trailing window — and one timeline row per block.
 function _trace_contract(trace: RequestTrace) {
   const block = trace.blocks[0];
   void `${trace.status} ${trace.duration_ms} ${trace.total_cost} ${trace.median_cost}`;

@@ -18,15 +18,15 @@ import { Payload } from '@/modules/monitoring/components/payload';
 import { RowTrigger } from '@/modules/monitoring/components/row-trigger';
 import { formatCost, formatTokens } from '@/modules/monitoring/monitoring.format';
 import { tracesQueryOptions } from '@/modules/monitoring/monitoring.queries';
-import { ProjectQueryDrawer } from '@/modules/projects/components/project-query-drawer';
-import { formatQueryCost } from '@/modules/projects/projects.format';
-import { COST_SPLIT } from '@/modules/projects/projects.metrics';
+import { WorkflowQueryDrawer } from '@/modules/workflows/components/workflow-query-drawer';
+import { formatQueryCost } from '@/modules/workflows/workflows.format';
+import { COST_SPLIT } from '@/modules/workflows/workflows.metrics';
 import type { RangeSelection } from '@/modules/core/time-range';
-import type { OpenedQuery } from '@/modules/projects/components/project-query-drawer';
+import type { OpenedQuery } from '@/modules/workflows/components/workflow-query-drawer';
 
 const TRACE_LIMIT = 200;
 
-const route = getRouteApi('/_authenticated/projects/$project_id/monitoring');
+const route = getRouteApi('/_authenticated/workflows/$workflow_id/monitoring');
 
 type SpanLlm = NonNullable<MonitoringTraceSpan['llm']>;
 
@@ -41,18 +41,18 @@ function spanBarColor(span: MonitoringTraceSpan) {
 }
 
 interface TraceListProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
 }
 
-export function TraceList({ project_id, range }: TraceListProps) {
+export function TraceList({ workflow_id, range }: TraceListProps) {
   const [opened, setOpened] = useState<OpenedQuery | null>(null);
   const opened_trace_id = useRef<string | null>(null);
 
   return (
     <>
       <TraceTable
-        project_id={project_id}
+        workflow_id={workflow_id}
         range={range}
         onOpenDetails={(query) => {
           opened_trace_id.current = query.session_id;
@@ -60,8 +60,8 @@ export function TraceList({ project_id, range }: TraceListProps) {
         }}
       />
       {/* Outside the table's loading and error branches, so a refetch behind it never closes it. */}
-      <ProjectQueryDrawer
-        project_id={project_id}
+      <WorkflowQueryDrawer
+        workflow_id={workflow_id}
         opened={opened}
         onClose={() => setOpened(null)}
         returnFocusTo={() =>
@@ -75,12 +75,12 @@ export function TraceList({ project_id, range }: TraceListProps) {
 }
 
 function TraceTable({
-  project_id,
+  workflow_id,
   range,
   onOpenDetails,
 }: TraceListProps & { readonly onOpenDetails: (query: OpenedQuery) => void }) {
   const { trace: focused_trace_id } = route.useSearch();
-  const query = useQuery(tracesQueryOptions(project_id, { range, limit: TRACE_LIMIT }));
+  const query = useQuery(tracesQueryOptions(workflow_id, { range, limit: TRACE_LIMIT }));
 
   if (query.error) {
     return (

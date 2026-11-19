@@ -22,8 +22,8 @@ from ..harness import (
     docker_name,
     manifest,
     poll,
-    project_containers,
-    project_root,
+    workflow_group_containers,
+    workflow_root,
     qualified,
 )
 
@@ -33,14 +33,14 @@ UNSCHEDULABLE_CPUS = 999
 
 
 def _config(deployed):
-    return project_root(deployed.project_dir) / "config" / "workflow_config.yaml"
+    return workflow_root(deployed.workflow_dir) / "config" / "workflow_config.yaml"
 
 
 def _scaled_agent(deployed):
-    """The agent the cases change, `<project>.<agent>`: one no route of the endpoint
+    """The agent the cases change, `<workflow>.<agent>`: one no route of the endpoint
     serves, so queries keep flowing while it changes."""
-    routes = manifest(deployed.project_dir)["endpoint"]["routes"]
-    served = {qualified(deployed.project_dir, route["agent"]) for route in routes}
+    routes = manifest(deployed.workflow_dir)["endpoint"]["routes"]
+    served = {qualified(deployed.workflow_dir, route["agent"]) for route in routes}
     return next(name for name in deployed.agents if name not in served)
 
 
@@ -51,7 +51,7 @@ def _edit_agent(deployed, text, agent, *, replicas, cpu=None):
     spec = next(
         spec
         for spec in config["agents"]
-        if qualified(deployed.project_dir, spec["name"]) == agent
+        if qualified(deployed.workflow_dir, spec["name"]) == agent
     )
     spec["replicas"] = replicas
     if cpu is not None:
@@ -62,7 +62,7 @@ def _edit_agent(deployed, text, agent, *, replicas, cpu=None):
 def _sync(recorder, deployed, action="reload"):
     call = canyonos(
         recorder,
-        ["sync", str(deployed.project_dir), "--json"],
+        ["sync", str(deployed.workflow_dir), "--json"],
         cwd=deployed.dir,
         timeout=300,
     )
@@ -115,7 +115,7 @@ def _container_identity(recorder, names) -> dict[str, str]:
 def _running(recorder, deployed):
     return sorted(
         name
-        for name, state in project_containers(recorder, deployed.group).items()
+        for name, state in workflow_group_containers(recorder, deployed.group).items()
         if state == "running"
     )
 
@@ -185,7 +185,7 @@ def test_sync_json_names_why_the_config_is_rejected(recorder, deployed):
     try:
         call = canyonos(
             recorder,
-            ["sync", str(deployed.project_dir), "--json"],
+            ["sync", str(deployed.workflow_dir), "--json"],
             cwd=deployed.dir,
             timeout=300,
             check=False,
@@ -196,7 +196,7 @@ def test_sync_json_names_why_the_config_is_rejected(recorder, deployed):
         _sync(recorder, deployed, action="none")
     assert call.code == 1, call.output
     result = call.json()
-    assert result["ok"] is False and result["code"] == "project_invalid", call.stdout
+    assert result["ok"] is False and result["code"] == "workflow_invalid", call.stdout
     assert "env_file: is no longer used" in " ".join(result["errors"]), call.stdout
 
 
@@ -204,14 +204,16 @@ def test_sync_json_names_why_the_config_is_rejected(recorder, deployed):
 def test_canyonos_test_runs_on_a_synced_config(recorder, deployed, check):
     """`canyonos test` queries a deploy whose config `canyonos sync` changed."""
     edited = _config(deployed).read_text() + "# synced by the E2E check\n"
-    query = deployed.project.cli_query or as_argument(deployed.endpoint, deployed.query)
-    timeout = str(deployed.project.timeout)
+    query = deployed.workflow.cli_query or as_argument(
+        deployed.endpoint, deployed.query
+    )
+    timeout = str(deployed.workflow.timeout)
     with _synced(recorder, deployed, edited):
         call = canyonos(
             recorder,
             ["test", query, "--json", "--timeout", timeout],
             cwd=deployed.dir,
-            timeout=deployed.project.timeout + 120,
+            timeout=deployed.workflow.timeout + 120,
         )
         report = call.json()
         assert report["error"] is None, call.stdout

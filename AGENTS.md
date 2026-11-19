@@ -13,7 +13,7 @@ A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo
 | `packages/api`           | Dashboard API                                                          | TypeScript (Bun)         |
 | `packages/web`           | Dashboard frontend                                                     | TypeScript (React, Vite) |
 | `packages/ui`            | Shared React components for `web`                                      | TypeScript (React)       |
-| `packages/operator`      | Kubernetes operator that runs projects in a cluster                    | Go                       |
+| `packages/operator`      | Kubernetes operator that runs workflow groups in a cluster             | Go                       |
 | `packages/cli-usage-api` | Receives CLI usage reports and `canyonos feedback`                     | TypeScript (Bun)         |
 | `packages/api-interface` | Typed TypeScript and Python clients for the CanyonOS REST API          | TypeScript, Python       |
 | `examples/`              | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
@@ -36,8 +36,8 @@ uv run canyonos <cmd>    # run the checkout's CLI from anywhere in the workspace
 bun run cli:test:e2e     # CLI end-to-end tests (packages/cli/tests/e2e)
 bun run api:test:e2e     # API end-to-end tests
 bun run ui:test:e2e      # dashboard Playwright tests
-uv run pytest tests/e2e/cases --project=<name>   # deploy one project and run the E2E cases
-uv run pytest tests/e2e/scenarios                 # E2E checks that stage their own projects
+uv run pytest tests/e2e/cases --workflow=<name>  # deploy one workflow and run the E2E cases
+uv run pytest tests/e2e/scenarios                 # E2E checks that stage their own workflows
 ```
 
 Run `bun run check` and the E2E suite that covers the change before calling it done.
@@ -58,7 +58,9 @@ Run `bun run check` and the E2E suite that covers the change before calling it d
   - _replica_: one running copy of an agent; an agent has N. Its ID is `<agent>-<8 random hex characters>`, e.g. `Alpha-1a2b3c4d`. Never "instance".
   - _container_: the Docker container itself (`container_name`, `container_port`, `docker` commands). Redis, the metrics collector and the Global Controller run in containers too, so not every container is a replica.
   - _orchestrator_: what starts, replaces and removes an agent's replicas; on Docker and EC2, CanyonOS's own reconciler; on Kubernetes, the operator and Kubernetes. The Global Controller decides how many replicas each agent should have and asks `gc.orchestrator` (`controller/orchestrator.py`) to run them. Never "replica manager" or "backend", and never call it "replicas", which are the running copies.
-  - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `agent.id` (it holds a replica ID), and AWS API names such as `run_instances` or `InstanceType`.
+  - _workflow_: one folder deployed with `canyonos deploy`, keyed by its `workflow_id`. Never "project" or "folder".
+  - _workflow group_: the workflows deployed together, keyed by `workflow_group_id`; `workflow_group` in code. Never "deployment".
+  - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `agent.id` (it holds a replica ID), AWS API names such as `run_instances` or `InstanceType`, and Kubernetes and operator names such as the `CanyonProject` resource, its `project_id` and `apply-project`.
 - Name a variable for what it holds, with its subject: `memory_per_call`, not `per_call`. If the code already has a word for that thing, use it rather than a new one: the cap on one replica's calls is `max_workers`, not `replica_limit`.
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 

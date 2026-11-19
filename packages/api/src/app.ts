@@ -11,12 +11,12 @@ import { seedDevData } from '@api/db/seed';
 import { authRoutes } from '@api/modules/auth/auth.routes';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
 import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
-import { start_registered_projects_sync } from '@api/modules/canyonos/canyonos.sync';
+import { start_registered_workflows_sync } from '@api/modules/canyonos/canyonos.sync';
 import { start_governance_publisher } from '@api/modules/governance/governance.publisher';
-import { projectsRoutes } from '@api/modules/projects/projects.routes';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
+import { workflowsRoutes } from '@api/modules/workflows/workflows.routes';
 import { config } from '@core/env';
 import { errorPlugin } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
@@ -69,11 +69,11 @@ export const createApp = () =>
                 title: 'CanyonOS API',
                 version: '0.1.0',
                 description:
-                  'With CANYONOS_API_KEY_HASH set, every /projects and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open.',
+                  'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open.',
               },
               tags: [
                 { name: 'Auth' },
-                { name: 'Projects' },
+                { name: 'Workflows' },
                 { name: 'Requests' },
                 { name: 'Metrics' },
                 { name: 'Telemetry' },
@@ -98,7 +98,7 @@ export const createApp = () =>
     )
     .use(authRoutes)
     .use(resourcesRoutes)
-    .use(projectsRoutes)
+    .use(workflowsRoutes)
     // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API key.
     .use(telemetryRoutes)
     .use(canyonosRoutes);
@@ -110,8 +110,8 @@ export type ForgeApi = typeof forgeApi;
 export const setupApi = async () => {
   await runMigrations();
   await seedDevData();
-  // Kubernetes: the operator lists the projects; there is no one controller to register.
-  if (config.canyonos.projectsFile) await start_registered_projects_sync();
+  // Kubernetes: the operator lists the workflows; there is no one controller to register.
+  if (config.canyonos.workflowsFile) await start_registered_workflows_sync();
   else await bootstrap_canyonos();
   httpLogger.info('Setup complete', { env: config.environment });
 };

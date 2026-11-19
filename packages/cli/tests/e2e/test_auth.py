@@ -22,8 +22,8 @@ API_KEY = "e2e-machine-key-3b7f9d2a"
 NEXT_API_KEY = "e2e-machine-key-c41e0b88"
 KEY_SET = "Your deploys now use an API key for secure connections."
 REPLACED_HINT = (
-    "The dashboard and this deployment use the new key; other running deployments "
-    "keep the old one until you redeploy them."
+    "The dashboard and this workflow group use the new key; other running "
+    "workflow groups keep the old one until you redeploy them."
 )
 REMOVED = "Removed this machine's API key."
 OPEN_WARNING = (

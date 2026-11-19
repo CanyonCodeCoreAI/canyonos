@@ -37,7 +37,7 @@ export const ScalingPolicySchema = z
   });
 
 /**
- * A project's one policy as the controller sees it. `applied` is what the controller enforces
+ * A workflow's one policy as the controller sees it. `applied` is what the controller enforces
  * on every agent; `invalid` is a stored policy it skips, with the first rule it breaks.
  */
 export const ScalingStatusSchema = z.discriminatedUnion('status', [
@@ -46,9 +46,9 @@ export const ScalingStatusSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('invalid'), reason: z.string() }),
 ]);
 
-/** Each project's policy, by project name: every project the deployment runs agents of. */
+/** The workflow's policy, keyed by the workflow's name. */
 export const ScalingResponseSchema = z.object({
-  projects: z.record(z.string(), ScalingStatusSchema),
+  workflows: z.record(z.string(), ScalingStatusSchema),
 });
 
 export const ScalingDeleteResponseSchema = z.object({ status: z.literal('none') });

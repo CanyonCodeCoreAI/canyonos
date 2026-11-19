@@ -753,7 +753,7 @@ class LocalController(object):
             sys.modules[agent_module_name] = module
             loader.exec_module(module)
 
-            # The agent is named `<project>.<class>`; its module defines the class.
+            # The agent is named `<workflow>.<class>`; its module defines the class.
             agent_class = getattr(module, agent_name.rsplit(".", 1)[-1])
             agent_instance = agent_class()
             logger.info(f"Successfully loaded and instantiated agent: {agent_name}")

@@ -51,13 +51,14 @@ and NULL where a kind doesn't use them.
 | `kind` | `machine` or `agent`. |
 | `agent_id`, `agent_name` | Agent identity (agent rows). |
 | `host`, `port` | Location; `port` NULL for machine rows. |
-| `project_id` | Deployment/project id. |
+| `workflow_group_id` | Workflow group id. |
+| `workflow_id` | Id of the agent's workflow (agent rows); a machine serves the whole workflow group. |
 | `observed_at` | Producer-stamped timestamp (unix seconds); both machine and agent samples stamp `observed_at`. |
 | `metrics` | **THIS HAS THE MAJORITY OF THE METRICS, EVERY OTHER COLUMN IS METADATA. It is JSON so we can freely have different schemas, as shown below with machine/agent.** . |
 | `sent` | Send-tracking, default `0`; set `1` only after delivery to every destination. |
 
 ### Machine (`kind = machine`)
-Resource: `service.name = canyonos-machine-{host}`
+Resource: `service.name = canyonos-machine-{host}`, `host.name`, `canyonos.workflow_group.id`
 
 | Field | Metric | Unit |
 | --- | --- | --- |
@@ -84,7 +85,8 @@ Resource: `service.name = canyonos-machine-{host}`
 
 ### Agent (`kind = agent`)
 Resource: `service.name = agent_name`, `service.instance.id = agent_id` (standard OTel
-semconv, kept as-is), `host.name`, `canyonos.agent.port`, `canyonos.project.id`.
+semconv, kept as-is), `host.name`, `canyonos.agent.port`, `canyonos.workflow_group.id`,
+`canyonos.workflow.id`.
 
 | Field | Metric | Instrument | Unit |
 | --- | --- | --- | --- |

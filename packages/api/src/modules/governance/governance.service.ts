@@ -5,7 +5,7 @@ import type { RedisClient } from 'bun';
 
 import { unprocessable } from '@core/errors';
 
-import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
+import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
 import { read_agents } from '../scaling/scaling.service';
 import { publish_spend } from './governance.publisher';
 import { governance_repo } from './governance.repo';
@@ -55,14 +55,15 @@ function spend_of(rules: AgentRules, usd: number | undefined): AgentSpend | null
 
 async function read_governance(
   redis: RedisClient,
-  project_id: string
+  workflow_id: string,
+  workflow: string
 ): Promise<GovernanceResponse> {
-  const [agents, config, up, llms, scaling_projects] = await Promise.all([
-    read_agents(redis),
+  const [agents, config, up, llms, scaling_workflows] = await Promise.all([
+    read_agents(redis, workflow),
     governance_repo.read_config(redis),
     governance_repo.read_up_agents(redis),
     governance_repo.read_llms(redis),
-    governance_repo.scaling_projects(redis),
+    governance_repo.scaling_workflows(redis),
   ]);
   const names = new Set(agents.map(({ name }) => name));
   const rules_by_name = new Map(agents.map(({ name }) => [name, rules_of(config.agents[name])]));
@@ -70,8 +71,8 @@ async function read_governance(
     rules.spend?.since === undefined ? [] : [{ name, since: rules.spend.since }]
   );
   const [spend, edges] = await Promise.all([
-    governance_repo.spend_since(project_id, governed),
-    governance_repo.call_edges(project_id),
+    governance_repo.spend_since(workflow_id, governed),
+    governance_repo.call_edges(workflow_id),
   ]);
   const status_by_name = new Map(agents.map((agent) => [agent.name, status_of(agent, up)]));
 
@@ -88,8 +89,8 @@ async function read_governance(
         models: llms === null ? null : models_for(llms, agent.name),
         rules,
         spend: spend_of(rules, spend.get(agent.name)),
-        // Agents are named `<project>.<agent>`; each project has its own policy.
-        scaling_policy_present: scaling_projects.has(agent.name.split('.')[0]!),
+        // Agents are named `<workflow>.<agent>`; each workflow has its own policy.
+        scaling_policy_present: scaling_workflows.has(agent.name.split('.')[0]!),
       };
     }),
     edges: edges.filter(({ source, target }) => names.has(source) && names.has(target)),
@@ -97,34 +98,34 @@ async function read_governance(
 }
 
 function unknown_agent(name: string) {
-  return unprocessable(
-    'governance.unknown_agent',
-    `${name} is not an agent of the running deployment`
-  );
+  return unprocessable('governance.unknown_agent', `${name} is not an agent of this workflow`);
 }
 
-async function find_agent(redis: RedisClient, name: string): Promise<AgentReading[]> {
-  const agents = await read_agents(redis);
+async function find_agent(
+  redis: RedisClient,
+  workflow: string,
+  name: string
+): Promise<AgentReading[]> {
+  const agents = await read_agents(redis, workflow);
   if (!agents.some((agent) => agent.name === name)) throw unknown_agent(name);
   return agents;
 }
 
-export async function get_governance(project_id: string): Promise<GovernanceResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    return read_governance(redis, project_id);
-  });
+export async function get_governance(workflow_id: string): Promise<GovernanceResponse> {
+  return with_redis(workflow_id, async (redis) =>
+    read_governance(redis, workflow_id, await assert_workflow_running(redis, workflow_id))
+  );
 }
 
 /** Replaces one agent's rules, keeping its spend start unless the body moves it. */
 export async function save_agent_rules(
-  project_id: string,
+  workflow_id: string,
   agent: string,
   rules: AgentRules
 ): Promise<GovernanceResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    const agents = await find_agent(redis, agent);
+  return with_redis(workflow_id, async (redis) => {
+    const workflow = await assert_workflow_running(redis, workflow_id);
+    const agents = await find_agent(redis, workflow, agent);
     const names = new Set(agents.map(({ name }) => name));
     const missing = rules.requires.find((name) => !names.has(name));
     if (missing !== undefined) throw unknown_agent(missing);
@@ -147,22 +148,22 @@ export async function save_agent_rules(
       const since = rules.spend.since ?? stored?.spend?.since ?? new Date().toISOString();
       return { ...rules, spend: { ...rules.spend, since } };
     });
-    await publish_spend(redis, project_id);
-    return read_governance(redis, project_id);
+    await publish_spend(redis, workflow_id);
+    return read_governance(redis, workflow_id, workflow);
   });
 }
 
 /** Takes an agent out (0 desired replicas) or brings it back to its spec's count. */
 export async function set_stopped(
-  project_id: string,
+  workflow_id: string,
   agent: string,
   stopped: boolean
 ): Promise<GovernanceResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
-    const agents = await find_agent(redis, agent);
+  return with_redis(workflow_id, async (redis) => {
+    const workflow = await assert_workflow_running(redis, workflow_id);
+    const agents = await find_agent(redis, workflow, agent);
     const { replicas_configured } = agents.find(({ name }) => name === agent)!;
     await redis.set(`agent:${agent}:desired_replicas`, String(stopped ? 0 : replicas_configured));
-    return read_governance(redis, project_id);
+    return read_governance(redis, workflow_id, workflow);
   });
 }

@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The CLI on a deployed project, the way a user or a coding agent drives it with
+"""The CLI on a deployed workflow, the way a user or a coding agent drives it with
 no terminal: the deploy's own output, the containers it started, status, logs,
-doctor and `canyonos curl` on the selected deployment, and their JSON results, with
+doctor and `canyonos curl` on the selected workflow group, and their JSON results, with
 the deploy up in `status --json` and the Global Controller's address it gives
 answering. The deploy hands only the Global Controller the hash of the session's API
 key, which it publishes to Redis; the key itself reaches no container."""
@@ -23,8 +23,8 @@ from ..harness import (
     http,
     manifest,
     poll,
-    project_containers,
-    project_redis,
+    workflow_group_containers,
+    workflow_group_redis,
     qualified,
     run,
 )
@@ -91,17 +91,19 @@ def test_the_printed_curl_works_with_the_api_key(recorder, deployed):
     assert json.loads(call.stdout)["request_id"], call.output
 
 
-def test_canyonos_curl_posts_to_the_selected_deployment(recorder, deployed, tmp_path):
+def test_canyonos_curl_posts_to_the_selected_workflow_group(
+    recorder, deployed, tmp_path
+):
     body = json.dumps({deployed.endpoint.argument: deployed.query})
-    route = ["--route", deployed.endpoint.route]
+    url = f"{deployed.endpoint.url}/{deployed.endpoint.route}"
+    route = ["--route", url]
     try:
-        canyonos(recorder, ["select-context", deployed.project_id], cwd=tmp_path)
+        canyonos(recorder, ["select-context", deployed.workflow_group_id], cwd=tmp_path)
         printed = canyonos(recorder, ["curl", body, *route, "--print"], cwd=tmp_path)
         call = canyonos(recorder, ["curl", body, *route], cwd=tmp_path)
     finally:
         canyonos(recorder, ["select-context", "--clear"], cwd=tmp_path)
 
-    url = f"{deployed.endpoint.url}/{deployed.endpoint.route}"
     expected = (
         f'curl -X POST {url} {BEARER} -H "Content-Type: application/json" '
         f"-d {shlex.quote(body)}"
@@ -113,10 +115,10 @@ def test_canyonos_curl_posts_to_the_selected_deployment(recorder, deployed, tmp_
 
 def test_containers_up(recorder, deployed):
     group = deployed.group
-    containers = project_containers(recorder, group, every=True)
+    containers = workflow_group_containers(recorder, group, every=True)
     replicas = {
-        qualified(deployed.project_dir, agent["name"]): agent.get("replicas", 1)
-        for agent in manifest(deployed.project_dir)["agents"]
+        qualified(deployed.workflow_dir, agent["name"]): agent.get("replicas", 1)
+        for agent in manifest(deployed.workflow_dir)["agents"]
     }
     expected = {
         f"{group}-global-controller": 1,
@@ -146,14 +148,14 @@ def test_containers_up(recorder, deployed):
 
 
 def test_the_global_controller_publishes_the_key_hash(recorder, deployed):
-    published = project_redis(recorder, deployed.dir).get(API_KEY_HASH_KEY)
+    published = workflow_group_redis(recorder, deployed.dir).get(API_KEY_HASH_KEY)
     assert published == hash_api_key(recorder.api_key), published
 
 
 def test_only_the_global_controller_gets_the_key_hash(recorder, deployed):
     controller = f"{deployed.group}-global-controller"
 
-    for name in project_containers(recorder, deployed.group):
+    for name in workflow_group_containers(recorder, deployed.group):
         inspected = docker(recorder, ["inspect", name]).json()[0]
         env = dict(
             item.partition("=")[::2] for item in inspected["Config"]["Env"] or []
@@ -183,7 +185,7 @@ def test_status_json_counts_every_replica(recorder, deployed):
     poll(settled, timeout=120, what="every agent running its replicas in status --json")
     report = canyonos(recorder, ["status", "--json"], cwd=deployed.dir).json()
     assert report["target"] == "docker", report
-    assert report["deployment"] == deployed.group.removeprefix("canyonos-"), report
+    assert report["workflow_group"] == deployed.group.removeprefix("canyonos-"), report
     assert report["phase"] == "up" and report["last_apply"]["ok"], report
     version = cli_value(
         recorder, deployed.dir, "VERSION", "from canyonos.env import VERSION"
@@ -192,7 +194,7 @@ def test_status_json_counts_every_replica(recorder, deployed):
     controller = http(
         recorder,
         "GET",
-        f"{report['controller_url']}/v1/deployments/{deployed.project_id}",
+        f"{report['controller_url']}/v1/workflow-groups/{deployed.workflow_group_id}",
         headers=controller_headers(recorder, deployed.dir),
     )
     assert controller.json()["running"] is True, controller.output

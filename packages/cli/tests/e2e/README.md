@@ -19,7 +19,7 @@ service log go to `artifacts/` under pytest's base temp directory, which pytest
 prunes to the last three runs. CI sets that directory with `--basetemp` and
 uploads `artifacts/` when the job fails.
 
-This isolation does not cover deployment's fixed Docker names, ports, networks,
+This isolation does not cover workflow group's fixed Docker names, ports, networks,
 volumes, or the shared daemon. This foundation does not start, stop, or reuse an
 existing workflow. Full deploy tests need a dedicated runtime owner. Correctness
 tests should keep query concurrency low; load tests belong in the separate

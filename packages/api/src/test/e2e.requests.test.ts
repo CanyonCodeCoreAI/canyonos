@@ -4,8 +4,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { api, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_project, TEST_API_KEY } from './project-test.utils';
-import { write_project_span, write_unattributed_span } from './telemetry-test.utils';
+import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 import type {
   RequestListItem,
   RequestSort,
@@ -16,9 +16,9 @@ setupE2ETests();
 
 const VALID_REQUEST_ID = 'req_00000001';
 
-async function create_project(): Promise<string> {
-  const { project_id } = await create_test_project({ name: 'Requests Project' });
-  return project_id;
+async function create_workflow(): Promise<string> {
+  const { workflow_id } = await create_test_workflow({ name: 'Requests Workflow' });
+  return workflow_id;
 }
 
 const NANOS_PER_MS = 1_000_000n;
@@ -59,8 +59,8 @@ interface SeededSpan {
   readonly output?: string;
 }
 
-async function seed(project_id: string, spans: readonly SeededSpan[]): Promise<void> {
-  for (const span of spans) await write_project_span(project_id, span);
+async function seed(workflow_id: string, spans: readonly SeededSpan[]): Promise<void> {
+  for (const span of spans) await write_workflow_span(workflow_id, span);
 }
 
 function listing_spans(prefix: string): SeededSpan[] {
@@ -133,8 +133,8 @@ function listing_spans(prefix: string): SeededSpan[] {
 
 type ListQuery = Record<string, string | number | undefined>;
 
-async function list(token: string, project_id: string, query: ListQuery = {}) {
-  const res = await api.projects[project_id]!.requests.get({
+async function list(token: string, workflow_id: string, query: ListQuery = {}) {
+  const res = await api.workflows[workflow_id]!.requests.get({
     $query: { ...range(60), limit: 20, offset: 0, ...query },
     $headers: bearer(token),
   });
@@ -145,11 +145,11 @@ async function list(token: string, project_id: string, query: ListQuery = {}) {
 const ids = (items: readonly RequestListItem[]): string[] => items.map((item) => item.session_id);
 
 describe('request trace endpoint', () => {
-  test('the API key gets 404 when the project has no matching request', async () => {
+  test('the API key gets 404 when the workflow has no matching request', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -158,23 +158,23 @@ describe('request trace endpoint', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('requests.not_found');
   });
 
-  test('an unknown project id is 404 projects.not_found, not requests.not_found', async () => {
+  test('an unknown workflow id is 404 workflows.not_found, not requests.not_found', async () => {
     const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await api.projects[unknown]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await api.workflows[unknown]!.requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
 
     expect(res.error?.status as number).toBe(404);
-    expect((res.error?.value as { error?: string })?.error).toBe('projects.not_found');
+    expect((res.error?.value as { error?: string })?.error).toBe('workflows.not_found');
   });
 
   test('a request without the API key is rejected with 401', async () => {
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
     });
     expect(res.error?.status as number).toBe(401);
@@ -182,9 +182,9 @@ describe('request trace endpoint', () => {
 
   test('a trace read without from/to is rejected by validation (422)', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
       $headers: bearer(token),
     } as never);
     expect(res.error?.status as number).toBe(422);
@@ -192,18 +192,18 @@ describe('request trace endpoint', () => {
 
   test('an oversized request id is rejected by validation (422)', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests['x'.repeat(256)]!.get({
+    const res = await api.workflows[workflow_id]!.requests['x'.repeat(256)]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
     expect(res.error?.status as number).toBe(422);
   });
 
-  test('a non-uuid project id is rejected by validation (422)', async () => {
+  test('a non-uuid workflow id is rejected by validation (422)', async () => {
     const token = TEST_API_KEY;
-    const res = await api.projects['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
+    const res = await api.workflows['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -211,13 +211,13 @@ describe('request trace endpoint', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests (listing with rollups)', () => {
+describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
   test('lists requests newest-first with status, duration, token, and cost rollups', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('list'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('list'));
 
-    const page = await list(token, project_id);
+    const page = await list(token, workflow_id);
 
     expect(page.total).toBe(4);
     expect(ids(page.items)).toEqual(['list-recent', 'list-done', 'list-failed', 'list-old']);
@@ -249,10 +249,10 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
   test('every request reports a finish time and a duration', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('fin'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('fin'));
 
-    const page = await list(token, project_id);
+    const page = await list(token, workflow_id);
 
     for (const item of page.items) {
       expect(item.started_at).not.toBeNull();
@@ -264,11 +264,11 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
   test('paginates with a stable total', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('page'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('page'));
 
-    const first = await list(token, project_id, { limit: 2, offset: 0 });
-    const second = await list(token, project_id, { limit: 2, offset: 2 });
+    const first = await list(token, workflow_id, { limit: 2, offset: 0 });
+    const second = await list(token, workflow_id, { limit: 2, offset: 2 });
 
     expect(first.total).toBe(4);
     expect(second.total).toBe(4);
@@ -278,42 +278,42 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
   test('filters by status and counts the same filtered set', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('st'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('st'));
 
-    const failed = await list(token, project_id, { status: 'failed' });
+    const failed = await list(token, workflow_id, { status: 'failed' });
     expect(failed.total).toBe(1);
     expect(ids(failed.items)).toEqual(['st-failed']);
 
-    const completed = await list(token, project_id, { status: 'completed' });
+    const completed = await list(token, workflow_id, { status: 'completed' });
     expect(completed.total).toBe(3);
     expect(ids(completed.items)).toEqual(['st-recent', 'st-done', 'st-old']);
   });
 
   test('the running filter lists nothing, because a stored span has always finished', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('run'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('run'));
 
-    const running = await list(token, project_id, { status: 'running' });
+    const running = await list(token, workflow_id, { status: 'running' });
 
     expect(running.total).toBe(0);
     expect(running.items).toEqual([]);
   });
 
-  test('an empty project lists zero requests', async () => {
+  test('an empty workflow lists zero requests', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const page = await list(token, project_id);
+    const page = await list(token, workflow_id);
 
     expect(page).toEqual({ ...range(60), total: 0, items: [] });
   });
 
-  test('a span without the project attribute is invisible to every project', async () => {
+  test('a span without the workflow attribute is invisible to every workflow', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('orph'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('orph'));
     await write_unattributed_span({
       span_id: 'orph-loose-1',
       trace_id: 'orph-loose',
@@ -322,25 +322,25 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       cost: 9.999,
     });
 
-    const page = await list(token, project_id);
+    const page = await list(token, workflow_id);
 
     expect(page.total).toBe(4);
     expect(ids(page.items)).not.toContain('orph-loose');
   });
 
-  test("another project's spans stay invisible even under the same trace id", async () => {
-    const mine = await create_project();
-    const theirs = await create_project();
+  test("another workflow's spans stay invisible even under the same trace id", async () => {
+    const mine = await create_workflow();
+    const theirs = await create_workflow();
     const start = ago(MINUTE_MS);
 
-    await write_project_span(mine, {
+    await write_workflow_span(mine, {
       span_id: 'shared-mine-1',
       trace_id: 'shared-trace',
       start_time_unix_nano: start,
       end_time_unix_nano: plus(start, 100),
       cost: 0.000011,
     });
-    await write_project_span(theirs, {
+    await write_workflow_span(theirs, {
       span_id: 'shared-theirs-1',
       trace_id: 'shared-trace',
       start_time_unix_nano: start,
@@ -361,9 +361,9 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
   test('an unselected range includes only requests with in-range spans', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     const old_start = ago(3 * 24 * 60 * MINUTE_MS);
-    await seed(project_id, [
+    await seed(workflow_id, [
       ...listing_spans('win'),
       {
         span_id: 'win-ancient-1',
@@ -374,8 +374,8 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
       },
     ]);
 
-    const week = await list(token, project_id, { ...range(7 * 1440) });
-    const day = await list(token, project_id, { ...range(1440) });
+    const week = await list(token, workflow_id, { ...range(7 * 1440) });
+    const day = await list(token, workflow_id, { ...range(1440) });
 
     expect(week.total).toBe(5);
     expect(ids(week.items)).toContain('win-ancient');
@@ -383,11 +383,11 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
     expect(ids(day.items)).not.toContain('win-ancient');
   });
 
-  test("the API key reads the project's requests", async () => {
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('guard'));
+  test("the API key reads the workflow's requests", async () => {
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('guard'));
 
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { ...range(60), limit: 20, offset: 0 },
       $headers: bearer(TEST_API_KEY),
     });
@@ -397,9 +397,9 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 
   test('a listing without the API key is rejected with 401', async () => {
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { ...range(60), limit: 20, offset: 0 },
     });
     expect(res.error?.status as number).toBe(401);
@@ -407,9 +407,9 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
 
   test('an out-of-range limit is rejected by validation (422)', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { ...range(60), limit: 500, offset: 0 },
       $headers: bearer(token),
     });
@@ -417,23 +417,23 @@ describe('GET /projects/:project_id/requests (listing with rollups)', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests (ordering)', () => {
+describe('GET /workflows/:workflow_id/requests (ordering)', () => {
   let token: string;
-  let project_id: string;
+  let workflow_id: string;
 
   const ordered = async (sort: RequestSort, order: SortDirection): Promise<string[]> =>
-    ids((await list(token, project_id, { sort, order })).items);
+    ids((await list(token, workflow_id, { sort, order })).items);
 
   beforeEach(async () => {
     token = TEST_API_KEY;
-    project_id = await create_project();
-    await seed(project_id, listing_spans(`ord-${project_id.slice(0, 8)}`));
+    workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans(`ord-${workflow_id.slice(0, 8)}`));
   });
 
-  const local = (suffix: string): string => `ord-${project_id.slice(0, 8)}-${suffix}`;
+  const local = (suffix: string): string => `ord-${workflow_id.slice(0, 8)}-${suffix}`;
 
   test('omitting sort and order keeps the listing newest-first', async () => {
-    const page = await list(token, project_id);
+    const page = await list(token, workflow_id);
     expect(ids(page.items)).toEqual([
       local('recent'),
       local('done'),
@@ -504,7 +504,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
 
   test('cost is ordered as money, not as the string it renders to', async () => {
     const big = ago(MINUTE_MS);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: local('big-1'),
       trace_id: local('big'),
       start_time_unix_nano: big,
@@ -517,8 +517,8 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
   });
 
   test('paging a sorted listing never repeats or skips a request', async () => {
-    const first = await list(token, project_id, { sort: 'total_cost', order: 'desc', limit: 2 });
-    const second = await list(token, project_id, {
+    const first = await list(token, workflow_id, { sort: 'total_cost', order: 'desc', limit: 2 });
+    const second = await list(token, workflow_id, {
       sort: 'total_cost',
       order: 'desc',
       limit: 2,
@@ -531,7 +531,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
   });
 
   test('an unknown sort key is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { ...range(60), limit: 20, offset: 0, sort: 'nonsense' as RequestSort },
       $headers: bearer(token),
     });
@@ -539,7 +539,7 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
   });
 
   test('an unknown order direction is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: {
         ...range(60),
         limit: 20,
@@ -553,20 +553,20 @@ describe('GET /projects/:project_id/requests (ordering)', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
+describe('GET /workflows/:workflow_id/requests (metric-range filtering)', () => {
   let token: string;
-  let project_id: string;
+  let workflow_id: string;
   let prefix: string;
 
   // Four requests whose costs and tokens rise in equal steps, so a range picks a known subset.
   beforeEach(async () => {
     token = TEST_API_KEY;
-    project_id = await create_project();
-    prefix = `rng-${project_id.slice(0, 8)}`;
+    workflow_id = await create_workflow();
+    prefix = `rng-${workflow_id.slice(0, 8)}`;
     const steps = [1, 2, 3, 4];
     for (const step of steps) {
       const start = ago(step * MINUTE_MS);
-      await write_project_span(project_id, {
+      await write_workflow_span(workflow_id, {
         span_id: `${prefix}-${step}-1`,
         trace_id: `${prefix}-${step}`,
         start_time_unix_nano: start,
@@ -581,7 +581,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 
   const ranged = async (metric: string, min: number, max: number): Promise<string[]> =>
-    ids((await list(token, project_id, { metric, min, max, ...range(43200) })).items);
+    ids((await list(token, workflow_id, { metric, min, max, ...range(43200) })).items);
 
   test('cost_per_request lists only the requests inside the range', async () => {
     expect(await ranged('cost_per_request', 0.0015, 0.0035)).toEqual([
@@ -619,7 +619,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
 
   test('a request that priced nothing is absent from a cost range', async () => {
     const start = ago(30 * 1000);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: `${prefix}-free-1`,
       trace_id: `${prefix}-free`,
       start_time_unix_nano: start,
@@ -629,8 +629,8 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
     expect(await ranged('cost_per_request', 0, 10)).not.toContain(`${prefix}-free`);
   });
 
-  test('total counts the filtered set, not the whole project', async () => {
-    const page = await list(token, project_id, {
+  test('total counts the filtered set, not the whole workflow', async () => {
+    const page = await list(token, workflow_id, {
       metric: 'cost_per_request',
       min: 0.0015,
       max: 0.0035,
@@ -642,7 +642,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 
   test('an order composes with a range instead of replacing it', async () => {
-    const page = await list(token, project_id, {
+    const page = await list(token, workflow_id, {
       metric: 'cost_per_request',
       min: 0.0015,
       max: 0.0035,
@@ -655,7 +655,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 
   test('a half-specified selection is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { ...range(60), limit: 20, offset: 0, metric: 'cost_per_request', min: 1 },
       $headers: bearer(token),
     });
@@ -663,7 +663,7 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 
   test('an unknown metric is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       // @ts-expect-error deliberately invalid metric
       $query: { limit: 20, offset: 0, metric: 'vibes', min: 0, max: 1 },
       $headers: bearer(token),
@@ -672,17 +672,17 @@ describe('GET /projects/:project_id/requests (metric-range filtering)', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests (time-range filtering)', () => {
+describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
   test('a request is listed and counted whole in the range it started in', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     const to_ms = BASE_MS - 30 * MINUTE_MS;
     const query = {
       from: new Date(to_ms - 60 * MINUTE_MS).toISOString(),
       to: new Date(to_ms).toISOString(),
     };
     const before_to = (minutes: number) => BigInt(to_ms - minutes * MINUTE_MS) * NANOS_PER_MS;
-    await seed(project_id, [
+    await seed(workflow_id, [
       // Starts inside the range and finishes after it ends.
       {
         span_id: 'whole-1',
@@ -715,7 +715,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
       },
     ]);
 
-    const page = await list(token, project_id, query);
+    const page = await list(token, workflow_id, query);
     expect(page.total).toBe(1);
     expect(page.items[0]).toMatchObject({
       session_id: 'whole',
@@ -724,7 +724,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
       total_cost: '0.0030000000',
     });
 
-    const traces = await api.projects[project_id]!.monitoring.traces.get({
+    const traces = await api.workflows[workflow_id]!.monitoring.traces.get({
       $query: { ...query, limit: 200 },
       $headers: bearer(token),
     });
@@ -734,10 +734,13 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
     ).toEqual([{ trace_id: 'whole', span_count: 2 }]);
 
     const [kpis, timeseries, blocks, monitoring] = await Promise.all([
-      api.projects[project_id]!.metrics.kpis.get({ $query: query, $headers: bearer(token) }),
-      api.projects[project_id]!.metrics.timeseries.get({ $query: query, $headers: bearer(token) }),
-      api.projects[project_id]!.metrics.blocks.get({ $query: query, $headers: bearer(token) }),
-      api.projects[project_id]!.monitoring.series.get({ $query: query, $headers: bearer(token) }),
+      api.workflows[workflow_id]!.metrics.kpis.get({ $query: query, $headers: bearer(token) }),
+      api.workflows[workflow_id]!.metrics.timeseries.get({
+        $query: query,
+        $headers: bearer(token),
+      }),
+      api.workflows[workflow_id]!.metrics.blocks.get({ $query: query, $headers: bearer(token) }),
+      api.workflows[workflow_id]!.monitoring.series.get({ $query: query, $headers: bearer(token) }),
     ]);
     expect(kpis.data).toMatchObject({
       request_count: 1,
@@ -755,15 +758,15 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   let token: string;
-  let project_id: string;
+  let workflow_id: string;
   let prefix: string;
   let day_start: string;
   let day_end: string;
 
   beforeEach(async () => {
     token = TEST_API_KEY;
-    project_id = await create_project();
-    prefix = `day-${project_id.slice(0, 8)}`;
+    workflow_id = await create_workflow();
+    prefix = `day-${workflow_id.slice(0, 8)}`;
 
     const now = new Date();
     const start_of_day = new Date(
@@ -775,20 +778,20 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
     const inside = BigInt(start_of_day.getTime() + 60 * MINUTE_MS) * NANOS_PER_MS;
     const before = BigInt(start_of_day.getTime() - 60 * MINUTE_MS) * NANOS_PER_MS;
 
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: `${prefix}-inside-1`,
       trace_id: `${prefix}-inside`,
       start_time_unix_nano: inside,
       end_time_unix_nano: plus(inside, 100),
       failed: true,
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: `${prefix}-edge-1`,
       trace_id: `${prefix}-edge`,
       start_time_unix_nano: BigInt(start_of_day.getTime()) * NANOS_PER_MS,
       end_time_unix_nano: plus(BigInt(start_of_day.getTime()) * NANOS_PER_MS, 100),
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: `${prefix}-before-1`,
       trace_id: `${prefix}-before`,
       start_time_unix_nano: before,
@@ -797,7 +800,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   test('a day window includes its start and excludes its end', async () => {
-    const page = await list(token, project_id, {
+    const page = await list(token, workflow_id, {
       from: day_start,
       to: day_end,
     });
@@ -807,7 +810,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   test('a day window narrows a status filter instead of replacing it', async () => {
-    const page = await list(token, project_id, {
+    const page = await list(token, workflow_id, {
       from: day_start,
       to: day_end,
       status: 'failed',
@@ -820,13 +823,13 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
     const empty_from = new Date(Date.parse(day_start) - 30 * 24 * 60 * MINUTE_MS).toISOString();
     const empty_to = new Date(Date.parse(empty_from) + 24 * 60 * MINUTE_MS).toISOString();
 
-    const page = await list(token, project_id, { from: empty_from, to: empty_to });
+    const page = await list(token, workflow_id, { from: empty_from, to: empty_to });
 
     expect(page).toEqual({ from: empty_from, to: empty_to, total: 0, items: [] });
   });
 
   test('a picked day narrows the range instead of replacing it', async () => {
-    const page = await list(token, project_id, {
+    const page = await list(token, workflow_id, {
       from: new Date(Date.parse(day_start) + 30 * MINUTE_MS).toISOString(),
       to: day_end,
       created_from: day_start,
@@ -841,7 +844,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
     const at = (minutes: number) =>
       BigInt(Date.parse(day_start) + minutes * MINUTE_MS) * NANOS_PER_MS;
     // The day's only priced request sits on the bucket's upper edge; the range's largest is outside the day.
-    await seed(project_id, [
+    await seed(workflow_id, [
       {
         span_id: `${prefix}-small-1`,
         trace_id: `${prefix}-small`,
@@ -858,7 +861,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
       },
     ]);
 
-    const page = await list(token, project_id, {
+    const page = await list(token, workflow_id, {
       from: new Date(Date.parse(day_start) - 180 * MINUTE_MS).toISOString(),
       to: day_end,
       created_from: day_start,
@@ -872,7 +875,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   test('a day that ends before it starts is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: {
         limit: 20,
         offset: 0,
@@ -887,7 +890,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   test('a window that ends before it starts is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { limit: 20, offset: 0, from: day_end, to: day_start },
       $headers: bearer(token),
     });
@@ -895,7 +898,7 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 
   test('a bound that is not an instant is rejected by validation (422)', async () => {
-    const res = await api.projects[project_id]!.requests.get({
+    const res = await api.workflows[workflow_id]!.requests.get({
       $query: { limit: 20, offset: 0, from: '2026-09-01T00:00:00', to: day_end },
       $headers: bearer(token),
     });
@@ -903,13 +906,13 @@ describe('GET /projects/:project_id/requests (time-range filtering)', () => {
   });
 });
 
-describe('GET /projects/:project_id/requests/:request_id', () => {
-  test('returns one request trace with ordered blocks and the project median', async () => {
+describe('GET /workflows/:workflow_id/requests/:request_id', () => {
+  test('returns one request trace with ordered blocks and the workflow median', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('tr'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('tr'));
 
-    const res = await api.projects[project_id]!.requests['tr-done']!.get({
+    const res = await api.workflows[workflow_id]!.requests['tr-done']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -917,7 +920,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     const trace = res.data!;
 
     expect(trace).toMatchObject({
-      project_id,
+      workflow_id,
       session_id: 'tr-done',
       status: 'completed',
       duration_ms: 5000,
@@ -958,10 +961,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
   test('a failed span makes the whole request failed', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('trf'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('trf'));
 
-    const res = await api.projects[project_id]!.requests['trf-failed']!.get({
+    const res = await api.workflows[workflow_id]!.requests['trf-failed']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -972,10 +975,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
   test('a refused step carries its error name and message; a successful one carries null', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     const message = 'MergeAgent requires TestRunnerAgent, which has no healthy replica right now.';
     const start = ago(5 * MINUTE_MS);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'refused-1',
       trace_id: 'refused',
       name: 'MergeAgent.merge',
@@ -991,7 +994,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
         },
       ],
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'refused-2',
       trace_id: 'refused',
       name: 'Planner.plan',
@@ -999,7 +1002,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       end_time_unix_nano: plus(start, 200),
     });
 
-    const res = await api.projects[project_id]!.requests['refused']!.get({
+    const res = await api.workflows[workflow_id]!.requests['refused']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1019,10 +1022,10 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
   test('a payload that is not JSON is preserved as the text it was', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
-    await seed(project_id, listing_spans('trt'));
+    const workflow_id = await create_workflow();
+    await seed(workflow_id, listing_spans('trt'));
 
-    const res = await api.projects[project_id]!.requests['trt-recent']!.get({
+    const res = await api.workflows[workflow_id]!.requests['trt-recent']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1033,13 +1036,13 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
   test('the median reads only requests that billed inside the queried range', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
 
     // Billed in the last 30 days: 0.001, 0.002, 0.003 -> median 0.002. Counting the two unbilled
     // requests as $0 would drag it to 0.001; a range reaching the 40-day-old $9 request moves it.
     for (const [index, cost] of [0.001, 0.002, 0.003].entries()) {
       const start = ago((index + 1) * MINUTE_MS);
-      await write_project_span(project_id, {
+      await write_workflow_span(workflow_id, {
         span_id: `med-billed-${index}`,
         trace_id: `med-billed-${index}`,
         start_time_unix_nano: start,
@@ -1049,7 +1052,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     }
     for (const index of [0, 1]) {
       const start = ago((index + 10) * MINUTE_MS);
-      await write_project_span(project_id, {
+      await write_workflow_span(workflow_id, {
         span_id: `med-free-${index}`,
         trace_id: `med-free-${index}`,
         start_time_unix_nano: start,
@@ -1057,7 +1060,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       });
     }
     const stale = ago(40 * 24 * 60 * MINUTE_MS);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'med-stale',
       trace_id: 'med-stale',
       start_time_unix_nano: stale,
@@ -1065,7 +1068,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       cost: 9,
     });
 
-    const res = await api.projects[project_id]!.requests['med-billed-1']!.get({
+    const res = await api.workflows[workflow_id]!.requests['med-billed-1']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1076,7 +1079,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.harness_cost_vs_median).toBeNull();
     expect(res.data?.token_count_vs_median).toBeNull();
 
-    const wider = await api.projects[project_id]!.requests['med-billed-1']!.get({
+    const wider = await api.workflows[workflow_id]!.requests['med-billed-1']!.get({
       $query: range(41 * 24 * 60),
       $headers: bearer(token),
     });
@@ -1084,18 +1087,18 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(wider.data?.median_cost).toBe('0.0025000000');
   });
 
-  test('a project that billed nothing in the range reports no median', async () => {
+  test('a workflow that billed nothing in the range reports no median', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     const start = ago(MINUTE_MS);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'nomed-1',
       trace_id: 'nomed',
       start_time_unix_nano: start,
       end_time_unix_nano: plus(start, 100),
     });
 
-    const res = await api.projects[project_id]!.requests['nomed']!.get({
+    const res = await api.workflows[workflow_id]!.requests['nomed']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1106,12 +1109,12 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.total_cost).toBe('0.0000000000');
   });
 
-  test('a trace never includes another project sharing its trace id', async () => {
-    const mine = await create_project();
-    const theirs = await create_project();
+  test('a trace never includes another workflow sharing its trace id', async () => {
+    const mine = await create_workflow();
+    const theirs = await create_workflow();
     const start = ago(MINUTE_MS);
 
-    await write_project_span(mine, {
+    await write_workflow_span(mine, {
       span_id: 'tshare-mine-1',
       trace_id: 'tshare',
       name: 'mine',
@@ -1119,7 +1122,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       end_time_unix_nano: plus(start, 100),
       cost: 0.000011,
     });
-    await write_project_span(theirs, {
+    await write_workflow_span(theirs, {
       span_id: 'tshare-theirs-1',
       trace_id: 'tshare',
       name: 'theirs',
@@ -1128,7 +1131,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       cost: 0.000099,
     });
 
-    const res = await api.projects[mine]!.requests['tshare']!.get({
+    const res = await api.workflows[mine]!.requests['tshare']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(TEST_API_KEY),
     });
@@ -1139,9 +1142,9 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
     expect(res.data?.duration_ms).toBe(100);
   });
 
-  test('a trace made only of spans without the project attribute is not found', async () => {
+  test('a trace made only of spans without the workflow attribute is not found', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     await write_unattributed_span({
       span_id: 'lonely-1',
       trace_id: 'lonely',
@@ -1149,7 +1152,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       end_time_unix_nano: plus(ago(MINUTE_MS), 100),
     });
 
-    const res = await api.projects[project_id]!.requests['lonely']!.get({
+    const res = await api.workflows[workflow_id]!.requests['lonely']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1160,9 +1163,9 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
 
   test('a malformed numeric attribute is ignored instead of failing the request', async () => {
     const token = TEST_API_KEY;
-    const project_id = await create_project();
+    const workflow_id = await create_workflow();
     const start = ago(MINUTE_MS);
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'bad-1',
       trace_id: 'bad',
       start_time_unix_nano: start,
@@ -1174,7 +1177,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       token_cost: 'free',
       error_count: -2,
     });
-    await write_project_span(project_id, {
+    await write_workflow_span(workflow_id, {
       span_id: 'bad-2',
       trace_id: 'bad',
       start_time_unix_nano: plus(start, 200),
@@ -1185,7 +1188,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       cost: 0.000004,
     });
 
-    const listed = await list(token, project_id);
+    const listed = await list(token, workflow_id);
     expect(listed.items[0]).toMatchObject({
       session_id: 'bad',
       block_count: 2,
@@ -1196,7 +1199,7 @@ describe('GET /projects/:project_id/requests/:request_id', () => {
       total_cost: '0.0000040000',
     });
 
-    const res = await api.projects[project_id]!.requests['bad']!.get({
+    const res = await api.workflows[workflow_id]!.requests['bad']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });

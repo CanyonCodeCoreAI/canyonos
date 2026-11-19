@@ -5,40 +5,40 @@ import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
 import { load_prompts } from '../prompts/prompts.service';
-import { registered_projects } from './canyonos.registry';
+import { registered_workflows } from './canyonos.registry';
 import { canyonos_repo } from './canyonos.repo';
 
-// On Kubernetes the operator lists the projects (canyonos.registry.ts) and nothing posts
-// registrations, so the dashboard stores what the list says, by project id. Docker
-// registers projects through the CLI instead, and none of this runs there.
+// On Kubernetes the operator lists the workflows (canyonos.registry.ts) and nothing posts
+// registrations, so the dashboard stores what the list says, by workflow id. Docker
+// registers workflows through the CLI instead, and none of this runs there.
 
 // How often the list is brought into the dashboard.
 const SYNC_MS = 10_000;
 
 const sync_logger = logger.child({ domain: LOG_DOMAINS.DB });
 
-// The name stored for each listed project, so an unchanged entry costs no query.
+// The name stored for each listed workflow, so an unchanged entry costs no query.
 const stored = new Map<string, string>();
 
-/** Stores every listed project the dashboard does not have yet, and the name of one the
+/** Stores every listed workflow the dashboard does not have yet, and the name of one the
  * operator now lists under a new name. */
-export async function sync_registered_projects(
-  path: string | null = config.canyonos.projectsFile
+export async function sync_registered_workflows(
+  path: string | null = config.canyonos.workflowsFile
 ): Promise<void> {
-  for (const entry of registered_projects(path).values()) {
+  for (const entry of registered_workflows(path).values()) {
     if (stored.get(entry.project_id) === entry.name) continue;
     const first = !stored.has(entry.project_id);
     try {
-      await canyonos_repo.save_listed_project({
-        project_id: entry.project_id,
+      await canyonos_repo.save_listed_workflow({
+        workflow_id: entry.project_id,
         name: entry.name,
         redis_port: entry.redis.port,
       });
       stored.set(entry.project_id, entry.name);
     } catch (error) {
-      sync_logger.warn('Could not store a listed project', {
+      sync_logger.warn('Could not store a listed workflow', {
         error,
-        project_id: entry.project_id,
+        workflow_id: entry.project_id,
       });
       continue;
     }
@@ -52,7 +52,7 @@ export async function sync_registered_projects(
 }
 
 /** Syncs the operator's list now, then every SYNC_MS. */
-export async function start_registered_projects_sync(): Promise<void> {
-  await sync_registered_projects();
-  setInterval(() => void sync_registered_projects(), SYNC_MS).unref();
+export async function start_registered_workflows_sync(): Promise<void> {
+  await sync_registered_workflows();
+  setInterval(() => void sync_registered_workflows(), SYNC_MS).unref();
 }

@@ -18,7 +18,7 @@ from canyonos import ui
 from canyonos.constants import DEFAULT_API_PORT, deployment_config_path, read_config
 from canyonos.deployment import deployment_name
 from canyonos.forwards import DASHBOARD, close_forward, open_forward
-from canyonos.gc import delete_deployment
+from canyonos.gc import delete_workflow_group
 
 # The project's endpoint inside its namespace (builders.EndpointName and its API port).
 ENDPOINT_SERVICE = "svc/canyonos-endpoint"
@@ -33,9 +33,9 @@ DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
 DASHBOARD_PORT = 8080
 # Where this machine's forwards look for a free port first, as Docker does.
 LOCAL_DASHBOARD_PORT = 8081
-# The cluster's dashboard is every project's: its key is its chart's.
+# The cluster's dashboard is every workflow group's: its key is its chart's.
 KUBERNETES_DASHBOARD_KEY = (
-    "The cluster's dashboard is shared by every project: it checks the key its chart "
+    "The cluster's dashboard is shared by every workflow group: it checks the key its chart "
     "sets (dashboard.apiKeyHash), not this machine's."
 )
 
@@ -99,8 +99,8 @@ def _exec_plugin_token(plugin):
 
 
 def kubernetes_state():
-    """This folder's deployment as gc.py takes it on Kubernetes: the local port of a
-    forward to the cluster's CanyonOS API, its deployment_id, and the user's kubectl
+    """This folder's workflow group as gc.py takes it on Kubernetes: the local port of a
+    forward to the cluster's CanyonOS API, its workflow_group_id, and the user's kubectl
     login, a token or one from its login plugin, in the headers every request sends."""
     user = json.loads(
         kubectl(["config", "view", "--raw", "--minify", "-o", "json"]).stdout
@@ -124,20 +124,22 @@ def kubernetes_state():
     )
     return {
         "port": port,
-        "deployment_id": read_config(deployment_config_path()).get("deployment_id"),
+        "workflow_group_id": read_config(deployment_config_path()).get(
+            "workflow_group_id"
+        ),
         "headers": {"Authorization": f"Bearer {token}"},
     }
 
 
 def run_kubernetes_stop():
     """Run `canyonos stop` or `canyonos clean` on Kubernetes: delete this folder's
-    deployment through the cluster's CanyonOS API, then close the forwards into the
+    workflow group through the cluster's CanyonOS API, then close the forwards into the
     cluster, also when that fails. Returns True once it is deleted."""
     name = deployment_name()
-    ui.json_result["deployments"] = [name]
+    ui.json_result["workflow_groups"] = [name]
     try:
         with ui.status(f"Stopping {name} (agents drain first)..."):
-            delete_deployment(kubernetes_state())
+            delete_workflow_group(kubernetes_state())
         ui.ok(f"Stopped {name}")
     finally:
         # Also when the cluster can't be reached: the forwards would retry until then.
@@ -265,7 +267,7 @@ class PortForward:
 
 
 def _local_endpoint(endpoint, port):
-    """The deployment's `endpoint`, as its status gives it, as reached through a forward
+    """The workflow group's `endpoint`, as its status gives it, as reached through a forward
     on 127.0.0.1:`port`: its `public_host`, `api_port` and route URLs are local."""
     return {
         "public_host": "127.0.0.1",
@@ -278,7 +280,7 @@ def _local_endpoint(endpoint, port):
 
 
 def keep_endpoint_forwarded(endpoint):
-    """Keep the deployment's `endpoint` on this machine in the background until
+    """Keep the workflow group's `endpoint` on this machine in the background until
     `canyonos stop`, on its `endpoint.api_port` or 8080 or the next free port, as Docker
     publishes it; return it as reached here, or as given when it can't be forwarded."""
     config = read_config(deployment_config_path())
@@ -305,7 +307,7 @@ def keep_endpoint_forwarded(endpoint):
 
 @contextlib.contextmanager
 def forwarded_endpoint(endpoint):
-    """The deployment's `endpoint`, as its status gives it, reached here through a
+    """The workflow group's `endpoint`, as its status gives it, reached here through a
     port-forward while in use."""
     forward = PortForward(
         read_config(deployment_config_path())["kubernetes"]["namespace"]

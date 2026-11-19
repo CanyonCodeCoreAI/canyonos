@@ -23,8 +23,8 @@ function groupByAgent(
   return groups;
 }
 
-export function ContainersSection({ project_id }: { readonly project_id: string }) {
-  const query = useQuery(replicasQueryOptions(project_id));
+export function ContainersSection({ workflow_id }: { readonly workflow_id: string }) {
+  const query = useQuery(replicasQueryOptions(workflow_id));
   const draining = query.data?.replicas.filter((replica) => replica.draining).length ?? 0;
 
   return (

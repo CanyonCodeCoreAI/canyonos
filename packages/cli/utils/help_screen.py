@@ -17,37 +17,46 @@ from canyonos.theme import GREEN, WHITE
 # subparser through this table, so a command can't be added to one and missed
 # in the other.
 CORE_COMMANDS = (
-    ("deploy", "Build and launch projects as one deployment, then open the dashboard"),
-    ("config", "Configure the deployment's settings in deployment.yaml"),
+    (
+        "deploy",
+        "Build and launch workflows as one workflow group, then open the dashboard",
+    ),
+    ("config", "Configure the workflow group's settings in workflow_group.yaml"),
 )
 
 UTIL_COMMANDS = (
     ("chat", "Send queries to your running workflows and answer their questions"),
-    ("clean", "Stop the deployment, then delete its agents' images and its records"),
+    (
+        "clean",
+        "Stop the workflow group, then delete its agents' images and its records",
+    ),
     ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
-    ("curl", "POST one JSON body to the deployment's workflow and print the answer"),
+    (
+        "curl",
+        "POST one JSON body to the workflow group's workflow and print the answer",
+    ),
     ("dashboard", "Open the dashboard, signed in with this machine's API key"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
-    ("list", "List the deployments on this machine and the selected one"),
-    ("logs", "Follow the running deploy's logs"),
-    ("new-app", "Create a starter CanyonOS project with two agents"),
-    ("quickstart", "Guided first run, from a starter project to your first trace"),
+    ("list", "List the workflow groups on this machine and the selected one"),
+    ("logs", "Follow the running workflow group's logs"),
+    ("new-app", "Create a starter CanyonOS workflow with two agents"),
+    ("quickstart", "Guided first run, from a starter workflow to your first trace"),
     ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
     (
         "select-context",
-        "Pick the deployment commands act on outside a deployment folder",
+        "Pick the workflow group commands act on outside a workflow group folder",
     ),
     ("serve", "Start local CanyonOS dashboard"),
-    ("status", "Check whether a deploy is running and where it answers"),
-    ("stop", "Stop the deploy and remove its containers, keeping its images"),
+    ("status", "Check whether a workflow group is running and where it answers"),
+    ("stop", "Stop the workflow group and remove its containers, keeping its images"),
     (
         "sync",
-        "Apply project changes to the running deploy; code changes restart it",
+        "Apply workflow changes to the running workflow group; code changes restart it",
     ),
-    ("test", "Send one prompt to every workflow of the running deployment"),
+    ("test", "Send one prompt to every workflow of the running workflow group"),
     ("upgrade", "Upgrade the canyonos CLI to the latest release"),
-    ("validate", "Check the project against the CanyonOS contract"),
+    ("validate", "Check the workflow against the CanyonOS contract"),
 )
 
 CONTACT_COMMANDS = (
@@ -97,10 +106,10 @@ def print_custom_help():
         "first (opens coding agent).[/dim]"
     )
     ui.console.print(
-        f"  [dim]1.[/dim] cd [{GREEN}]into-the-folder-above-your-project[/]"
+        f"  [dim]1.[/dim] cd [{GREEN}]into-the-folder-above-your-workflow[/]"
     )
     ui.console.print(
-        "  [dim]2.[/dim] canyonos deploy my-project --folder my-deployment "
+        "  [dim]2.[/dim] canyonos deploy my-workflow --workflow-group my-group "
         "(UI automatically starts)"
     )
 

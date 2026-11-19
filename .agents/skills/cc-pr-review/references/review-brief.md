@@ -6,8 +6,7 @@ every `<...>`; delete nothing. The brief is the only context that session has.
 ```markdown
 # Review brief: PR #<n> "<title>"
 
-<PR URL> (author <login>, branch `<head>`, base `main`, <files> files,
-+<add> -<del>, draft: <yes/no>, mergeable: <MERGEABLE/CONFLICTING>).
+<PR URL> (author <login>, branch `<head>`, base `main`, <files> files, +<add> -<del>, draft: <yes/no>, mergeable: <MERGEABLE/CONFLICTING>).
 
 ## Your role
 
@@ -34,7 +33,7 @@ asked.
 - Work only in this worktree; never enter the owner's main checkout.
 - No Linear issue without the owner's explicit green light.
 - One deploy per machine: `bash <lock script> acquire <tag>` / `release`.
-  Containers of other projects/sessions (`canyonos-<project>-*`) are not
+  Containers of other workflow groups/sessions (`canyonos-<workflow group>-*`) are not
   yours. Deploy copies of examples from your own scratch folder with free
   ports (<api>/<dashboard>/<redis>).
 - PR comments: inline, plain, command + output; reply to bot threads only to

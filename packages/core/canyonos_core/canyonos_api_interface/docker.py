@@ -98,20 +98,20 @@ def _stop_deploy(progress):
 
 
 def start(workspace, name, deployed, lock):
-    """Build and deploy the deployment uploaded to `workspace` as `name` in a background
+    """Build and deploy the workflow group uploaded to `workspace` in a background
     process, recording `deployed` as the fingerprints it runs; return its progress.
-    `lock` is held while a failed deploy is stopped."""
+    `lock` is held while a failed deploy is stopped. `name` goes unused: the Global
+    Controller reads its identity from `workflow_group.yaml`."""
     global _workspace
     _workspace = os.path.realpath(workspace)
     # Build then launch the Global Controller, with cwd as the workspace so build
-    # outputs land beside the projects.
+    # outputs land beside the workflows.
     process = subprocess.Popen(
         [sys.executable, "-m", "canyonos_core.cli", "deploy"],
         cwd=workspace,
         # Unbuffered, so each line reaches the reader as it is printed.
         env={
             **os.environ,
-            "CANYONOS_PROJECT_NAME": name,
             "PYTHONUNBUFFERED": "1",
         },
         stdout=subprocess.PIPE,
@@ -179,7 +179,7 @@ def reload(progress, config_fingerprint):
 
 
 def _redis_password():
-    """The password this deployment's Redis container was started with, so a new
+    """The password this workflow group's Redis container was started with, so a new
     controller still opens it, else a new random one when there is no such container."""
     inspect = subprocess.run(
         [
@@ -255,8 +255,7 @@ def health(progress):
 
 def _check(name, probe, fix):
     """Run one health probe, which returns (ok, detail); one that raises fails with
-    its error as the detail. Returns the check as `GET /deployment/health` reports
-    it."""
+    its error as the detail. Returns the check as `GET .../health` reports it."""
     try:
         ok, detail = probe()
     except Exception as e:
@@ -286,8 +285,8 @@ def _agents_at_desired(workspace):
 
 
 def _probe_endpoint(workspace):
-    """Send a request to the endpoint replica over the deployment's network; any HTTP
-    answer counts (the 401 of an API key check, or the 404 of the probe's unknown
+    """Send a request to the endpoint replica over the workflow group's network; any
+    HTTP answer counts (the 401 of an API key check, or the 404 of the probe's unknown
     request id) except the 503 it gives while waiting for its API key hash. Return
     whether one came and the address."""
     redis_client = _deploy_redis(_deploy_config(workspace))
@@ -305,9 +304,9 @@ def _probe_endpoint(workspace):
 
 
 def _deploy_config(workspace):
-    """Return the running deploy's `deployment.yaml` with its `${VAR}`s expanded from
-    the `.env` beside it and this process's environment, without importing either.
-    The projects' files aren't read: a `canyonos sync` copies them in before the
+    """Return the running deploy's `workflow_group.yaml` with its `${VAR}`s expanded
+    from the `.env` beside it and this process's environment, without importing either.
+    The workflows' files aren't read: a `canyonos sync` copies them in before the
     reload checks them, so one can be broken while the deploy runs."""
     with open(os.path.join(workspace, DEPLOYMENT_CONFIG), encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
@@ -324,7 +323,8 @@ def _deploy_redis(config):
 
 def _read_agents(redis_client):
     """Return each agent's desired and running replica counts and why its last launch
-    failed, if it did. Used by `GET /deployment` and its health check."""
+    failed, if it did. Used by `GET /v1/workflow-groups/<workflow_group_id>` and its
+    health check."""
     launch_errors = redis_client.hgetall(state.LAUNCH_ERRORS_KEY)
     return {
         agent_spec["name"]: {

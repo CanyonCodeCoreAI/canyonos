@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Two projects side by side on one machine with the shared dashboard: helloworld and
+"""Two workflow groups side by side on one machine with the shared dashboard: helloworld and
 portfolio deploy at the same time, each on its own ports, and the dashboard lists
 both to the one API key. helloworld's endpoint and Redis containers publish the ports
 it pins, and the dashboard reads each one's Redis. Each Redis takes only its own
-project's password, and no container's command shows one. helloworld's
-deployment.yaml has no `otel:` block, so its traces reach the dashboard by the
-default destination; portfolio keeps its own. `canyonos test` in another deployment
+workflow group's password, and no container's command shows one. helloworld's
+workflow_group.yaml has no `otel:` block, so its traces reach the dashboard by the
+default destination; portfolio keeps its own. `canyonos test` in another workflow group
 folder named helloworld, with nothing deployed from it, refuses rather than test the
-running one. Then one project is stopped and the other keeps running; the stopped
+running one. Then one workflow is stopped and the other keeps running; the stopped
 one, redeployed without `endpoint.api_port` or `redis.port`, moves past the other's
 ports, keeps its machine metrics in its own Redis, and is told the running dashboard
 ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container,
-which reads the key's hash again, a redeploy keeps the dashboard, the project's
-id and its CA, example runs go in with the machine's API key, and the
+which reads the key's hash again, a redeploy keeps the dashboard, the workflow's
+id and the workflow group's CA, example runs go in with the machine's API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
 anything starts, a dashboard starting with a deploy takes its `dashboard_port` while
@@ -43,7 +43,7 @@ from ..harness import (
     dashboard_key,
     dashboard_port,
     deployed_endpoint,
-    deployed_project_id,
+    deployed_workflow_id,
     deployment_group,
     docker,
     docker_name,
@@ -51,24 +51,25 @@ from ..harness import (
     http,
     manifest,
     poll,
-    project_containers,
-    project_dir,
-    project_root,
+    workflow_group_containers,
+    workflow_dir,
+    workflow_root,
     qualified,
     redis_password,
     redis_port,
     redis_tls_context,
     result_of,
     stage,
-    stop_project,
+    stop_workflow_group,
     traces,
+    workflow_name,
 )
 from ..fleet import redis_reply
-from ..projects import load_project
+from ..workflows import load_workflow
 
 pytestmark = pytest.mark.steps
 
-PROJECTS = ("helloworld", "portfolio")
+WORKFLOWS = ("helloworld", "portfolio")
 DASHBOARD_GROUP = "canyonos-dashboard"
 DASHBOARD_CONTAINERS = [
     f"{DASHBOARD_GROUP}-{service}" for service in ("api", "db", "web")
@@ -79,7 +80,6 @@ HELLOWORLD_API_PORT = 8082
 HELLOWORLD_REDIS_PORT = 6380
 DASHBOARD_PORT = 8090
 TRACE_TIMEOUT = 60
-HELLO_CALL = "helloworld.HelloAgent.hello"
 # Where a Redis container keeps the certificate it was given (redis_client.SERVER_TLS_DIR).
 REDIS_CLI_TLS = [
     "--tls",
@@ -94,10 +94,10 @@ REDIS_CLI_TLS = [
 
 @dataclass
 class Fleet:
-    """The deployment folders of the staged projects by name, their Docker groups and
+    """The workflow group folders of the staged workflows by name, their Docker groups and
     dashboard ids, the dashboard API with the session's API key, and the dashboard
     api's container as it was after the first deploy finished: its id and start time,
-    which no deploy changes while a project is left running, and as `canyonos serve`
+    which no deploy changes while a workflow group is left running, and as `canyonos serve`
     left it."""
 
     dirs: dict[str, Path]
@@ -113,15 +113,18 @@ class Fleet:
 def _deploy(recorder, directory: Path, name: str) -> None:
     call = canyonos(
         recorder,
-        ["deploy", str(project_dir(directory))],
+        ["deploy", str(workflow_dir(directory))],
         cwd=directory,
         timeout=DEPLOY_TIMEOUT,
     )
-    assert f"Registered {name} with the dashboard" in call.output, call.output[-3000:]
+    registered = (
+        f"Registered {workflow_name(workflow_dir(directory))} with the dashboard"
+    )
+    assert registered in call.output, call.output[-3000:]
 
 
 def _stop(recorder, directory: Path) -> None:
-    call = stop_project(recorder, directory)
+    call = stop_workflow_group(recorder, directory)
     assert call is not None, f"nothing is deployed from {directory}"
     assert call.code == 0, call.output
 
@@ -141,12 +144,12 @@ def _port_of(url: str) -> int:
 
 
 def _settings(directory: Path) -> dict:
-    """The deployment's parsed `deployment.yaml`."""
-    return yaml.safe_load((directory / "deployment.yaml").read_text())
+    """The workflow group's parsed `workflow_group.yaml`."""
+    return yaml.safe_load((directory / "workflow_group.yaml").read_text())
 
 
 def _edit_settings(directory: Path, edit) -> None:
-    path = directory / "deployment.yaml"
+    path = directory / "workflow_group.yaml"
     path.write_text(edit(path.read_text()))
 
 
@@ -157,7 +160,7 @@ def _without_otel(text: str) -> str:
 
 
 def _pinned(text: str) -> str:
-    """`text` with helloworld's api_port and Redis port fixed. Its deployment.yaml
+    """`text` with helloworld's api_port and Redis port fixed. Its workflow_group.yaml
     sets neither, so both blocks are added; `endpoint:` stays once a later case
     removes the api_port, for the next to put one back under it."""
     assert not re.search(r"^(endpoint|redis):", text, flags=re.M), text
@@ -169,54 +172,54 @@ def _pinned(text: str) -> str:
 
 
 def _agent_names(directory: Path) -> set[str]:
-    project = project_dir(directory)
+    folder = workflow_dir(directory)
     return {
-        qualified(project, agent["name"])
-        for agent in manifest(project)["agents"]
+        qualified(folder, agent["name"])
+        for agent in manifest(folder)["agents"]
         if agent.get("type", "agent") == "agent"
     }
 
 
 def _prompt_names(directory: Path) -> set[str]:
-    project = project_dir(directory)
-    path = project_root(project) / "config" / "prompts.yaml"
+    folder = workflow_dir(directory)
+    path = workflow_root(folder) / "config" / "prompts.yaml"
     if not path.is_file():
         return set()
     return {
-        qualified(project, name) for name in yaml.safe_load(path.read_text())["prompts"]
+        qualified(folder, name) for name in yaml.safe_load(path.read_text())["prompts"]
     }
 
 
 def _all_running(recorder, fleet: Fleet, name: str) -> None:
-    """The project's Global Controller, Redis and every replica its manifest asks
+    """The workflow group's Global Controller, Redis and every replica its manifest asks
     for run in its own Docker group."""
     group = fleet.groups[name]
-    containers = project_containers(recorder, group)
+    containers = workflow_group_containers(recorder, group)
     stopped = {c: state for c, state in containers.items() if state != "running"}
     assert not stopped, stopped
     for part in ("global-controller", "redis-localhost"):
         assert f"{group}-{part}" in containers, containers
-    project = project_dir(fleet.dirs[name])
-    for agent in manifest(project)["agents"]:
+    folder = workflow_dir(fleet.dirs[name])
+    for agent in manifest(folder)["agents"]:
         if agent.get("type", "agent") != "agent":
             continue
-        agent_name = docker_name(qualified(project, agent["name"]))
+        agent_name = docker_name(qualified(folder, agent["name"]))
         replica = re.compile(rf"{re.escape(group)}-{agent_name}-[0-9a-f]{{8}}")
         replicas = [c for c in containers if replica.fullmatch(c)]
         assert len(replicas) == agent.get("replicas", 1), (agent["name"], containers)
 
 
 def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
-    """The Redis routes show this project's own agents, endpoint and prompts, which
-    differ between the two projects, so a Redis read from the other one fails."""
+    """The Redis routes show this workflow's own agents, endpoint and prompts, which
+    differ between the two workflows, so a Redis read from the other one fails."""
     directory = fleet.dirs[name]
-    base = f"/projects/{fleet.ids[name]}"
+    base = f"/workflows/{fleet.ids[name]}"
     agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
     assert {agent["name"] for agent in agents} == _agent_names(directory), agents
     endpoint = fleet.api.get(f"{base}/monitoring/endpoint").json()["endpoint"]
     assert endpoint is not None, f"{name} records no endpoint"
     served = [(route["agent"], route["method"]) for route in endpoint["routes"]]
-    routes = manifest(project_dir(directory))["endpoint"]["routes"]
+    routes = manifest(workflow_dir(directory))["endpoint"]["routes"]
     assert served == [(route["agent"], route["method"]) for route in routes], endpoint
     running = deployed_endpoint(recorder, directory)
     assert _port_of(endpoint["routes"][0]["url"]) == _port_of(running.url), endpoint
@@ -225,7 +228,7 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
 
 
 def _ca_certificate(recorder, directory: Path) -> str:
-    """The certificate of the deployment's CA, from the CLI's folder."""
+    """The certificate of the workflow group's CA, from the CLI's folder."""
     path = cli_value(
         recorder,
         directory,
@@ -254,11 +257,11 @@ def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
     fail naming each stop that failed and each group left with containers."""
     problems = []
     for directory in dirs.values():
-        call = stop_project(recorder, directory)
+        call = stop_workflow_group(recorder, directory)
         if call is not None and call.code != 0:
             problems.append(f"canyonos stop in {directory}: {call.output[-2000:]}")
     for group in groups.values():
-        left = project_containers(recorder, group, every=True)
+        left = workflow_group_containers(recorder, group, every=True)
         if left:
             problems.append(f"{group} left {left}")
     docker(
@@ -271,7 +274,7 @@ def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
 
 @pytest.fixture(scope="module")
 def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
-    """Both projects staged, helloworld on fixed ports so it can't race portfolio's
+    """Both workflows staged, helloworld on fixed ports so it can't race portfolio's
     api_port 8080 and Redis 6379 and with its `otel:` block removed, then deployed
     at the same time. `canyonos serve` runs first, as for the `deployed` fixture: the
     dashboard API reads the hash of the session's API key only when it starts, and a deploy
@@ -280,24 +283,26 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     parent = tmp_path_factory.mktemp("fleet")
     dirs, groups = {}, {}
     request.addfinalizer(lambda: _tear_down(recorder, dirs, groups))
-    for name in PROJECTS:
-        project = load_project(name)
-        secrets = {secret: f"not-a-real-{secret.lower()}" for secret in project.secrets}
-        dirs[name] = stage(recorder, project, parent, secrets)
+    for name in WORKFLOWS:
+        workflow = load_workflow(name)
+        secrets = {
+            secret: f"not-a-real-{secret.lower()}" for secret in workflow.secrets
+        }
+        dirs[name] = stage(recorder, workflow, parent, secrets)
     _edit_settings(dirs["helloworld"], lambda text: _without_otel(_pinned(text)))
     pinned = _settings(dirs["helloworld"])
     assert pinned["endpoint"]["api_port"] == HELLOWORLD_API_PORT, pinned
     assert pinned["redis"]["port"] == HELLOWORLD_REDIS_PORT, pinned
     canyonos(recorder, ["serve"], cwd=parent, timeout=600)
     api_after_first = ""
-    with ThreadPoolExecutor(max_workers=len(PROJECTS)) as pool:
+    with ThreadPoolExecutor(max_workers=len(WORKFLOWS)) as pool:
         running = [
-            pool.submit(_deploy, recorder, dirs[name], name) for name in PROJECTS
+            pool.submit(_deploy, recorder, dirs[name], name) for name in WORKFLOWS
         ]
         for done in as_completed(running):
             done.result()
             api_after_first = api_after_first or _api_container(recorder)
-    for name in PROJECTS:
+    for name in WORKFLOWS:
         groups[name] = deployment_group(recorder, dirs[name])
     api = Api(recorder, API_URL, dashboard_key(recorder))
     return Fleet(
@@ -305,10 +310,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
         parent=parent,
         groups=groups,
         api=api,
-        ids={
-            name: deployed_project_id(recorder, api, dirs[name], name)
-            for name in PROJECTS
-        },
+        ids={name: deployed_workflow_id(api, dirs[name]) for name in WORKFLOWS},
         api_after_first_deploy=api_after_first,
         api_after_both_deploys=_api_container(recorder),
     )
@@ -318,27 +320,30 @@ def test_both_deploy_at_once_and_register(fleet):
     assert fleet.api_after_both_deploys == fleet.api_after_first_deploy, (
         "the later deploy recreated or restarted the dashboard api"
     )
-    assert len(set(fleet.ids.values())) == len(PROJECTS), fleet.ids
+    assert len(set(fleet.ids.values())) == len(WORKFLOWS), fleet.ids
 
 
-def test_one_api_key_lists_both_projects(recorder, fleet):
+def test_one_api_key_lists_both_workflows(recorder, fleet):
     """The dashboard needs the API key, and the key is for the whole machine, not
-    for one project."""
+    for one workflow."""
     status = http(recorder, "GET", f"{API_URL}/auth/status").json()
     assert status == {"api_key_required": True}, status
-    anonymous = http(recorder, "GET", f"{API_URL}/projects", check=False)
+    anonymous = http(recorder, "GET", f"{API_URL}/workflows", check=False)
     assert anonymous.code == 401, anonymous.output
     assert anonymous.json()["error"] == "auth.missing_key", anonymous.output
     headers = bearer(recorder.api_key)
-    projects = http(recorder, "GET", f"{API_URL}/projects", headers=headers).json()
-    listed = {project["id"] for project in projects}
-    assert set(fleet.ids.values()) <= listed, projects
+    workflows = http(recorder, "GET", f"{API_URL}/workflows", headers=headers).json()
+    listed = {workflow["id"] for workflow in workflows}
+    assert set(fleet.ids.values()) <= listed, workflows
 
 
-def test_each_project_has_its_own_group_and_one_dashboard(recorder, fleet):
-    for name in PROJECTS:
+def test_each_workflow_group_has_its_own_docker_group_and_one_dashboard(
+    recorder, fleet
+):
+    for name in WORKFLOWS:
         group = fleet.groups[name]
-        expected = rf"canyonos-{name}-{re.escape(fleet.ids[name][:8])}"
+        config = yaml.safe_load((fleet.dirs[name] / "workflow_group.yaml").read_text())
+        expected = rf"canyonos-{name}-{re.escape(config['workflow_group_id'][:8])}"
         assert re.fullmatch(expected, group), group
         _all_running(recorder, fleet, name)
     assert fleet.groups["helloworld"] != fleet.groups["portfolio"]
@@ -346,7 +351,7 @@ def test_each_project_has_its_own_group_and_one_dashboard(recorder, fleet):
 
 
 def test_pinned_ports_are_the_published_host_ports(recorder, fleet):
-    containers = project_containers(recorder, fleet.groups["helloworld"])
+    containers = workflow_group_containers(recorder, fleet.groups["helloworld"])
     for suffix, port in (
         (r"-endpoint-[0-9a-f]{8}", HELLOWORLD_API_PORT),
         ("-redis-localhost", HELLOWORLD_REDIS_PORT),
@@ -357,10 +362,10 @@ def test_pinned_ports_are_the_published_host_ports(recorder, fleet):
         assert {int(line.rsplit(":", 1)[1]) for line in published} == {port}, published
 
 
-def test_dashboard_reads_each_projects_own_redis(recorder, fleet):
-    for name in PROJECTS:
+def test_dashboard_reads_each_workflow_groups_own_redis(recorder, fleet):
+    for name in WORKFLOWS:
         _reads_own_redis(recorder, fleet, name)
-        base = f"/projects/{fleet.ids[name]}"
+        base = f"/workflows/{fleet.ids[name]}"
 
         def all_replicas_up(base=base):
             agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
@@ -372,14 +377,14 @@ def test_dashboard_reads_each_projects_own_redis(recorder, fleet):
         poll(all_replicas_up, timeout=120, what=f"every agent of {name} running")
 
 
-def test_each_projects_redis_takes_only_its_own_password(recorder, fleet):
+def test_each_workflow_groups_redis_takes_only_its_own_password(recorder, fleet):
     passwords = {}
-    for name in PROJECTS:
+    for name in WORKFLOWS:
         password = redis_password(recorder, fleet.dirs[name])
         assert re.fullmatch(r"[0-9a-f]{64}", password), f"{name}'s Redis password"
         passwords[name] = password
     assert passwords["helloworld"] != passwords["portfolio"]
-    for name, other in zip(PROJECTS, reversed(PROJECTS)):
+    for name, other in zip(WORKFLOWS, reversed(WORKFLOWS)):
         port = redis_port(recorder, fleet.dirs[name])
         tls = redis_tls_context(recorder, fleet.dirs[name])
         unsigned = redis_reply(port, "PING", tls=tls)
@@ -389,8 +394,10 @@ def test_each_projects_redis_takes_only_its_own_password(recorder, fleet):
         assert redis_reply(port, "AUTH", passwords[name], tls=tls) == "+OK", name
     containers = [
         container
-        for name in PROJECTS
-        for container in project_containers(recorder, fleet.groups[name], every=True)
+        for name in WORKFLOWS
+        for container in workflow_group_containers(
+            recorder, fleet.groups[name], every=True
+        )
     ]
     commands = docker(
         recorder,
@@ -413,29 +420,31 @@ def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
     request_id, result = result_of(recorder, endpoint, "no-otel", timeout=60)
     assert result == {"greeting": "Hello, no-otel! I'm the HelloAgent!"}, result
 
+    hello_call = qualified(workflow_dir(directory), "HelloAgent.hello")
+
     def helloworld_trace():
         return [
             trace
             for trace in traces(fleet.api, fleet.ids["helloworld"])
             if trace["trace_id"] == request_id
-            and any(span["name"] == HELLO_CALL for span in trace["spans"])
+            and any(span["name"] == hello_call for span in trace["spans"])
         ]
 
     poll(
         helloworld_trace,
         timeout=TRACE_TIMEOUT,
         interval=2,
-        what=f"the no-otel request's {HELLO_CALL} span on the dashboard",
+        what=f"the no-otel request's {hello_call} span on the dashboard",
     )
 
 
 def test_test_in_another_folder_of_the_same_name_refuses(recorder, fleet):
-    twin = stage(recorder, load_project("helloworld"), fleet.parent / "twin", {})
+    twin = stage(recorder, load_workflow("helloworld"), fleet.parent / "twin", {})
     assert twin.name == fleet.dirs["helloworld"].name, twin
     call = canyonos(recorder, ["test", "twin", "--json"], cwd=twin, check=False)
     assert call.code != 0, call.output
     assert call.json()["error"].startswith(
-        "No deployment is running from this folder."
+        "No workflow group is running from this folder."
     ), call.stdout
     greets(recorder, fleet.dirs["helloworld"], "still-here")
 
@@ -450,21 +459,25 @@ def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
                 "from canyonos.deployment import state_path",
             )
         )
-        for name in PROJECTS
+        for name in WORKFLOWS
     }
     _stop(recorder, fleet.dirs["helloworld"])
-    left = project_containers(recorder, fleet.groups["helloworld"], every=True)
+    left = workflow_group_containers(recorder, fleet.groups["helloworld"], every=True)
     assert not left, left
     assert not state_of["helloworld"].exists(), state_of["helloworld"]
     assert state_of["portfolio"].is_file(), state_of["portfolio"]
     _all_running(recorder, fleet, "portfolio")
     assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
     _reads_own_redis(recorder, fleet, "portfolio")
-    stopped = fleet.api.get(f"/projects/{fleet.ids['helloworld']}/prompts", check=False)
+    stopped = fleet.api.get(
+        f"/workflows/{fleet.ids['helloworld']}/prompts", check=False
+    )
     assert stopped.code == 502, stopped.output
 
 
-def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fleet):
+def test_redeploy_without_fixed_ports_moves_past_the_other_workflow_group(
+    recorder, fleet
+):
     directory = fleet.dirs["helloworld"]
     portfolio = fleet.dirs["portfolio"]
     _edit_settings(
@@ -501,7 +514,7 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
                     "-c",
                     'REDISCLI_AUTH="$CANYONOS_REDIS_PASSWORD" exec redis-cli "$@"',
                     "redis-cli",
-                    # Redis's own certificate is signed by the deployment's CA too.
+                    # Redis's own certificate is signed by the workflow group's CA too.
                     *REDIS_CLI_TLS,
                     "-p",
                     str(own_redis),
@@ -519,13 +532,16 @@ def test_redeploy_without_fixed_ports_moves_past_the_other_project(recorder, fle
             what=f"machine metrics in {container}",
         )
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
     assert stop is None or stop.code == 0, stop.output
 
 
 def test_serve_registers_again_on_a_new_api(recorder, fleet):
     call = canyonos(recorder, ["serve"], cwd=fleet.dirs["portfolio"], timeout=600)
-    assert "Registered portfolio with the dashboard" in call.output, call.output
+    registered = (
+        f"Registered {workflow_name(workflow_dir(fleet.dirs['portfolio']))} with"
+    )
+    assert registered in call.output, call.output
     fleet.api_after_serve = _api_container(recorder)
     assert fleet.api_after_serve != fleet.api_after_both_deploys, (
         "canyonos serve kept the api container, so it never read the key's hash again"
@@ -533,7 +549,7 @@ def test_serve_registers_again_on_a_new_api(recorder, fleet):
     _reads_own_redis(recorder, fleet, "portfolio")
 
 
-def test_redeploy_keeps_the_dashboard_and_the_project_id(recorder, fleet):
+def test_redeploy_keeps_the_dashboard_and_the_workflow_id(recorder, fleet):
     directory = fleet.dirs["portfolio"]
     ca_before = _ca_certificate(recorder, directory)
     _deploy(recorder, directory, "portfolio")
@@ -541,8 +557,8 @@ def test_redeploy_keeps_the_dashboard_and_the_project_id(recorder, fleet):
         "the redeploy made a new CA"
     )
     assert _api_container(recorder) == fleet.api_after_serve
-    for name in PROJECTS:
-        listed = deployed_project_id(recorder, fleet.api, fleet.dirs[name], name)
+    for name in WORKFLOWS:
+        listed = deployed_workflow_id(fleet.api, fleet.dirs[name])
         assert listed == fleet.ids[name], (name, listed)
     _reads_own_redis(recorder, fleet, "portfolio")
 
@@ -562,7 +578,7 @@ def test_the_cli_sends_the_api_key_to_add_sample_data(recorder, fleet):
 def test_last_stop_stops_the_dashboard_and_keeps_it(recorder, fleet):
     _stop(recorder, fleet.dirs["portfolio"])
     for group in fleet.groups.values():
-        left = project_containers(recorder, group, every=True)
+        left = workflow_group_containers(recorder, group, every=True)
         assert not left, left
     assert not dashboard_containers(recorder), dashboard_containers(recorder)
     assert dashboard_containers(recorder, every=True) == DASHBOARD_CONTAINERS
@@ -593,7 +609,7 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
         with _held(8080):
             call = canyonos(
                 recorder,
-                ["deploy", str(project_dir(directory))],
+                ["deploy", str(workflow_dir(directory))],
                 cwd=directory,
                 timeout=DEPLOY_TIMEOUT,
                 check=False,
@@ -608,7 +624,7 @@ def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
         "`endpoint.api_port` in"
     )
     assert refused in " ".join(call.output.split()), call.output
-    left = project_containers(recorder, fleet.groups["helloworld"], every=True)
+    left = workflow_group_containers(recorder, fleet.groups["helloworld"], every=True)
     assert not left, left
     assert not dashboard_containers(recorder), dashboard_containers(recorder)
 
@@ -626,7 +642,7 @@ def test_a_starting_dashboard_takes_its_dashboard_port(recorder, fleet):
             _deploy(recorder, directory, "helloworld")
         assert dashboard_port(recorder) == 8301
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
     assert stop is None or stop.code == 0, stop.output
 
 
@@ -648,5 +664,5 @@ def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
         assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
         greets(recorder, directory, "own-port")
     finally:
-        stop = stop_project(recorder, directory)
+        stop = stop_workflow_group(recorder, directory)
     assert stop is None or stop.code == 0, stop.output

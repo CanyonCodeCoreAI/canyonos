@@ -22,7 +22,7 @@ export function AppHeader({ workspace }: { workspace: string }) {
 
       <div className="flex min-w-0 items-center gap-3">
         <Link
-          to="/projects"
+          to="/workflows"
           data-testid="app-header-workspace-link"
           className="text-foreground text-base font-bold tracking-tight"
         >

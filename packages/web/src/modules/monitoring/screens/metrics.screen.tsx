@@ -14,11 +14,11 @@ import { QueryError } from '@/modules/core/components/QueryError';
 import { LOCAL_TIME_ZONE } from '@/modules/core/time-range';
 import { ResourceLegend, ResourceSection } from '@/modules/monitoring/components/resource-section';
 import { resourcesQueryOptions } from '@/modules/monitoring/monitoring.queries';
-import { ProjectWindowControl } from '@/modules/projects/components/project-window-control';
+import { WorkflowWindowControl } from '@/modules/workflows/components/workflow-window-control';
 import type { RangeSelection } from '@/modules/core/time-range';
 
 interface MetricsScreenProps {
-  readonly project_id: string;
+  readonly workflow_id: string;
   readonly range: RangeSelection;
 }
 
@@ -30,8 +30,8 @@ function presentResources(data: MonitoringResourceUtilizationResponse): Monitori
   return [...seen];
 }
 
-export function MetricsScreen({ project_id, range }: MetricsScreenProps) {
-  const query = useQuery(resourcesQueryOptions(project_id, { range, time_zone: LOCAL_TIME_ZONE }));
+export function MetricsScreen({ workflow_id, range }: MetricsScreenProps) {
+  const query = useQuery(resourcesQueryOptions(workflow_id, { range, time_zone: LOCAL_TIME_ZONE }));
 
   return (
     <main
@@ -42,7 +42,7 @@ export function MetricsScreen({ project_id, range }: MetricsScreenProps) {
         <h1 className="text-foreground text-[1.5rem] leading-none font-bold tracking-tight">
           Metrics
         </h1>
-        <ProjectWindowControl />
+        <WorkflowWindowControl />
       </header>
 
       <MetricsBody query={query} />

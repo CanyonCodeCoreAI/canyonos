@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
 import { authPlugin } from '../auth/auth.middleware';
-import { resolveProjectAccess } from '../auth/project-access';
+import { resolveWorkflowAccess } from '../auth/workflow-access';
 import {
   get_agent_details,
   get_blocks,
@@ -26,26 +26,26 @@ import {
 
 const doc = { tags: ['Metrics'], security: [{ bearerAuth: [] }] };
 
-const ProjectIdParams = z.object({ project_id: z.string().uuid() });
-const ProjectAgentParams = ProjectIdParams.extend({
+const WorkflowIdParams = z.object({ workflow_id: z.string().uuid() });
+const WorkflowAgentParams = WorkflowIdParams.extend({
   agent_id: z.string().min(1).max(255),
 });
 
-// Prefix-less: composed into projects.routes so the whole `/projects` tree stays one Eden type.
+// Prefix-less: composed into workflows.routes so the whole `/workflows` tree stays one Eden type.
 export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
   .use(authPlugin)
-  .resolve(resolveProjectAccess)
-  .get('/:project_id/metrics/kpis', ({ params, query }) => get_kpis(params.project_id, query), {
-    params: ProjectIdParams,
+  .resolve(resolveWorkflowAccess)
+  .get('/:workflow_id/metrics/kpis', ({ params, query }) => get_kpis(params.workflow_id, query), {
+    params: WorkflowIdParams,
     query: TimeRangeQuerySchema,
     response: { 200: MetricsKpisSchema },
     detail: { ...doc, summary: 'Range-scoped KPI aggregates (tokens, costs, per-block latency)' },
   })
   .get(
-    '/:project_id/metrics/distribution',
-    ({ params, query }) => get_distribution(params.project_id, query),
+    '/:workflow_id/metrics/distribution',
+    ({ params, query }) => get_distribution(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: DistributionQuerySchema,
       response: { 200: MetricsDistributionSchema },
       detail: {
@@ -55,10 +55,10 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
     }
   )
   .get(
-    '/:project_id/metrics/timeseries',
-    ({ params, query }) => get_timeseries(params.project_id, query),
+    '/:workflow_id/metrics/timeseries',
+    ({ params, query }) => get_timeseries(params.workflow_id, query),
     {
-      params: ProjectIdParams,
+      params: WorkflowIdParams,
       query: GridQuerySchema,
       response: { 200: MetricsTimeseriesSchema },
       detail: {
@@ -67,20 +67,24 @@ export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
       },
     }
   )
-  .get('/:project_id/metrics/blocks', ({ params, query }) => get_blocks(params.project_id, query), {
-    params: ProjectIdParams,
-    query: TimeRangeQuerySchema,
-    response: { 200: MetricsBlocksSchema },
-    detail: {
-      ...doc,
-      summary: 'Per-agent, per-model cost breakdown with retry, failure, and latency rates',
-    },
-  })
   .get(
-    '/:project_id/metrics/agents/:agent_id',
-    ({ params, query }) => get_agent_details(params.project_id, params.agent_id, query),
+    '/:workflow_id/metrics/blocks',
+    ({ params, query }) => get_blocks(params.workflow_id, query),
     {
-      params: ProjectAgentParams,
+      params: WorkflowIdParams,
+      query: TimeRangeQuerySchema,
+      response: { 200: MetricsBlocksSchema },
+      detail: {
+        ...doc,
+        summary: 'Per-agent, per-model cost breakdown with retry, failure, and latency rates',
+      },
+    }
+  )
+  .get(
+    '/:workflow_id/metrics/agents/:agent_id',
+    ({ params, query }) => get_agent_details(params.workflow_id, params.agent_id, query),
+    {
+      params: WorkflowAgentParams,
       query: GridQuerySchema,
       response: { 200: MetricsAgentDetailsSchema },
       detail: {

@@ -4,7 +4,7 @@
 import { withTimeZone } from '@core/time-range';
 import type { GridQuery, TimeRange } from '@core/time-range';
 
-import { assert_project_running, with_redis } from '../canyonos/canyonos.redis';
+import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';
 import { MonitoringSignalSchema } from './monitoring.types';
@@ -26,14 +26,14 @@ import type {
 } from './monitoring.types';
 
 export async function get_series(
-  project_id: string,
+  workflow_id: string,
   query: GridQuery
 ): Promise<MonitoringSeriesResponse> {
   const { bucket_seconds, bucket_start_ats, ...values } = await withTimeZone(query, () =>
-    monitoring_repo.series(project_id, query)
+    monitoring_repo.series(workflow_id, query)
   );
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
     bucket_seconds,
@@ -62,15 +62,15 @@ const drop_buckets = (entries: MonitoringResourceEntry[], count: number) =>
 // The grid opens on the first bucket anything was measured in, so a chart does not start on a run
 // of empty buckets. A range with no readings at all keeps its full grid.
 export async function get_resource_utilization(
-  project_id: string,
+  workflow_id: string,
   query: GridQuery
 ): Promise<MonitoringResourceUtilizationResponse> {
   const row = await withTimeZone(query, () =>
-    monitoring_repo.resource_utilization(project_id, query)
+    monitoring_repo.resource_utilization(workflow_id, query)
   );
   const leading = leading_empty_buckets([...row.machines, ...row.agents]);
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
     bucket_seconds: row.bucket_seconds,
@@ -81,84 +81,87 @@ export async function get_resource_utilization(
 }
 
 export async function get_error_summary(
-  project_id: string,
+  workflow_id: string,
   query: TimeRange
 ): Promise<MonitoringErrorSummaryResponse> {
-  const row = await monitoring_repo.error_summary(project_id, query);
-  return { project_id, from: query.from, to: query.to, ...row };
+  const row = await monitoring_repo.error_summary(workflow_id, query);
+  return { workflow_id, from: query.from, to: query.to, ...row };
 }
 
 export async function get_logs(
-  project_id: string,
+  workflow_id: string,
   query: MonitoringLogsQuery
 ): Promise<MonitoringLogsResponse> {
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
-    logs: await monitoring_repo.logs(project_id, query),
+    logs: await monitoring_repo.logs(workflow_id, query),
   };
 }
 
 export async function get_llm_calls(
-  project_id: string,
+  workflow_id: string,
   query: MonitoringListQuery
 ): Promise<MonitoringLlmCallsResponse> {
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
-    calls: await monitoring_repo.llm_calls(project_id, query),
+    calls: await monitoring_repo.llm_calls(workflow_id, query),
   };
 }
 
 export async function get_traces(
-  project_id: string,
+  workflow_id: string,
   query: MonitoringListQuery
 ): Promise<MonitoringTracesResponse> {
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
-    traces: await monitoring_repo.traces(project_id, query),
+    traces: await monitoring_repo.traces(workflow_id, query),
   };
 }
 
 export async function get_log_sources(
-  project_id: string,
+  workflow_id: string,
   query: TimeRange
 ): Promise<MonitoringLogSourcesResponse> {
   return {
-    project_id,
+    workflow_id,
     from: query.from,
     to: query.to,
-    sources: await monitoring_repo.log_sources(project_id, query),
+    sources: await monitoring_repo.log_sources(workflow_id, query),
   };
 }
 
-export async function get_replicas(project_id: string): Promise<MonitoringReplicasResponse> {
-  return { project_id, replicas: await monitoring_repo.replicas(project_id) };
+export async function get_replicas(workflow_id: string): Promise<MonitoringReplicasResponse> {
+  return { workflow_id, replicas: await monitoring_repo.replicas(workflow_id) };
 }
 
 const EXAMPLE_ARGUMENT_VALUE = 'your query';
 
-function describe_endpoint(address: EndpointAddress): MonitoringEndpoint {
+/** The endpoint as the workflow sees it: the routes of its workflow only. */
+function describe_endpoint(address: EndpointAddress, workflow_id: string): MonitoringEndpoint {
   return {
     status_url: `http://${address.public_host}:${address.api_port}/status`,
-    routes: address.routes.map((route) => ({
-      ...route,
-      example_body: Object.fromEntries(
-        route.arguments.map((name) => [name, EXAMPLE_ARGUMENT_VALUE])
-      ),
-    })),
+    routes: address.routes
+      .filter((route) => route.workflow_id === workflow_id)
+      .map((route) => ({
+        ...route,
+        example_body: Object.fromEntries(
+          route.arguments.map((name) => [name, EXAMPLE_ARGUMENT_VALUE])
+        ),
+      })),
   };
 }
 
 // The controller records its endpoint's address only while it runs one.
-export async function get_endpoint(project_id: string): Promise<MonitoringEndpointResponse> {
-  return with_redis(project_id, async (redis) => {
-    await assert_project_running(redis, project_id);
+export async function get_endpoint(workflow_id: string): Promise<MonitoringEndpointResponse> {
+  return with_redis(workflow_id, async (redis) => {
+    await assert_workflow_running(redis, workflow_id);
     const address = await monitoring_repo.endpoint(redis);
-    return { project_id, endpoint: address ? describe_endpoint(address) : null };
+    return { workflow_id, endpoint: address ? describe_endpoint(address, workflow_id) : null };
   });
 }

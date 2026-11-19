@@ -8,7 +8,7 @@ port) is used as it is, or refused when it is taken: what reads it back would
 otherwise look for it where it isn't. Any other port starts at the one it had last
 time, or its default, and moves to the next one that is free on every interface
 (`port_utils.is_port_free`) and claimed by nothing else of CanyonOS here: another
-deployment's Global Controller, Redis or endpoint (its state.json), a running
+workflow group's Global Controller, Redis or endpoint (its state.json), a running
 port-forward (its record), or the dashboard. The Global Controller skips the same
 ports when Docker makes it move one (`port_utils.RESERVED_PORTS_ENV`).
 
@@ -30,7 +30,7 @@ DASHBOARD = "the dashboard"
 @contextlib.contextmanager
 def held():
     """Hold the lock every command picks a port under, waiting for one that has it."""
-    # Beside `deployments/`, not in it: every entry there is read as a deployment.
+    # Beside `deployments/`, not in it: every entry there is read as a workflow group.
     home = os.path.dirname(deployment.deployments_dir())
     os.makedirs(home, exist_ok=True)
     lock = os.path.join(home, "ports.lock")
@@ -57,7 +57,7 @@ def claimed(dashboard_port=None, picking_dashboard=False):
                     state = json.load(f)
                 for key in ("port", "redis_port", "api_port"):
                     if isinstance(state.get(key), int):
-                        claims[state[key]] = f"deployment {name}"
+                        claims[state[key]] = f"workflow group {name}"
     for name in running_forwards():
         claims[forward_port(name)] = f"the port-forward {name}"
     if not picking_dashboard or _existing_dashboard_port():

@@ -42,7 +42,7 @@ GRPC_SERVER_OPTIONS = [
 def open_channel(address):
     """A channel to the controller at `address`. With this container's certificate
     (Docker), mutual TLS: it presents the certificate and accepts only a server whose
-    certificate the deployment's CA signed for `address`'s host. Without one, plaintext."""
+    certificate the workflow group's CA signed for `address`'s host. Without one, plaintext."""
     if not internal_tls.enabled():
         return grpc.insecure_channel(address, options=GRPC_CHANNEL_OPTIONS)
     ca, cert, key = internal_tls.credentials()
@@ -54,7 +54,7 @@ def open_channel(address):
 
 def add_server_port(server, port):
     """Serve `server` on `port` on every interface. With this container's certificate
-    (Docker), mutual TLS: a caller without a certificate the deployment's CA signed is
+    (Docker), mutual TLS: a caller without a certificate the workflow group's CA signed is
     refused before any call. Without one, plaintext."""
     address = f"[::]:{port}"
     if not internal_tls.enabled():

@@ -12,7 +12,7 @@
 import { $ } from 'bun';
 
 const COMPOSE_FILE = '.docker/canyonos-smoke.compose.yml';
-const PROJECT_ID = 'f1e2d3c4-b5a6-4798-8a9b-0c1d2e3f4a5b';
+const WORKFLOW_ID = 'f1e2d3c4-b5a6-4798-8a9b-0c1d2e3f4a5b';
 const TRACE_ID = 'smoke-trace';
 const API_PORT = Bun.env.SMOKE_API_PORT ?? '53000';
 const WEB_PORT = Bun.env.SMOKE_WEB_PORT ?? '58080';
@@ -92,7 +92,7 @@ const waitForWeb = () =>
 async function seedTelemetry() {
   const start = BigInt(Date.now()) * 1_000_000n - 600_000_000_000n;
   const attributes = JSON.stringify({
-    'canyon.project.id': PROJECT_ID,
+    'canyonos.workflow.id': WORKFLOW_ID,
     'gen_ai.request.model': 'claude-opus-5',
     'gen_ai.usage.input_tokens': 120,
     'gen_ai.usage.output_tokens': 30,
@@ -121,7 +121,7 @@ async function seedTelemetry() {
   );
 }
 
-const findProject = (body: any) => body?.find?.((row: any) => row.id === PROJECT_ID);
+const findWorkflow = (body: any) => body?.find?.((row: any) => row.id === WORKFLOW_ID);
 
 async function main() {
   log('building the images');
@@ -143,8 +143,10 @@ async function main() {
     'redis-cli',
     'HSET',
     'controller:identity',
-    'project_id',
-    PROJECT_ID
+    'workflow_group_id',
+    WORKFLOW_ID,
+    'workflows',
+    JSON.stringify({ [WORKFLOW_ID]: 'workflow_1' })
   );
 
   log('starting the api');
@@ -153,15 +155,19 @@ async function main() {
 
   log('checking the API key');
   await checkApiKey(BASE_URL);
-  equal((await getJson('/projects')).status, 401, 'the project list refuses a caller with no key');
+  equal(
+    (await getJson('/workflows')).status,
+    401,
+    'the workflow list refuses a caller with no key'
+  );
 
-  log('checking the bootstrapped project');
-  const projects = await getJson('/projects', API_KEY);
-  equal(projects.status, 200, 'the user lists the bootstrapped project');
-  const project = findProject(projects.body);
-  check(project, 'the bootstrap used the controller id to create the project row');
-  equal(project.name, 'project_1', 'the bootstrapped project uses the default name');
-  equal(project.file_count, 0, 'the bootstrapped project has no files');
+  log('checking the bootstrapped workflow');
+  const workflows = await getJson('/workflows', API_KEY);
+  equal(workflows.status, 200, 'the user lists the bootstrapped workflow');
+  const workflow = findWorkflow(workflows.body);
+  check(workflow, 'the bootstrap used the controller id to create the workflow row');
+  equal(workflow.name, 'workflow_1', 'the bootstrapped workflow takes its published name');
+  equal(workflow.file_count, 0, 'the bootstrapped workflow has no files');
 
   log('inserting the telemetry fixture');
   await seedTelemetry();
@@ -171,7 +177,7 @@ async function main() {
     from: new Date(Date.now() - 3_600_000).toISOString(),
     to: new Date().toISOString(),
   });
-  const listing = await getJson(`/projects/${PROJECT_ID}/requests?${range}`, API_KEY);
+  const listing = await getJson(`/workflows/${WORKFLOW_ID}/requests?${range}`, API_KEY);
   equal(listing.status, 200, 'the user reads the request listing');
   equal(listing.body.total, 1, 'the inserted trace is listed');
   equal(listing.body.items[0].session_id, TRACE_ID, 'the listed trace is the inserted one');
@@ -181,7 +187,7 @@ async function main() {
   equal((await waitForWeb()).trim(), 'ok', 'the web health path answers the Docker health check');
 
   log('checking the SPA fallback on a deep link');
-  const deep_link = await fetch(`${WEB_URL}/projects/${PROJECT_ID}`);
+  const deep_link = await fetch(`${WEB_URL}/workflows/${WORKFLOW_ID}`);
   equal(deep_link.status, 200, 'a client-side route is served by the SPA fallback');
   check(
     deep_link.headers.get('content-type')?.includes('text/html'),
@@ -196,29 +202,29 @@ async function main() {
   const proxied_health = await fetch(`${WEB_URL}/api/healthz`);
   equal(proxied_health.status, 200, 'the web image proxies /api to the api service by default');
   equal(
-    (await fetch(`${WEB_URL}/api/projects`)).status,
+    (await fetch(`${WEB_URL}/api/workflows`)).status,
     401,
     'the proxy forwards a read with no key to the real API, which refuses it as it does directly'
   );
 
   log('checking the API key through the web proxy, the way the dashboard does');
   await checkApiKey(`${WEB_URL}/api`);
-  const proxied_projects = await getProxiedJson('/projects', API_KEY);
-  equal(proxied_projects.status, 200, 'the user lists projects through the proxy');
+  const proxied_workflows = await getProxiedJson('/workflows', API_KEY);
+  equal(proxied_workflows.status, 200, 'the user lists workflows through the proxy');
   equal(
-    findProject(proxied_projects.body)?.id,
-    PROJECT_ID,
-    'the proxied project list is the same one the API serves directly'
+    findWorkflow(proxied_workflows.body)?.id,
+    WORKFLOW_ID,
+    'the proxied workflow list is the same one the API serves directly'
   );
 
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
   await waitForHealth();
-  const after = await getJson('/projects', API_KEY);
+  const after = await getJson('/workflows', API_KEY);
   equal(
-    after.body.filter((row: any) => row.id === PROJECT_ID).length,
+    after.body.filter((row: any) => row.id === WORKFLOW_ID).length,
     1,
-    'a restart does not duplicate the project'
+    'a restart does not duplicate the workflow'
   );
 
   log('PASS');

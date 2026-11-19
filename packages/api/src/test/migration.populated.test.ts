@@ -11,7 +11,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { forgeApi } from '@api/app';
 import { db, runMigrations, sql } from '@api/db/client';
 
-import { bearer, TEST_API_KEY } from './project-test.utils';
+import { bearer, TEST_API_KEY } from './workflow-test.utils';
 
 const MIGRATIONS = new URL('../db/migrations', import.meta.url).pathname;
 const PASSWORD_AUTH_TAG = '0005_password_auth';
@@ -22,14 +22,14 @@ interface Journal {
 }
 
 interface Seeded {
-  project_id: string;
+  workflow_id: string;
   file_id: string;
   deploy_setup_id: string;
   deployment_id: string;
 }
 
 interface PasswordSeeded {
-  project_id: string;
+  workflow_id: string;
   prompt_id: string;
 }
 
@@ -52,25 +52,25 @@ async function migrate_before(tag: string): Promise<void> {
   await migrate(db, { migrationsFolder: copy });
 }
 
-/** A password install: one account, which created the project, its file, prompt and deploy. */
+/** A password install: one account, which created the workflow, its file, prompt and deploy. */
 async function seed_password_install(): Promise<PasswordSeeded> {
   const [user] = await sql<{ id: string }[]>`
     INSERT INTO users (email, password_hash) VALUES ('admin@canyonos.invalid', 'hash') RETURNING id
   `;
-  await sql`UPDATE projects SET created_by = ${user!.id} WHERE id = ${seeded.project_id}`;
+  await sql`UPDATE projects SET created_by = ${user!.id} WHERE id = ${seeded.workflow_id}`;
   await sql`UPDATE files SET created_by = ${user!.id} WHERE id = ${seeded.file_id}`;
   await sql`UPDATE deploy_setups SET created_by = ${user!.id} WHERE id = ${seeded.deploy_setup_id}`;
   await sql`UPDATE deployments SET created_by = ${user!.id} WHERE id = ${seeded.deployment_id}`;
   const [prompt] = await sql<{ id: string }[]>`
     INSERT INTO system_prompts (project_id, name, version, content, live)
-    VALUES (${seeded.project_id}, 'Agent.run', 'Agent-run-00000001-v1', 'Be brief.', true)
+    VALUES (${seeded.workflow_id}, 'Agent.run', 'Agent-run-00000001-v1', 'Be brief.', true)
     RETURNING id
   `;
-  return { project_id: seeded.project_id, prompt_id: prompt!.id };
+  return { workflow_id: seeded.workflow_id, prompt_id: prompt!.id };
 }
 
 const creators = () => sql<{ kind: string; created_by: string | null }[]>`
-  SELECT 'project' AS kind, created_by FROM projects WHERE id = ${seeded.project_id}
+  SELECT 'workflow' AS kind, created_by FROM projects WHERE id = ${seeded.workflow_id}
   UNION ALL
   SELECT 'file', created_by FROM files WHERE id = ${seeded.file_id}
   UNION ALL
@@ -91,7 +91,7 @@ async function seed_otp_install(): Promise<Seeded> {
     INSERT INTO auth_challenges (user_id, destination, purpose, code_hash, expires_at)
     VALUES (${user!.id}, 'admin@canyonos.invalid', 'login', 'hash', now())
   `;
-  const [project] = await sql<{ id: string }[]>`
+  const [workflow] = await sql<{ id: string }[]>`
     INSERT INTO projects (company_id, created_by, name, redis_port)
     VALUES (${company!.id}, ${user!.id}, 'controller', 6380) RETURNING id
   `;
@@ -99,7 +99,7 @@ async function seed_otp_install(): Promise<Seeded> {
   const [file] = await sql<{ id: string }[]>`
     INSERT INTO files (company_id, project_id, created_by, path, name, content_hash, language,
       byte_size, component_kind)
-    VALUES (${company!.id}, ${project!.id}, ${user!.id}, 'agent.py', 'agent.py', 'blob', 'python',
+    VALUES (${company!.id}, ${workflow!.id}, ${user!.id}, 'agent.py', 'agent.py', 'blob', 'python',
       4, 'agent')
     RETURNING id
   `;
@@ -112,10 +112,10 @@ async function seed_otp_install(): Promise<Seeded> {
   `;
   const [deployment] = await sql<{ id: string }[]>`
     INSERT INTO deployments (project_id, company_id, created_by, deploy_setup_id, status)
-    VALUES (${project!.id}, ${company!.id}, ${user!.id}, ${setup!.id}, 'success') RETURNING id
+    VALUES (${workflow!.id}, ${company!.id}, ${user!.id}, ${setup!.id}, 'success') RETURNING id
   `;
   return {
-    project_id: project!.id,
+    workflow_id: workflow!.id,
     file_id: file!.id,
     deploy_setup_id: setup!.id,
     deployment_id: deployment!.id,
@@ -144,22 +144,22 @@ describe('migration 0005 on a populated database', () => {
     expect(tables).toHaveLength(0);
   });
 
-  test('the project survives with its name and port', async () => {
-    const [project] = await sql`
-      SELECT id, name, redis_port FROM projects WHERE id = ${seeded.project_id}
+  test('the workflow survives with its name and port', async () => {
+    const [workflow] = await sql`
+      SELECT id, name, redis_port FROM workflows WHERE id = ${seeded.workflow_id}
     `;
-    expect(project).toEqual({ id: seeded.project_id, name: 'controller', redis_port: 6380 });
+    expect(workflow).toEqual({ id: seeded.workflow_id, name: 'controller', redis_port: 6380 });
 
     const company_column = await sql`
       SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'company_id'
+      WHERE table_schema = 'public' AND table_name = 'workflows' AND column_name = 'company_id'
     `;
     expect(company_column).toHaveLength(0);
   });
 
-  test('the project, file, deploy setup and deployment lose their creator', () => {
+  test('the workflow, file, deploy setup and deployment lose their creator', () => {
     expect(after_password_auth).toEqual([
-      { kind: 'project', created_by: null },
+      { kind: 'workflow', created_by: null },
       { kind: 'file', created_by: null },
       { kind: 'deploy_setup', created_by: null },
       { kind: 'deployment', created_by: null },
@@ -187,9 +187,9 @@ describe('migration 0009 on a password install', () => {
     expect(columns).toHaveLength(0);
   });
 
-  test('the project, its file, prompt, deploy setup and deployment survive', async () => {
+  test('the workflow, its file, prompt, deploy setup and deployment survive', async () => {
     const rows = await sql<{ kind: string }[]>`
-      SELECT 'project' AS kind FROM projects WHERE id = ${seeded.project_id}
+      SELECT 'workflow' AS kind FROM workflows WHERE id = ${seeded.workflow_id}
       UNION ALL
       SELECT 'file' FROM files WHERE id = ${seeded.file_id}
       UNION ALL
@@ -200,7 +200,7 @@ describe('migration 0009 on a password install', () => {
       SELECT 'deployment' FROM deployments WHERE id = ${seeded.deployment_id}
     `;
     expect(rows.map(({ kind }) => kind)).toEqual([
-      'project',
+      'workflow',
       'file',
       'prompt',
       'deploy_setup',
@@ -212,15 +212,15 @@ describe('migration 0009 on a password install', () => {
     expect(prompt).toEqual({ content: 'Be brief.', live: true });
   });
 
-  test('the API key lists the project', async () => {
+  test('the API key lists the workflow', async () => {
     const response = await forgeApi.handle(
-      new Request('http://localhost/projects', { headers: bearer(TEST_API_KEY) })
+      new Request('http://localhost/workflows', { headers: bearer(TEST_API_KEY) })
     );
 
     expect(response.status).toBe(200);
     const listed = (await response.json()) as { id: string; name: string }[];
     expect(listed).toContainEqual(
-      expect.objectContaining({ id: password_seeded.project_id, name: 'controller' })
+      expect.objectContaining({ id: password_seeded.workflow_id, name: 'controller' })
     );
   });
 });
