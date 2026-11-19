@@ -70,7 +70,7 @@ jobs:
       # No env file: src/test/setup.ts points the suite at this job's services. Bun 1.3.14 can
       # crash partway through the suite, so a failed run gets one more attempt.
       - name: Run E2E Tests
-        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 10
           max_attempts: 2
