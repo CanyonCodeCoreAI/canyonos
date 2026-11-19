@@ -73,6 +73,9 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/sonarqube-ip/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
+    # Scanner analysis reports are several MB; nginx's 1 MB default refuses them with 413.
+    client_max_body_size 100m;
+
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
