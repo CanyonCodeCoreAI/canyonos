@@ -9,7 +9,10 @@ queries.
 
 The check runs as its own process in the replica, outside the agent's, so it sets
 the future-id header itself; that the agent's own calls carry it is shown by the
-tokens the query's model calls record (test_3, `llm` trait)."""
+tokens the query's model calls record (test_3, `llm` trait). For a child process
+started during a future, it installs the Local Controller's subprocess wrapper and
+stands in for that future, so the child's calls must land on it with no header
+set by hand."""
 
 from pathlib import Path
 
