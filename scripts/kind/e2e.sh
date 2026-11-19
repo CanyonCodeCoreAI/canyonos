@@ -5,9 +5,9 @@
 # End-to-end test of CanyonOS on Kubernetes, on the kind cluster scripts/kind/up.sh
 # makes. It builds CanyonOS's images from this checkout as `bun run canyonos:dev` does,
 # installs them with scripts/kind/operator.sh (the operator, then the chart with the
-# in-cluster builder and the dashboard), then, as a user who may only edit one
-# namespace, deploys examples/helloworld's deployment with `target: kubernetes` and a
-# plain `canyonos deploy helloworld` and checks that:
+# in-cluster builder, the CanyonOS API and the dashboard), then, as a user who may only
+# edit one namespace, deploys examples/helloworld's deployment with `target: kubernetes`
+# and a plain `canyonos deploy helloworld` and checks that:
 #   - `canyonos deploy --api-key` hands the CanyonBuild and the CanyonProject the key's
 #     sha256 and neither holds the key itself; `deploy --no-api-key` opens the endpoint,
 #     and CANYONOS_API_KEY sets the key for one deploy;
@@ -23,9 +23,11 @@
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
 #   - requests through the endpoint complete;
-#   - the dashboard lists the project, reads its Redis and receives its telemetry; its
-#     API takes the key whose hash is in the chart's Secret (api-key-hash), refuses a
-#     request with no key or another one, and reads and changes with it;
+#   - the CanyonOS API, restarted, still knows the running workflow group;
+#   - the dashboard lists the project's workflow by its own id, never the workflow
+#     group's, reads its Redis and receives its telemetry; its API takes the key whose
+#     hash is in the chart's Secret (api-key-hash), refuses a request with no key or
+#     another one, and reads and changes with it;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
 #     leaves the namespace;
@@ -56,6 +58,11 @@ inside() {
     echo "FAIL: $*" >&2
     KUBECONFIG="${ADMIN}" kubectl get pods -A -o wide >&2 || true
     KUBECONFIG="${ADMIN}" kubectl -n canyonos-system logs deploy/canyonos-controller-manager --tail=40 >&2 || true
+    # The CanyonOS API runs every deploy: its Bun process, and the core commands it queues.
+    for container in api core; do
+      KUBECONFIG="${ADMIN}" kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c "${container}" \
+        --tail=80 --prefix >&2 || true
+    done
     exit 1
   }
   as_admin() { KUBECONFIG="${ADMIN}" "$@"; }
@@ -176,6 +183,10 @@ EOF
   }
   workflow="$(workflow_in /hw)"
   [ -n "${workflow}" ] || fail "the deploy wrote no workflow to /hw/workflow_group.yaml"
+  # The dashboard's routes take the workflow's own id, never the workflow group's.
+  workflow_id="$(/w/.venv/bin/python -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["workflows"][sys.argv[2]]["workflow_id"])' \
+    /hw/workflow_group.yaml "${workflow}")"
+  [ -n "${workflow_id}" ] || fail "the deploy wrote no workflow_id for ${workflow} to /hw/workflow_group.yaml"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" \
     || fail "the endpoint is not forwarded to 127.0.0.1:8080: ${said}"
@@ -246,14 +257,27 @@ EOF
       -o jsonpath='{.data.projects\.json}' 2>/dev/null | base64 -d | grep -q "${project_id}" && break
     sleep 2
   done
-  # The chart installs the dashboard open (no dashboard.apiKeyHash): give its Secret the
-  # key's hash, as `--set dashboard.apiKeyHash` would, and restart the API to take it.
-  as_admin kubectl -n canyonos-dashboard patch secret canyonos-dashboard --type merge \
-    -p "{\"stringData\": {\"api-key-hash\": \"$(sha256 "${api_key}")\"}}" >/dev/null \
-    || fail "could not set the dashboard's API key hash"
+  # operator.sh installs the chart with --set dashboard.apiKeyHash, this machine's key's
+  # sha256 (/kube/dashboard-key), which the chart keeps in its Secret.
+  dashboard_key="$(cat /kube/dashboard-key)"
+  chart_hash="$(as_admin kubectl -n canyonos-dashboard get secret canyonos-dashboard -o jsonpath='{.data.api-key-hash}' | base64 -d)"
+  [ "${chart_hash}" = "$(sha256 "${dashboard_key}")" ] \
+    || fail "the chart's Secret holds ${chart_hash:-no api-key-hash}, not the dashboard key's sha256"
+  # The API takes the key from that Secret when it starts, and finds the workflow groups
+  # running on the cluster again from their CanyonProjects.
   as_admin kubectl -n canyonos-dashboard rollout restart deploy/canyonos-dashboard-api >/dev/null
   as_admin kubectl -n canyonos-dashboard rollout status deploy/canyonos-dashboard-api --timeout=5m >/dev/null \
-    || fail "the dashboard's API did not restart with its key"
+    || fail "the CanyonOS API did not restart"
+  restored=""
+  for _ in $(seq 30); do
+    said="$(canyonos status --json 2>/dev/null)" || true
+    if echo "${said}" | python -c 'import sys, json; sys.exit(not json.load(sys.stdin)["running"])' 2>/dev/null; then
+      restored=1
+      break
+    fi
+    sleep 2
+  done
+  [ -n "${restored}" ] || fail "the restarted CanyonOS API lost the running workflow group: ${said}"
   # A port-forward ends with its pod: the forward opens again until it is stopped.
   (
     trap 'kill "${child:-}" 2>/dev/null; exit 0' TERM
@@ -278,7 +302,6 @@ EOF
     echo "${code}"
   }
 
-  dashboard_key="${api_key}"
   log "The dashboard's API verifies the key"
   code="$(api_call GET /auth/status "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json")) != {"api_key_required": True})' \
@@ -296,19 +319,21 @@ EOF
     for _ in $(seq 40); do get "$1" | grep -q "$2" && return 0; sleep 5; done
     fail "$3: $(get "$1")"
   }
-  until_found /workflows "${project_id}" "the dashboard does not list the project"
-  code="$(api_call GET "/workflows/${project_id}/scaling" "${dashboard_key}")"
+  until_found /workflows "${workflow_id}" "the dashboard does not list the project's workflow"
+  get /workflows | python -c 'import sys, json; sys.exit(sys.argv[1] in {w["id"] for w in json.load(sys.stdin)})' \
+    "${project_id}" || fail "the dashboard lists the workflow group ${project_id} as a workflow: $(get /workflows)"
+  code="$(api_call GET "/workflows/${workflow_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "reading scaling answered ${code}: $(cat /tmp/api.json)"
   # One replica, as helloworld runs: the policy changes nothing, and goes right after.
   policy='{"min_replicas": 1, "max_replicas": 1, "metric": "queue_length_total", "scale_up_above": 10, "scale_down_below": 1}'
-  code="$(api_call PUT "/workflows/${project_id}/scaling" "${dashboard_key}" "${policy}")"
+  code="$(api_call PUT "/workflows/${workflow_id}/scaling" "${dashboard_key}" "${policy}")"
   [ "${code}" = 200 ] || fail "saving a scaling policy answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call DELETE "/workflows/${project_id}/scaling" "${dashboard_key}")"
+  code="$(api_call DELETE "/workflows/${workflow_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "deleting the scaling policy answered ${code}: $(cat /tmp/api.json)"
 
-  until_found "/workflows/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard could not read the project's Redis"
-  until_found "/workflows/${project_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
+  until_found "/workflows/${workflow_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
   echo "listed, Redis read, telemetry in"
 
   log "A rotated Redis password restarts every pod that uses it"
@@ -332,7 +357,7 @@ EOF
   done
   [ -n "${rolled}" ] || fail "pods still sign in with the old password: $(pods_on)"
   requests || fail "requests after the rotation"
-  until_found "/workflows/${project_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard lost the project's Redis after the rotation"
 
   log "A deploy with a new key refuses the old one"
@@ -354,7 +379,8 @@ EOF
   kill "${dashboard_forward}" 2>/dev/null || true
 
   log "canyonos serve keeps the dashboard on 127.0.0.1:8081 and returns"
-  # As an admin: the deployer may not port-forward into the dashboard's namespace.
+  # As an admin: the deployer may port-forward only to the CanyonOS API there, and serve
+  # reads the dashboard's web Service first.
   canyonos_in "${ADMIN}" /hw serve || fail "serve"
   curl -sf -m 5 -o /dev/null http://127.0.0.1:8081/ || fail "the dashboard is not on 127.0.0.1:8081"
 
@@ -474,6 +500,12 @@ CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator
 kube="$(mktemp -d)"
 trap 'rm -rf "${kube}"' EXIT
 kind get kubeconfig --internal --name "${CLUSTER_NAME}" > "${kube}/admin"
+# The key operator.sh installed the dashboard with: this machine's.
+if [ -n "${CANYONOS_API_KEY:-}" ]; then
+  printf %s "${CANYONOS_API_KEY}" > "${kube}/dashboard-key"
+else
+  tr -d '\r\n' < "${HOME}/.canyonos/api_key" > "${kube}/dashboard-key"
+fi
 git -C "${REPO}" ls-files -co --exclude-standard -z > "${kube}/files"
 docker run --rm --network kind \
   -v "${REPO}:/src:ro" -v "$(cd "${kube}" && { pwd -W 2>/dev/null || pwd; }):/kube:ro" \

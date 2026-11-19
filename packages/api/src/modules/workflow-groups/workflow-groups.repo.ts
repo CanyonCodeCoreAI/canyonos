@@ -43,8 +43,8 @@ export const workflow_groups_repo = {
 
   /** The workflow group's row for its Global Controller container `controller_container_id`:
    * a new one when it has none, and one that starts from nothing when its upload went into
-   * another container, whose volume it no longer is. */
-  async claim(id: string, controller_container_id: string): Promise<WorkflowGroupRow> {
+   * another container, whose volume it no longer is. Kubernetes has no such container: null. */
+  async claim(id: string, controller_container_id: string | null): Promise<WorkflowGroupRow> {
     await db
       .insert(workflowGroups)
       .values({ id, controller_container_id })
@@ -144,7 +144,7 @@ export const workflow_groups_repo = {
   async save_deployed(
     id: string,
     deployed: DeployedFingerprints,
-    controller_container_id: string
+    controller_container_id: string | null
   ): Promise<void> {
     await db
       .update(workflowGroups)
@@ -157,6 +157,43 @@ export const workflow_groups_repo = {
       .update(workflowGroups)
       .set({ applied_generation: last_apply.generation, last_apply, updated_at: sql`now()` })
       .where(eq(workflowGroups.id, id));
+  },
+
+  /** Kubernetes, at API start: the uploads were in the pod's emptyDir, which is gone, so no
+   * row holds a workflow until the next upload, and none has a change left to apply. */
+  async forget_uploads(): Promise<void> {
+    await db.update(workflowGroups).set({
+      workflows: {},
+      applied_generation: sql`${workflowGroups.generation}`,
+      updated_at: sql`now()`,
+    });
+  },
+
+  /** Kubernetes, at API start: the row of a workflow group whose CanyonProject runs, from what
+   * the CanyonProject holds; made when there is none. Its upload is gone with the old pod. */
+  async restore(
+    id: string,
+    {
+      name,
+      api_key_hash,
+      deployed,
+    }: { name: string; api_key_hash: string | null; deployed: DeployedFingerprints | null }
+  ): Promise<void> {
+    await db
+      .insert(workflowGroups)
+      .values({ id, name, api_key_hash, deployed })
+      .onConflictDoUpdate({
+        target: workflowGroups.id,
+        set: {
+          name,
+          api_key_hash,
+          deployed,
+          workflows: {},
+          controller_container_id: null,
+          applied_generation: sql`${workflowGroups.generation}`,
+          updated_at: sql`now()`,
+        },
+      });
   },
 
   async remove(id: string): Promise<void> {

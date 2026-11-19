@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "CanyonOS API",
-    "description": "With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open. Every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused.",
+    "description": "With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.",
     "version": "0.2.3-dev2"
   },
   "tags": [
@@ -487,6 +487,8 @@
               "auth.control_key_unset",
               "auth.missing_key",
               "auth.invalid_key",
+              "auth.unauthenticated",
+              "auth.forbidden",
               "workflow_groups.bad_archive",
               "workflow_groups.workflow_invalid",
               "workflow_groups.upload_too_large",
@@ -501,6 +503,8 @@
               "workflow_groups.controller_failed",
               "workflow_groups.dashboard_unreachable",
               "workflow_groups.dashboard_refused",
+              "workflow_groups.reupload_needed",
+              "kubernetes.error",
               "docker.disabled",
               "docker.unavailable",
               "docker.timeout",
@@ -607,6 +611,10 @@
         "scheme": "bearer"
       },
       "controlKey": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "kubernetesToken": {
         "type": "http",
         "scheme": "bearer"
       }
@@ -10691,11 +10699,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "listWorkflowGroups",
         "summary": "List the workflow groups",
-        "description": "Every workflow group with an upload here or a Global Controller container, with the name its last PUT gave it, empty before one.",
+        "description": "Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one.",
         "responses": {
           "200": {
             "description": "Response for status 200",
@@ -10836,11 +10847,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "putWorkflowGroup",
         "summary": "Upload workflow_group.yaml and its .env",
-        "description": "Writes `workflow_group.yaml` and the `.env` beside it into the Global Controller's /workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow group's name. With `workflows`, removes the uploaded workflows it leaves out; with `api_key_hash`, keeps it as the API key its endpoint checks, none when it is empty. 409 when the CLI has not created the Global Controller container.",
+        "description": "Writes `workflow_group.yaml` and the `.env` beside it into the workflow group's workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow group's name. With `workflows`, removes the uploaded workflows it leaves out; with `api_key_hash`, keeps it as the API key its endpoint checks, none when it is empty. On Docker, 409 `controller_missing` when the CLI has not created the Global Controller container. On Kubernetes, 403 unless the caller may update CanyonProjects in the namespace `config` names, and 409 `reupload_needed` for a PUT without `workflows` while the API holds none of the workflows, as after it restarted.",
         "parameters": [
           {
             "name": "workflow_group_id",
@@ -11000,11 +11014,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "deleteWorkflowGroup",
         "summary": "Stop the deploy and forget the upload",
-        "description": "Waits for the apply loop to stop the deploy, then forgets the upload; 504 when it did not stop in time and 500 when stopping it failed, keeping the upload. A Global Controller this API holds no upload for is stopped all the same.",
+        "description": "Waits for the apply loop to stop the deploy, then forgets the upload; 504 when it did not stop in time and 500 when stopping it failed, keeping the upload. A deploy this API holds no upload for is stopped all the same.",
         "parameters": [
           {
             "name": "workflow_group_id",
@@ -11154,6 +11171,9 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "getWorkflowGroupStatus",
@@ -11310,11 +11330,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "putWorkflow",
         "summary": "Upload a workflow",
-        "description": "Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it into /workspace/<name>, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.",
+        "description": "Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it into the workflow group's workspace, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.",
         "requestBody": {
           "required": true,
           "description": "A gzip tar of the workflow's folder, paths relative to it, with its `.env`",
@@ -11485,11 +11508,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "deleteWorkflow",
         "summary": "Remove a workflow",
-        "description": "Removes from /workspace what workflow `name`'s last upload put there; 404 if it was never uploaded.",
+        "description": "Removes from the workflow group's workspace what workflow `name`'s last upload put there; 404 if it was never uploaded.",
         "parameters": [
           {
             "name": "workflow_group_id",
@@ -11648,6 +11674,9 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "getWorkflow",
@@ -11813,6 +11842,9 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "listWorkflows",
@@ -11969,11 +12001,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "getControllerLog",
         "summary": "Read the controller log",
-        "description": "The Global Controller container's log since it last started, the last `tail` lines of it, as text; with `follow=true`, keeps streaming new lines until the container stops. Empty before it first starts.",
+        "description": "The deploy's log, the last `tail` lines of it, as text; with `follow=true`, keeps streaming new lines until the deploy stops. On Docker, the Global Controller container's log since it last started; on Kubernetes, the build pod's while it builds, then the Global Controller pod's. Empty before there is one.",
         "parameters": [
           {
             "name": "workflow_group_id",
@@ -12152,6 +12187,9 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "getAgentLogs",
@@ -12328,6 +12366,9 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "getWorkflowGroupHealth",
@@ -12484,11 +12525,14 @@
         "security": [
           {
             "controlKey": []
+          },
+          {
+            "kubernetesToken": []
           }
         ],
         "operationId": "putWorkflowGroupDashboard",
         "summary": "Register the workflow group's workflows with this dashboard",
-        "description": "Registers the running deploy's Redis, and a client certificate its CA signs when its Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures that may pass are retried for a minute; 502 when it is refused or never answers.",
+        "description": "Registers the running deploy's Redis, and a client certificate its CA signs when its Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures that may pass are retried for a minute; 502 when it is refused or never answers. On Kubernetes the operator's registry already lists the workflow group: returns the workflows the dashboard knows of it.",
         "parameters": [
           {
             "name": "workflow_group_id",

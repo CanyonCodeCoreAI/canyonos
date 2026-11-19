@@ -84,19 +84,28 @@ jobs:
         uses: useblacksmith/checkout@v1 # v4
 
       # Both install modes must render: cluster-wide (with the builder and the
-      # dashboard) and limited to some namespaces.
+      # dashboard) and limited to some namespaces. Each needs the CanyonOS API's key.
       - name: Lint and render the chart
+        env:
+          KEY: dashboard.apiKeyHash=0000000000000000000000000000000000000000000000000000000000000000
         run: |
-          helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0
+          helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0 --set "${KEY}"
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set builder.enabled=true --set dashboard.enabled=true \
+            --set builder.enabled=true --set dashboard.enabled=true --set "${KEY}" \
             --set dashboard.apiImage=canyonos-api@sha256:0 --set dashboard.webImage=canyonos-web@sha256:0 \
             > /dev/null
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set "watchNamespaces={team-a,team-b}" > /dev/null
+            --set "watchNamespaces={team-a,team-b}" --set "${KEY}" > /dev/null
+          # A Secret of your own carries the key instead.
+          helm template t canyonos-operator --set dashboard.existingSecret=mine > /dev/null
           # A release's chart installs with no image set: its own release's images.
           helm template t canyonos-operator --set builder.enabled=true \
-            --set dashboard.enabled=true > /dev/null
+            --set dashboard.enabled=true --set "${KEY}" > /dev/null
+          # With no key, every signed-in user could use the API's dashboard routes.
+          if helm template t canyonos-operator > /tmp/no-key.txt 2>&1; then
+            echo "the chart rendered with no dashboard.apiKeyHash"; exit 1
+          fi
+          grep -q "dashboard.apiKeyHash is required" /tmp/no-key.txt || { cat /tmp/no-key.txt; exit 1; }
 
   # The operator image for both platforms, as the release builds it, so a Dockerfile
   # that no longer builds fails here and not in a release. Pushes nothing.

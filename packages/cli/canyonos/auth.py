@@ -116,6 +116,16 @@ def resolve_api_key(api_key: str | None, no_api_key: bool) -> str | None:
     return key
 
 
+def ensure_machine_api_key() -> str:
+    """This machine's API key, made and saved to `~/.canyonos/api_key` when there is
+    none, as `canyonos cluster up` needs one for the cluster's dashboard."""
+    key = machine_api_key()
+    if key is None:
+        key = secrets.token_hex(32)
+        _save(key)
+    return key
+
+
 def auth_header(key: str | None = None) -> dict[str, str]:
     """The header that sends `key`, by default this machine's API key; none when there
     is no key."""

@@ -238,7 +238,9 @@ Kubernetes deploys don't support multi-folder workflow groups yet.
    OpenShift does.
 3. CanyonOS, through `scripts/kind/operator.sh`: the three images from this checkout
    and the operator's image, pushed to that registry, then the chart with the in-cluster
-   builder and the dashboard. `up.sh` builds the images first if they are missing.
+   builder, the CanyonOS API and the dashboard. `up.sh` builds the images first if they
+   are missing. The dashboard takes this machine's API key, `~/.canyonos/api_key` (or
+   `CANYONOS_API_KEY`), made there if there is none, as `canyonos cluster up` does.
 
 It's safe to re-run. The API server's Pod Security file is kept in `~/.canyonos/kind`,
 so switching branches never stops the cluster from starting.

@@ -5,10 +5,10 @@ own. It is for the cluster admin who installs CanyonOS once, and for developers 
 deploy workflows there.
 
 The CanyonOS operator, installed once per cluster, runs each workflow's Redis, Global
-Controller, endpoint and agents in the workflow's namespace. `canyonos deploy` uploads
-the workflow, and the cluster builds the agents' images, pushes them to your registry
-and starts them. Nothing else on the cluster changes. How the operator works is in
-[Operator](../architecture/OPERATOR.md).
+Controller, endpoint and agents in the workflow's namespace. Its chart also installs the
+CanyonOS API, which `canyonos deploy` uploads the workflow to; the cluster then builds
+the agents' images, pushes them to your registry and starts them. Nothing else on the
+cluster changes. How the operator works is in [Operator](../architecture/OPERATOR.md).
 
 A workflow group is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` runs from
 the workflow group folder, which holds `workflow_group.yaml`, and takes the workflow folders to
@@ -31,7 +31,11 @@ Each person needs this access to the cluster:
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Installs the operator | Cluster admin: the chart installs CRDs, cluster roles and namespaces                                                                             |
 | Deploys a workflow    | The edit role in the workflow's namespace. For `canyonos deploy` to create the namespace, also permission to create namespaces; else ask for one |
-| Opens the dashboard   | Permission to port-forward into the `canyonos-dashboard` namespace                                                                               |
+| Opens the dashboard   | Permission to port-forward to `svc/canyonos-dashboard-web` in the `canyonos-dashboard` namespace, and the dashboard's API key                    |
+
+Every signed-in user may port-forward to the CanyonOS API, as `canyonos deploy` does; the
+API then checks with Kubernetes what each one may do. See
+[Permissions and Pod Security](#permissions-and-pod-security).
 
 ## Set up the cluster
 
@@ -60,7 +64,8 @@ It makes:
 2. A kind cluster named `canyonos`, with one control plane and one worker
    (`--workers 3` for more, when the cluster is made). It has Calico, so NetworkPolicy
    is enforced, metrics-server, and Pod Security `restricted` in every namespace.
-3. CanyonOS of the CLI's release, with the builder and the dashboard.
+3. CanyonOS of the CLI's release, with the builder and the dashboard. The dashboard
+   takes this machine's API key, `~/.canyonos/api_key`, made there if there is none.
 
 `kubectl` then points at the new cluster. After you upgrade the CLI, run
 `canyonos cluster up` again to bring the cluster to the same release.
@@ -76,15 +81,21 @@ A cluster admin installs the operator once, with Helm, from the chart each relea
 publishes:
 
 ```bash
+KEY="<the dashboard's API key, which you pick>"
 helm install canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
   --version <version> --namespace canyonos-system --create-namespace \
-  --set builder.enabled=true
+  --set builder.enabled=true \
+  --set dashboard.apiKeyHash="$(printf %s "$KEY" | sha256sum | cut -d' ' -f1)"
 ```
 
 `<version>` is the CLI's, as `canyonos --version` prints it.
 
-Add `--set dashboard.enabled=true` for the [dashboard](#dashboard), and any of the
-[operator settings](#operator-settings) below.
+The chart always installs the [CanyonOS API](#the-canyonos-api) too, with its Postgres
+on a 1Gi PersistentVolumeClaim, so the cluster needs a default StorageClass, or set
+`dashboard.storageClassName`. It refuses to install without `dashboard.apiKeyHash`, the
+sha256 of the key the API's dashboard routes take, or `dashboard.existingSecret`. Add
+`--set dashboard.enabled=true` for the [dashboard](#dashboard)'s web front end, and any
+of the [operator settings](#operator-settings) below.
 
 </div>
 
@@ -104,16 +115,17 @@ Set these with `--set` on `helm install`:
 | `builder.enabled`                  | `false`                        | Installs the in-cluster image builder (rootless BuildKit in `canyonos-build`). Every deploy builds with it, so turn it on.                                                               |
 | `builder.registryAliases`          | `{}`                           | A registry the builder reaches by another name than the nodes pull it by. kind: `{"localhost:5001": "kind-registry:5000"}`.                                                              |
 | `builder.insecureRegistries`       | `[]`                           | Registries the builder may push to over plain HTTP. Use it for a local kind registry only.                                                                                               |
-| `dashboard.enabled`                | `false`                        | Installs one dashboard for every workflow on the cluster. See [Dashboard](#dashboard).                                                                                                   |
+| `dashboard.enabled`                | `false`                        | The dashboard's web front end, for every workflow on the cluster. The CanyonOS API is installed either way. See [Dashboard](#dashboard).                                                 |
 | `watchNamespaces`                  | `[]`                           | Empty: workflows may run in any namespace, and the operator has cluster-wide permissions. A list: only those namespaces, with the operator's permissions granted in them alone.          |
 | `userRoles.enabled`                | `true`                         | Whoever may administer, edit or view a namespace may do the same with its CanyonProjects, CanyonAgents and CanyonBuilds. This is what makes a namespace's edit role enough to deploy.    |
 | `imageRegistry`                    | `ghcr.io/canyoncodecoreai`     | Where CanyonOS's own images come from. Each image setting left empty is `<imageRegistry>/canyonos-<name>:<version>`. Point it at a registry mirror that holds them under the same names. |
-| `controllerImage`                  | this release's `canyonos-core` | The image that every workflow's Global Controller and endpoint, and the in-cluster build, run.                                                                                           |
+| `controllerImage`                  | this release's `canyonos-core` | The image that every workflow's Global Controller and endpoint, the in-cluster build, and the CanyonOS API's `core` container run.                                                       |
 | `image.repository`, `image.digest` | this release's operator        | The operator's own image. Prefer a digest.                                                                                                                                               |
 | `redisImage`                       | the operator's default         | The image of each workflow's Redis, for a mirror.                                                                                                                                        |
 | `metrics.enabled`                  | `true`                         | Serves the operator's Prometheus metrics on `8443` over HTTPS. Callers need the `canyonos-metrics-reader` role.                                                                          |
 
-The dashboard's own settings are under [Dashboard](#dashboard-settings).
+The CanyonOS API's and the dashboard's own settings, `dashboard.apiKeyHash` among them,
+are under [Dashboard settings](#dashboard-settings).
 
 ### Permissions and Pod Security
 
@@ -127,6 +139,23 @@ What CanyonOS asks of your cluster:
 - The builder's namespace, `canyonos-build`, is the one exception: it is `privileged`,
   because BuildKit's user namespaces need seccomp and AppArmor unconfined. Nothing else
   runs there, and only build pods may reach it.
+- The CanyonOS API acts for each caller only as far as Kubernetes lets that caller: it
+  checks the caller's kubectl token (a TokenReview), then asks whether they may `get`
+  (to read) or `update` (to change) CanyonProjects in the workflow's namespace (a
+  SubjectAccessReview). Its own ServiceAccount, `canyonos-api` in `canyonos-dashboard`,
+  has the ClusterRole `canyonos-api`: it may create and patch Secrets (each workflow's
+  `.env`), delete labeled Secrets and ConfigMaps, read pods and their logs, manage
+  CanyonBuilds, and list, patch and delete CanyonProjects and list CanyonAgents. The
+  build pod, not the API, applies the CanyonProject and its CanyonAgents.
+- That ClusterRole is cluster-wide even with `watchNamespaces`: the API finds every
+  workflow's CanyonProject after a restart, and deploys into any namespace its caller
+  may change.
+- Every signed-in user may port-forward into `canyonos-dashboard` (the Role
+  `canyonos-dashboard-api-forward`, bound to `system:authenticated`), because the CLI
+  reaches the API that way. A port-forward can't be limited to one pod, so it reaches
+  the web front end and Postgres too: Postgres still needs its password, and the API's
+  dashboard routes the API key, which is why the chart requires one.
+- The API's pod gets its Kubernetes token in its `api` container only, not in `core`.
 
 ## Point a workflow at the cluster
 
@@ -150,22 +179,24 @@ commands to call it. Every command uses the workflow's `target`.
 
 ### What a deploy does
 
-The CLI needs no Docker for this. `canyonos deploy`:
+The CLI needs no Docker for this. `canyonos deploy` uploads `workflow_group.yaml`, its
+`.env` and each workflow folder to the [CanyonOS API](#the-canyonos-api), through a
+port-forward, signed in with your kubectl login. `.git`, `.venv`, `node_modules` and
+`__pycache__` are never uploaded. Then:
 
 1. Creates the namespace if it's missing, labeled as made by CanyonOS.
-2. Turns the workflow group's `.env` into a Secret for the Global Controller, and each
-   workflow's `.env` into a Secret for that workflow's agents, unless `env_secret` names
-   your own.
-3. Asks the operator for a build (a CanyonBuild), with the sha256 of this machine's API
-   key in `spec.auth.apiKeyHash` (never the key itself), and uploads `workflow_group.yaml` and each workflow folder
-   to the build's pod through a port-forward. `.env` and every other `.env*` file,
-   `.git`, `.venv`, `node_modules` and `__pycache__` are never uploaded.
+2. The API turns the workflow group's `.env` into a Secret for the Global Controller,
+   and each workflow's `.env` into a Secret for that workflow's agents, unless
+   `env_secret` names your own.
+3. The API asks the operator for a build (a CanyonBuild), with the sha256 of this
+   machine's API key in `spec.auth.apiKeyHash` (never the key itself), and uploads the
+   workflow group to the build's pod. `.env` and every other `.env*` file never reach it.
 4. The build builds each agent's image on the cluster's builder, pushes it by digest,
    and applies the workflow group's objects from its config, its CanyonProject carrying
    that hash in `spec.auth.apiKeyHash`. The operator hands it to the Global Controller
    from the Secret `canyonos-api-key`. A redeploy of unchanged code restarts nothing.
-5. Waits until the operator reports the workflow and every agent ready, then forwards
-   the endpoint to this machine and opens the dashboard.
+5. The API waits until the operator reports the workflow and every agent ready; the CLI
+   then forwards the endpoint to this machine and opens the dashboard.
 
 The first deploy writes a `workflow_group_id` into `workflow_group.yaml`; commit it, so telemetry
 stays under one workflow across deploys and targets. The workflow's CanyonProject is
@@ -286,12 +317,36 @@ Starting points for alerts:
 - p95 time to a result above 2 s.
 - A CanyonAgent with `Ready=False` and reason `Unschedulable`.
 
+## The CanyonOS API
+
+Every install has one CanyonOS API, in the `canyonos-dashboard` namespace, and every
+`canyonos` command for a workflow on the cluster goes through it, from a port-forward to
+`svc/canyonos-dashboard-api`. It is also the [dashboard](#dashboard)'s backend. Its pod,
+`canyonos-dashboard-api`, under the `restricted` Pod Security profile, runs:
+
+- `api`, the API itself, from the `canyonos-api` image;
+- `core`, from the `canyonos-core` image (`controllerImage`): the `canyonos_core.cli`
+  commands the API hands it, such as checking and unpacking an uploaded workflow and
+  packing the workflow group for its build. It has no Kubernetes token and no port.
+
+They share the folder `/workspace`, where the uploaded workflow groups are kept while
+the pod runs (`dashboard.workspaceSize`, 4Gi). Postgres, on a 1Gi PersistentVolumeClaim,
+keeps each workflow group's record. When the pod is replaced, the API finds the
+workflows running on the cluster again from their CanyonProjects and keeps them running;
+the next `canyonos deploy` of each uploads its files again.
+
+To read its logs:
+
+```bash
+kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c api    # or -c core
+```
+
 ## Dashboard
 
-One dashboard serves every workflow on the cluster. Install it with the operator by
-adding `--set dashboard.enabled=true`; `canyonos cluster up` installs it for you. It
-runs in the `canyonos-dashboard` namespace: the API, the web front end, and Postgres on
-a 1Gi disk, all under the `restricted` Pod Security profile.
+One dashboard serves every workflow on the cluster. Its web front end is installed with
+the operator by adding `--set dashboard.enabled=true`; `canyonos cluster up` installs it
+for you. It runs in the `canyonos-dashboard` namespace, on the
+[CanyonOS API](#the-canyonos-api), under the `restricted` Pod Security profile.
 
 ```bash
 canyonos serve    # http://127.0.0.1:8081, until canyonos stop
@@ -302,20 +357,21 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
   is a port-forward held open in the background, like the endpoint's, on `8081` or the
   next free port; a `dashboard_port` you set is never moved. `canyonos stop` closes it
   with the last workflow forwarded from this machine.
-- **Who can open it:** only someone allowed to port-forward into `canyonos-dashboard`;
-  nothing is exposed outside the cluster. As the local dashboard does, it asks for the
-  API key (see [API key](AUTHORIZATION.md#send-the-key)) when the chart sets one.
+- **Who can open it:** someone allowed to port-forward to `svc/canyonos-dashboard-web`
+  in `canyonos-dashboard`, with its API key; nothing is exposed outside the cluster. As
+  the local dashboard does, it asks for the key (see
+  [API key](AUTHORIZATION.md#send-the-key)).
 - **Which key it takes:** the one whose sha256 is the chart's `dashboard.apiKeyHash`,
   kept in the Secret `canyonos-dashboard` as `api-key-hash`. One key covers every
-  workflow on the cluster. Set it at install, from the key you pick:
+  workflow on the cluster. The chart requires it, since every signed-in user may
+  port-forward to the API. Set it at install, from the key you pick:
 
   ```bash
   helm upgrade --install ... --set dashboard.apiKeyHash="$(printf %s "$KEY" | sha256sum | cut -d' ' -f1)"
   ```
 
   A new value restarts the API. With `dashboard.existingSecret`, put `api-key-hash` in
-  your Secret and restart `canyonos-dashboard-api` after changing it. Without a key,
-  the API answers anyone who reaches it, every workflow's Global Controller included.
+  your Secret and restart `canyonos-dashboard-api` after changing it.
 
 - **How it reaches workflows:** the operator lists every workflow whose Redis is ready,
   with how to reach it, in the Secret `canyonos-dashboard-projects`, so the dashboard
@@ -325,17 +381,18 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 
 ### Dashboard settings
 
-| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                                                         |
-| -------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The dashboard's images, for a mirror.                                                                                                                                                                                                                                                                |
-| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                                |
-| `dashboard.storage`                    | `1Gi`                                            | The database's disk.                                                                                                                                                                                                                                                                                 |
-| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                                      |
-| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password`, a `redis-password-key` of 32 characters or more, and `api-key-hash` for a key. Without it, the chart makes one on install and keeps it. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password. |
-| `dashboard.apiKeyHash`                 | none                                             | The sha256 of the dashboard's API key, as 64 lowercase hex characters. Empty: the dashboard's API answers anyone who reaches it. For a throwaway cluster only.                                                                                                                                       |
-| `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                                   |
-| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                                  |
-| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                          |
+| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                                               |
+| -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The CanyonOS API's and the web front end's images, for a mirror. The API's `core` container runs `controllerImage`.                                                                                                                                                                        |
+| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                      |
+| `dashboard.storage`                    | `1Gi`                                            | The database's disk, a PersistentVolumeClaim every install makes.                                                                                                                                                                                                                          |
+| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                            |
+| `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password`, a `redis-password-key` of 32 characters or more, and `api-key-hash`. Without it, the chart makes one on install and keeps it. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password. |
+| `dashboard.apiKeyHash`                 | none, required                                   | The sha256 of the dashboard's API key, as 64 lowercase hex characters. The chart refuses to install without it, unless `dashboard.existingSecret` is set.                                                                                                                                  |
+| `dashboard.workspaceSize`              | `4Gi`                                            | The CanyonOS API's `/workspace`, which holds every uploaded workflow group while its pod runs.                                                                                                                                                                                             |
+| `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                         |
+| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                        |
+| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                |
 
 ## Stop and clean up
 
@@ -372,7 +429,9 @@ helm upgrade canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
 
 `--reuse-values` keeps every setting from the install. An image left to the chart
 follows the new release; one you set by hand (`image.digest`, `controllerImage`, the
-dashboard's) stays as it was, so pass its new value with `--set`.
+dashboard's) stays as it was, so pass its new value with `--set`. An install with no
+`dashboard.apiKeyHash` or `dashboard.existingSecret` needs one now: pass it with `--set`
+too.
 
 Never delete a CRD: Kubernetes then deletes every resource of that kind in the cluster.
 Deleting the CanyonProject CRD takes down every workflow on it.
@@ -422,3 +481,6 @@ cluster.
 | "Not ready after 10 minutes"                             | Look at `kubectl -n <namespace> get pods` and `kubectl -n <namespace> describe canyonagents`.                                                                                                                                                 |
 | "The endpoint is not forwarded to this machine"          | The warning gives the reason. Most often the `endpoint.api_port` you set is taken: free it, or remove the setting to take the next free port.                                                                                                 |
 | The operator itself misbehaves                           | Read its logs: `kubectl -n canyonos-system logs deploy/canyonos-controller-manager`.                                                                                                                                                          |
+| Helm says "dashboard.apiKeyHash is required"             | Set it, as [Set up the cluster](#set-up-the-cluster) shows, or `dashboard.existingSecret`.                                                                                                                                                    |
+| `canyonos-dashboard-db-0` stays `Pending`                | Its PersistentVolumeClaim has no StorageClass to bind to: set `dashboard.storageClassName`, or give the cluster a default one.                                                                                                                |
+| A deploy fails inside the CanyonOS API                   | Read both of its containers' logs: `kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c api`, then `-c core`.                                                                                                                 |

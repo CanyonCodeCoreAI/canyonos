@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # CanyonOS on Kubernetes end to end: a kind cluster as scripts/kind/up.sh makes it,
-# then scripts/kind/e2e.sh (the chart with the builder and the dashboard, a deploy
-# with the real CLI by a user who may only edit one namespace, requests, the
-# dashboard, a Redis password rotation, stop and clean). It takes about twenty-five
-# minutes on a GitHub runner. It runs for the same packages as the Docker E2E (e2e.yml),
-# since a change anywhere in them can break the deploy, plus the operator and the kind
-# scripts: on each pull request and on main.
+# then scripts/kind/e2e.sh (the chart with the builder, the CanyonOS API and the
+# dashboard, a deploy with the real CLI through that API by a user who may only edit
+# one namespace, requests, the dashboard, a Redis password rotation, stop and clean).
+# It takes about twenty-five minutes on a GitHub runner. It runs for the same packages
+# as the Docker E2E (e2e.yml), since a change anywhere in them can break the deploy,
+# plus the operator and the kind scripts: on each pull request and on main.
 
 name: Kubernetes E2E
 
@@ -90,6 +90,13 @@ jobs:
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:dev
+      # The CanyonOS API: every deploy runs through it.
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          load: true
+          tags: canyonos-api:dev
       - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
@@ -124,6 +131,8 @@ jobs:
           kubectl get pods -A -o wide || true
           kubectl get canyonprojects,canyonagents,canyonbuilds -A -o wide || true
           kubectl -n canyonos-system logs deploy/canyonos-controller-manager --tail=200 || true
+          kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c api --tail=200 || true
+          kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c core --tail=200 || true
           kubectl -n canyonos-e2e describe pods -l canyonos.canyoncode.ai/build || true
           kubectl -n canyonos-e2e logs -l canyonos.canyoncode.ai/build --all-containers --prefix --tail=100 || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -50

@@ -1,22 +1,28 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# The cluster's CanyonOS dashboard, one for every project: Postgres, the API and the web
-# front end, as `canyonos serve` runs them on Docker. Nothing is exposed outside the
-# cluster: it is opened with a port-forward, so only who may port-forward into its
-# namespace reaches it, and its API answers only the key dashboard.apiKeyHash is the
-# hash of, when it is set.
-{{- if .Values.dashboard.enabled }}
+# The CanyonOS API, which every install has: `canyonos deploy` runs each workflow group
+# through it, and it is the cluster dashboard's backend. With it, Postgres and, with
+# dashboard.enabled, the web front end, as `canyonos serve` runs them on Docker. Nothing
+# is exposed outside the cluster: every signed-in user may port-forward to the API, which
+# checks with Kubernetes what each caller may do with a workflow group, and answers the
+# dashboard's routes only with the key dashboard.apiKeyHash is the hash of.
 {{- $ns := .Values.dashboard.namespace }}
 {{- $secret := .Values.dashboard.existingSecret | default "canyonos-dashboard" }}
 {{- $apiKeyHash := .Values.dashboard.apiKeyHash | default "" }}
 {{- if and $apiKeyHash (not (regexMatch "^[0-9a-f]{64}$" $apiKeyHash)) }}
 {{- fail "dashboard.apiKeyHash must be the sha256 of the API key: 64 lowercase hex characters" }}
 {{- end }}
+{{- /* The forward rule below lets every signed-in user, every pod's service account
+included, reach the API: without a key its dashboard routes would answer each of them. */}}
+{{- if not (or $apiKeyHash .Values.dashboard.existingSecret) }}
+{{- fail "dashboard.apiKeyHash is required: the sha256 of the CanyonOS API's key, as 64 lowercase hex characters (or dashboard.existingSecret with an api-key-hash), since every signed-in user may port-forward to the API" }}
+{{- end }}
 {{- /* Rolls the API when the chart's key changes. Salted with a value of the Secret, so
 the annotation, readable by anyone who may view the Deployment, tests no key guess. */}}
 {{- $apiKeyVersion := "" }}
 {{- $apiImage := .Values.dashboard.apiImage | default (include "canyonos.releaseImage" (list . "api")) }}
+{{- $coreImage := .Values.controllerImage | default (include "canyonos.releaseImage" (list . "core")) }}
 {{- $webImage := .Values.dashboard.webImage | default (include "canyonos.releaseImage" (list . "web")) }}
 {{- if .Values.dashboard.createNamespace }}
 apiVersion: v1
@@ -146,6 +152,44 @@ spec:
   selector: {app.kubernetes.io/name: canyonos-dashboard-api}
   ports: [{name: http, port: 3000, targetPort: 3000}]
 ---
+# Every signed-in user may port-forward to the CanyonOS API, as `canyonos deploy` does;
+# the API checks with Kubernetes what each one may do. Port-forward can't be limited to
+# one pod, so it reaches every pod here; Postgres still needs its password.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canyonos-dashboard-api-forward
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    resourceNames: [canyonos-dashboard-api]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-dashboard-api-forward
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canyonos-dashboard-api-forward
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:authenticated
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -154,7 +198,8 @@ metadata:
   labels:
     {{- include "canyonos.labels" . | nindent 4 }}
 spec:
-  # One: it migrates its database on start, with no lock between replicas.
+  # One: it migrates its database on start, with no lock between replicas, and holds
+  # each deploy's progress in memory.
   replicas: 1
   strategy: {type: Recreate}
   selector:
@@ -167,18 +212,47 @@ spec:
         canyonos.canyoncode.ai/api-key: {{ $apiKeyVersion }}
       {{- end }}
     spec:
+      serviceAccountName: canyonos-api
+      # Only the api container gets the service account's token (kube-api-access).
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         {{- if .Values.dashboard.fixedUsers }}
-        runAsUser: 1000   # bun in the image
+        # bun in the api image. The core image has no user of its own, so core runs as
+        # bun too, and both may change what the other writes in /workspace.
+        runAsUser: 1000
         runAsGroup: 1000
+        fsGroup: 1000
         {{- end }}
         seccompProfile: {type: RuntimeDefault}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        # Runs the canyonos_core.cli commands the API queues in /workspace/.canyonos/jobs
+        # (validating and unpacking a workflow, the deploy's plan, the build's upload),
+        # with no Kubernetes token and no port. An init container that keeps running (a
+        # sidecar): it is up before the API starts, and stops after it.
+        - name: core
+          image: {{ $coreImage }}
+          imagePullPolicy: {{ .Values.dashboard.pullPolicy }}
+          restartPolicy: Always
+          command: [python, -m, canyonos_core.cli, job-worker, --queue, /workspace/.canyonos/jobs]
+          workingDir: /workspace
+          env:
+            # No home of its own: the image has no such user.
+            - {name: HOME, value: /tmp}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: workspace, mountPath: /workspace}
+            - {name: core-tmp, mountPath: /tmp}
       containers:
         - name: api
           image: {{ $apiImage }}
@@ -192,13 +266,13 @@ spec:
             # theirs in its list, but the API refuses to start without the key.
             - name: REDIS_PASSWORD_ENCRYPTION_KEY
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: redis-password-key}}
-            # Empty or absent: no key. Every project's global controller may reach this
-            # API (for telemetry), so without a key any pod labelled as one could read and
-            # change every project.
+            # The dashboard routes' key. Every project's global controller may reach this
+            # API (for telemetry), and every signed-in user through a port-forward.
             - name: CANYONOS_API_KEY_HASH
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: api-key-hash, optional: true}}
             - {name: LOG_LEVEL, value: info}
-            # No Docker here: the workflow-group routes answer that Docker is disabled.
+            # Workflow groups run on this cluster, never on Docker.
+            - {name: CANYONOS_TARGET, value: kubernetes}
             - {name: DOCKER_SOCKET, value: ""}
             - {name: CANYONOS_PROJECTS_FILE, value: /etc/canyonos/projects/projects.json}
             - {name: METRICS_RAW_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRawRetentionDays | quote }}}
@@ -212,20 +286,43 @@ spec:
             periodSeconds: 20
             failureThreshold: 6
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            # Uploads of up to 512 MiB go to /workspace as they arrive, not to memory.
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 1Gi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: projects, mountPath: /etc/canyonos/projects, readOnly: true}
-            - {name: tmp, mountPath: /tmp}
+            - {name: workspace, mountPath: /workspace}
+            - {name: api-tmp, mountPath: /tmp}
+            - {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true}
       volumes:
         # Written by the operator once the first project's Redis is ready.
         - name: projects
           secret: {secretName: canyonos-dashboard-projects, optional: true}
-        - {name: tmp, emptyDir: {}}
+        # Every workflow group's uploaded files, in /workspace/<workflow_group_id>, and
+        # the job queue. Lost with the pod: the API then rebuilds its workflow groups from
+        # their CanyonProjects, and the next `canyonos deploy` uploads the files again.
+        - name: workspace
+          emptyDir: {sizeLimit: {{ .Values.dashboard.workspaceSize }}}
+        - {name: api-tmp, emptyDir: {}}
+        - {name: core-tmp, emptyDir: {}}
+        # What Kubernetes mounts into every container when automountServiceAccountToken
+        # is on: a token it renews, the cluster's CA and the namespace.
+        - name: kube-api-access
+          projected:
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3607}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef: {apiVersion: v1, fieldPath: metadata.namespace}
+{{- if .Values.dashboard.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -288,6 +385,7 @@ spec:
             - {name: tmp, mountPath: /tmp}
       volumes:
         - {name: tmp, emptyDir: {}}
+{{- end }}
 ---
 # Postgres takes connections from the API only.
 apiVersion: networking.k8s.io/v1
@@ -308,7 +406,8 @@ spec:
       ports: [{port: 5432}]
 ---
 # The API takes requests from the web front end, and telemetry from each project's
-# global controller, in any namespace.
+# global controller, in any namespace. A port-forward, as the CLI opens, is not
+# subject to NetworkPolicy.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -363,4 +462,3 @@ subjects:
   - kind: ServiceAccount
     name: canyonos-controller-manager
     namespace: {{ .Release.Namespace }}
-{{- end }}

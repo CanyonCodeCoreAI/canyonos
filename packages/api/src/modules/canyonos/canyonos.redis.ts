@@ -7,8 +7,9 @@ import { config } from '@core/env';
 import { badGateway, notFound } from '@core/errors';
 import type { AppError } from '@core/errors';
 
-import { registered_workflows } from './canyonos.registry';
+import { registered_workflow_groups } from './canyonos.registry';
 import { canyonos_repo } from './canyonos.repo';
+import type { RegistryEntry } from './canyonos.registry';
 import type { RedisClientTls } from './canyonos.types';
 
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
@@ -158,7 +159,7 @@ export async function with_redis_at<T>(
 }
 
 /** Runs operation against target's Redis, then closes the connection. */
-async function with_redis_target<T>(
+export async function with_redis_target<T>(
   target: RedisTarget,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
@@ -180,15 +181,24 @@ async function with_redis_target<T>(
 
 // Temporary: applied now so multi-workflow dashboards work without blocking the flow; revisit
 // with the workflow-key design in CAN-521 (the api should not hold per-workflow Redis addresses).
+/** On Kubernetes, the operator's entry for the workflow group workflow_id belongs to, which
+ * says how to reach and sign in to its Redis; null while it lists none. */
+export async function listed_workflow_group(workflow_id: string): Promise<RegistryEntry | null> {
+  const workflow_group_id = await canyonos_repo.workflow_group_of(workflow_id);
+  if (!workflow_group_id) return null;
+  return registered_workflow_groups().get(workflow_group_id) ?? null;
+}
+
 /** Runs operation against the Redis workflow_id registered, or the configured one if it never did.
- * On Kubernetes a workflow is reached at its own Redis, signed in, while the operator lists it. */
+ * On Kubernetes a workflow is reached at its workflow group's Redis, signed in, while the
+ * operator lists that group. */
 export async function with_redis<T>(
   workflow_id: string,
   operation: (redis: RedisClient) => Promise<T>
 ): Promise<T> {
-  const listed = registered_workflows().get(workflow_id);
-  if (listed) return with_redis_target(listed.redis, operation);
   if (config.canyonos.workflowsFile) {
+    const listed = await listed_workflow_group(workflow_id);
+    if (listed) return with_redis_target(listed.redis, operation);
     // Deleted from the cluster, or not ready: there is no Redis of it to fall back to.
     throw notFound(
       'canyonos.workflow_not_running',

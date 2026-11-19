@@ -3,9 +3,8 @@
 
 import { z } from 'zod';
 
-// What /v1/workflow-groups takes and answers, field for field the models of the Global Controller
-// server it replaces on Docker (canyonos_core/canyonos_api_interface/models.py), which the CLI
-// and the Kubernetes target still share.
+// What /v1/workflow-groups takes and answers, the same on Docker and on Kubernetes; the CLI's
+// models (packages/cli/canyonos/sdk/models.py) are generated from these.
 
 export const WorkflowGroupParams = z.object({ workflow_group_id: z.string().uuid() });
 
@@ -109,8 +108,10 @@ export const DEPLOY_ERRORS = [
 ] as const;
 
 // `name` and `config` are what the workflow group's PUT last sent, without the `.env`; `running`
-// is whether the Global Controller container runs, so a failed deploy can still be running while
-// it stops itself. `version` is the core version the deploy runs, null before it reported one.
+// is whether the deploy runs (on Docker its Global Controller container; on Kubernetes from its
+// start until it is stopped), so a failed deploy can still be running while it stops itself.
+// `version` is the core version the deploy runs (on Kubernetes, the API's core sidecar's), null
+// before it reported one.
 export const WorkflowGroupStatusSchema = z.object({
   version: z.string().nullable(),
   name: z.string(),
@@ -168,6 +169,8 @@ export const WORKFLOW_GROUP_ERRORS = [
   'auth.control_key_unset',
   'auth.missing_key',
   'auth.invalid_key',
+  'auth.unauthenticated',
+  'auth.forbidden',
   'workflow_groups.bad_archive',
   'workflow_groups.workflow_invalid',
   'workflow_groups.upload_too_large',
@@ -182,6 +185,8 @@ export const WORKFLOW_GROUP_ERRORS = [
   'workflow_groups.controller_failed',
   'workflow_groups.dashboard_unreachable',
   'workflow_groups.dashboard_refused',
+  'workflow_groups.reupload_needed',
+  'kubernetes.error',
   'docker.disabled',
   'docker.unavailable',
   'docker.timeout',

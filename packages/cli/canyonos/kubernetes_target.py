@@ -23,16 +23,22 @@ from canyonos.api import delete_workflow_group
 # The project's endpoint inside its namespace (builders.EndpointName and its API port).
 ENDPOINT_SERVICE = "svc/canyonos-endpoint"
 ENDPOINT_PORT = 8080
-# Where the chart installs the operator, and the CanyonOS API it serves beside it.
-OPERATOR_NAMESPACE = "canyonos-system"
-API_FORWARD = "api"
-API_SERVICE = "svc/canyonos-api"
-API_PORT = 8000
+# Where the chart installs the cluster's CanyonOS API (the dashboard's, with the web app
+# beside it): its dashboard.namespace default.
 DASHBOARD_NAMESPACE = "canyonos-dashboard"
+API_FORWARD = "api"
+API_SERVICE = "svc/canyonos-dashboard-api"
+API_PORT = 3000
 DASHBOARD_SERVICE = "svc/canyonos-dashboard-web"
 DASHBOARD_PORT = 8080
-# Where this machine's forwards look for a free port first, as Docker does.
+# Where this machine's forwards look for a free port first: not the API's 3000, which
+# the Docker dashboard's API takes here, and the dashboard's 8081, as Docker does.
+LOCAL_API_PORT = 8000
 LOCAL_DASHBOARD_PORT = 8081
+# The fix when the cluster has no CanyonOS API there, or an older chart's.
+UPGRADE_CHART = (
+    "Upgrade the CanyonOS operator chart: this CLI needs the CanyonOS API it installs"
+)
 # The cluster's dashboard is every workflow group's: its key is its chart's.
 KUBERNETES_DASHBOARD_KEY = (
     "The cluster's dashboard is shared by every workflow group: it checks the key its chart "
@@ -100,9 +106,9 @@ def _exec_plugin_token(plugin):
 
 def kubernetes_state():
     """This folder's workflow group as `canyonos.api` takes it on Kubernetes: the local
-    URL of a forward to the cluster's CanyonOS API, its workflow_group_id, and the
-    user's kubectl login, a token or one from its login plugin, in the headers every
-    request sends."""
+    URL of a forward to the cluster's CanyonOS API (the chart's
+    `canyonos-dashboard-api`), its workflow_group_id, and the user's kubectl login, a
+    token or one from its login plugin, in the headers every request sends."""
     user = json.loads(
         kubectl(["config", "view", "--raw", "--minify", "-o", "json"]).stdout
     )["users"][0]["user"]
@@ -115,14 +121,20 @@ def kubernetes_state():
             "canyonos can only send the cluster a token. Switch to a context that "
             "signs in with a token or a login plugin: kubectl config use-context <name>"
         )
-    port = open_forward(
-        API_FORWARD,
-        OPERATOR_NAMESPACE,
-        API_SERVICE,
-        API_PORT,
-        API_PORT,
-        context=current_context(),
-    )
+    try:
+        port = open_forward(
+            API_FORWARD,
+            DASHBOARD_NAMESPACE,
+            API_SERVICE,
+            API_PORT,
+            LOCAL_API_PORT,
+            context=current_context(),
+        )
+    except RuntimeError as error:
+        # An older chart has no CanyonOS API there, unless its dashboard was installed.
+        if "(NotFound)" not in str(error):
+            raise
+        raise RuntimeError(f"{error}. {UPGRADE_CHART}.") from None
     return {
         "api_url": f"http://127.0.0.1:{port}",
         "workflow_group_id": read_config(deployment_config_path()).get(

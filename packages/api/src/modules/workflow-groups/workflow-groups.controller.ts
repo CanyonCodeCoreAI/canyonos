@@ -4,11 +4,13 @@
 import { z } from 'zod';
 
 import * as docker from '@core/docker';
-import { AppError, badGateway, conflict } from '@core/errors';
+import { AppError, conflict } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 import type { Container } from '@core/docker';
 
+import { parse_answer } from './workflow-groups.core';
 import { DEPLOY_ERRORS, DEPLOY_PHASES } from './workflow-groups.types';
+import type { CoreReply } from './workflow-groups.core';
 import type { DeployPhase, SlowestStep } from './workflow-groups.types';
 
 // How /v1 reaches a workflow group's Global Controller container, which the CLI creates: the
@@ -30,7 +32,7 @@ const JOB_INPUT_DIR = '/tmp';
 // The progress file's clock and Docker's may differ by a little; a file this much older than the
 // container's start belongs to an earlier run.
 const START_SLACK_MS = 2_000;
-const OUTPUT_TAIL_CHARACTERS = 500;
+const RUNNER = "The Global Controller's core";
 // Past the 240 s the Global Controller gives its replicas to stop, so its cleanup can finish.
 export const STOP_TIMEOUT_SECONDS = 255;
 const KILL_TIMEOUT_MS = 30_000;
@@ -94,14 +96,6 @@ const NO_PROGRESS: DeployProgress = {
   finished: false,
   problem: null,
 };
-
-export function controller_failed(command: string, exit_code: number, output: string): AppError {
-  return badGateway(
-    'workflow_groups.controller_failed',
-    `The Global Controller's core could not run \`${command}\` (exit code ${exit_code}): ` +
-      (output.trim().slice(-OUTPUT_TAIL_CHARACTERS) || 'it printed nothing')
-  );
-}
 
 export function controller_missing(workflow_group_id: string): AppError {
   return conflict(
@@ -210,43 +204,6 @@ export async function read_progress(container: Container): Promise<DeployProgres
   };
 }
 
-const CoreErrorSchema = z.object({ error: z.string() });
-
-export interface CoreReply {
-  command: string;
-  exit_code: number;
-  answer: Record<string, unknown>;
-}
-
-function parse_answer(command: string, exit_code: number, stdout: string, stderr: string) {
-  let answer: unknown;
-  try {
-    answer = JSON.parse(stdout);
-  } catch {
-    answer = undefined;
-  }
-  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) {
-    throw controller_failed(command, exit_code, stderr.trim() || stdout);
-  }
-  return { command, exit_code, answer: answer as Record<string, unknown> };
-}
-
-/** Core's own explanation of a failure, when it exited with `exit_code` and gave one. */
-export function core_error(reply: CoreReply, exit_code: number): string | null {
-  if (reply.exit_code !== exit_code) return null;
-  const parsed = CoreErrorSchema.safeParse(reply.answer);
-  return parsed.success ? parsed.data.error : null;
-}
-
-/** The answer of a command that succeeded, as `schema` reads it. */
-export function core_answer<T>(reply: CoreReply, schema: z.ZodType<T>): T {
-  const parsed = schema.safeParse(reply.answer);
-  if (reply.exit_code !== 0 || !parsed.success) {
-    throw controller_failed(reply.command, reply.exit_code, JSON.stringify(reply.answer));
-  }
-  return parsed.data;
-}
-
 /** Runs a `canyonos_core.cli` command in the running Global Controller container, which prints
  * one JSON object on stdout; anything else is a crash, explained on stderr, or a command Docker
  * could not start, which Docker explains on stdout. */
@@ -259,7 +216,7 @@ export async function run_in_controller(
     working_dir: WORKSPACE_DIR,
     timeout_ms,
   });
-  return parse_answer(args[0]!, exit_code, stdout, stderr);
+  return parse_answer(RUNNER, args[0]!, exit_code, stdout, stderr);
 }
 
 function workspace_volume(controller: Container): string {
@@ -303,7 +260,7 @@ export async function run_job(
     await docker.start(job_id);
     const exit_code = await docker.wait(job_id, JOB_TIMEOUT_MS);
     const { stdout, stderr } = await docker.logs(job_id);
-    return parse_answer(args[0]!, exit_code, stdout, stderr);
+    return parse_answer(RUNNER, args[0]!, exit_code, stdout, stderr);
   } finally {
     await docker
       .remove(job_id, { force: true })

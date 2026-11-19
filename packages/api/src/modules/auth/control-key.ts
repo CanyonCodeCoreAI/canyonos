@@ -30,7 +30,7 @@ export function is_control_path(request: Request): boolean {
 }
 
 /** Drops what the CORS plugin added: a browser on another origin may not read /v1 answers. */
-function drop_cors_headers(set: Guarded['set']): void {
+export function drop_cors_headers(set: Guarded['set']): void {
   for (const name of Object.keys(set.headers)) {
     if (name.startsWith('access-control-') || name === 'vary') delete set.headers[name];
   }

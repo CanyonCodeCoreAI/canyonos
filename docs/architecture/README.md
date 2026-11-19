@@ -29,7 +29,7 @@ One workflow group runs one Global Controller for all its workflows. Every part 
 | Component | What it does | Code |
 | --- | --- | --- |
 | [CLI](CLI.md) | The `canyonos` command, a thin client of the CanyonOS API | `packages/cli/` |
-| [CanyonOS API](CONTROLLER.md#global-controller) | Docker: takes each workflow group's uploads and starts, reloads and stops its Global Controller container. Also the dashboard's backend | `packages/api/` |
+| [CanyonOS API](CONTROLLER.md#global-controller) | Takes each workflow group's uploads and runs them: on Docker it starts, reloads and stops the Global Controller container; on Kubernetes it creates the CanyonBuild and reads the CanyonProject. Also the dashboard's backend | `packages/api/` |
 | [Global Controller](CONTROLLER.md#global-controller) | Publishes the config, polls the replicas, cleans up requests | `packages/core/canyonos_core/controller/`, `cli.py`, `deploy_runner.py` |
 | [Local Controller](CONTROLLER.md#local-controller) | Serves one replica over gRPC and routes its calls | `packages/core/canyonos_core/controller/` |
 | [Endpoint](ENDPOINT.md) | The workflow's HTTP API: queues a call, reports its result | `packages/core/canyonos_core/endpoint/` |

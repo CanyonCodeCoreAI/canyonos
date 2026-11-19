@@ -268,7 +268,6 @@ dependencies = [
     { name = "boto3" },
     { name = "cryptography" },
     { name = "flask" },
-    { name = "flask-openapi3" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "gunicorn" },
@@ -280,7 +279,6 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
     { name = "pyyaml" },
     { name = "redis" },
     { name = "requests" },
@@ -298,7 +296,6 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.43.109" },
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "flask", specifier = ">=3.1.3" },
-    { name = "flask-openapi3", specifier = ">=4.3.2" },
     { name = "grpcio", specifier = ">=1.83.1" },
     { name = "grpcio-tools", specifier = "==1.76.0" },
     { name = "gunicorn", specifier = ">=26.2.0" },
@@ -310,7 +307,6 @@ requires-dist = [
     { name = "protobuf", specifier = ">=6.33.5" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6" },
-    { name = "pydantic", specifier = ">=2.4" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "requests", specifier = ">=2.34.2" },
@@ -742,19 +738,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/26/00/35d85dcce6c57fdc871f3867d465d780f302a175ea360f62533f12b27e2b/flask-3.1.3.tar.gz", hash = "sha256:0ef0e52b8a9cd932855379197dd8f94047b359ca0a78695144304cb45f87c9eb", size = 759004, upload-time = "2026-02-19T05:00:57.678Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/9c/34f6962f9b9e9c71f6e5ed806e0d0ff03c9d1b0b2340088a0cf4bce09b18/flask-3.1.3-py3-none-any.whl", hash = "sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c", size = 103424, upload-time = "2026-02-19T05:00:56.027Z" },
-]
-
-[[package]]
-name = "flask-openapi3"
-version = "4.3.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "flask" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/45/b3/37ccb1a3923193e35f226befd2f87c5284340b951ea2af731395f5d85398/flask_openapi3-4.3.2.tar.gz", hash = "sha256:a53a74bd71f07f5fa491c9cc928c7fc2c005a62f21e06b6aa27cfc11aa9ae1bc", size = 51480, upload-time = "2026-05-09T03:18:56.861Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/6a/54cd42aaa14dff3e9f3206f0506e260d3294fc1c1c3b4be282344441f7bf/flask_openapi3-4.3.2-py3-none-any.whl", hash = "sha256:edf118061f4866b973df0810e75915d2f79403b1be9d333851ab5ebb44e85483", size = 46441, upload-time = "2026-05-09T03:18:58.065Z" },
 ]
 
 [[package]]

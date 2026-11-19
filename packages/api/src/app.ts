@@ -10,7 +10,7 @@ import type { ZodType, ZodTypeDef } from 'zod';
 import { runMigrations } from '@api/db/client';
 import { seedDevData } from '@api/db/seed';
 import { authRoutes } from '@api/modules/auth/auth.routes';
-import { controlKeyGuard, noCorsOnControlPaths } from '@api/modules/auth/control-key';
+import { noCorsOnControlPaths } from '@api/modules/auth/control-key';
 import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
 import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
 import { start_registered_workflows_sync } from '@api/modules/canyonos/canyonos.sync';
@@ -19,6 +19,7 @@ import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
 import { resume_apply_loops } from '@api/modules/workflow-groups/workflow-groups.apply';
+import { workflowGroupsGuard } from '@api/modules/workflow-groups/workflow-groups.caller';
 import {
   MAX_UPLOAD_BYTES,
   workflowGroupsRoutes,
@@ -92,8 +93,8 @@ export const createApp = () =>
         status: (set as any).status ?? 200,
       });
     })
-    // Before the CORS plugin, so a /v1 request without the control key gets no CORS answer.
-    .use(controlKeyGuard)
+    // Before the CORS plugin, so a /v1 request it refuses gets no CORS answer.
+    .use(workflowGroupsGuard)
     .use(cors())
     .use(noCorsOnControlPaths)
     .use(
@@ -110,7 +111,7 @@ export const createApp = () =>
             // The version every CanyonOS package shares, which `bun run version:set` writes.
             version: packageJson.version,
             description:
-              'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open. Every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused.',
+              'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
           },
           tags: [
             { name: 'Auth' },
@@ -131,6 +132,7 @@ export const createApp = () =>
             securitySchemes: {
               bearerAuth: { type: 'http', scheme: 'bearer' },
               controlKey: { type: 'http', scheme: 'bearer' },
+              kubernetesToken: { type: 'http', scheme: 'bearer' },
             },
           },
         },
@@ -163,6 +165,7 @@ export const setupApi = async () => {
   // Kubernetes: the operator lists the workflows; there is no one controller to register.
   if (config.canyonos.workflowsFile) await start_registered_workflows_sync();
   else await bootstrap_canyonos();
+  // On Kubernetes first finds the deploys running in the cluster again, then resumes nothing.
   await resume_apply_loops();
   httpLogger.info('Setup complete', { env: config.environment });
 };

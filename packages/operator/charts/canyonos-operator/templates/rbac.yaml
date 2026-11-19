@@ -50,7 +50,10 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
-# What the CanyonOS API may do: the calls canyonos_api_interface/kubernetes.py makes.
+# What the CanyonOS API may do (CANYONOS_TARGET=kubernetes): the calls its Kubernetes
+# driver makes for a caller the API has checked with a SubjectAccessReview. Cluster-wide,
+# watchNamespaces or not: the API finds every CanyonProject after a restart, and deploys
+# into whichever namespace the caller may change.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -58,12 +61,14 @@ metadata:
   labels:
     {{- include "canyonos.labels" . | nindent 4 }}
 rules:
+  # Each workflow group's .env Secrets (server-side apply), and stop's cleanup.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, patch, deletecollection]
   - apiGroups: [""]
     resources: [configmaps]
     verbs: [deletecollection]
+  # Agent logs, and the build's and the Global Controller's log.
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list]
@@ -73,6 +78,8 @@ rules:
   - apiGroups: [canyonos.canyoncode.ai]
     resources: [canyonbuilds]
     verbs: [create, get, list, patch, delete]
+  # The build pod applies the CanyonProject and its CanyonAgents; the API reads,
+  # annotates and deletes them.
   - apiGroups: [canyonos.canyoncode.ai]
     resources: [canyonprojects]
     verbs: [list, patch, delete]
@@ -93,7 +100,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: canyonos-api
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ .Values.dashboard.namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

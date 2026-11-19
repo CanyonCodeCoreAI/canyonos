@@ -132,9 +132,12 @@ no CORS headers, and the dashboard's web port answers them `404`, so only a hold
 control key can drive Docker through them. An upload over 512 MiB gets `413`.
 
 On Kubernetes, the CLI reaches the same routes through a `kubectl port-forward` to the
-chart's `canyonos-api` pod. That pod still runs the Flask server in
-`canyonos_api_interface/api_interface.py`, which checks the caller's kubeconfig token
-instead of the control key.
+same API, which the operator's chart runs as `canyonos-dashboard-api` with
+`CANYONOS_TARGET=kubernetes`. There it checks the caller's kubeconfig token with
+Kubernetes instead of the control key, creates a CanyonBuild instead of a container, and
+runs the commands it needs from Core in its pod's `core` container, from the core image,
+which takes them from a queue in the folder both share. See
+[Operator](OPERATOR.md#dashboard-deletion-and-install).
 
 Startup on Docker and EC2:
 
@@ -375,7 +378,7 @@ All paths are under `packages/core/canyonos_core/`.
 | `cli.py`                                  | `deploy`: the build, then `GlobalController`; the commands the API runs  |
 | `deploy_runner.py`, `deploy_progress.py`  | `run-deploy`, the container's main process, and its progress file        |
 | `workspace_jobs.py`, `controller_status.py` | The commands the CanyonOS API runs in a job container or by `docker exec` |
-| `canyonos_api_interface/`                 | The Flask server the chart's `canyonos-api` pod runs on Kubernetes       |
+| `job_worker.py`, `kubernetes/commands.py` | On Kubernetes, the CanyonOS API's `core` container: its job queue, and the Kubernetes-only commands it runs |
 | `controller/global_controller.py`         | `GlobalController`: config publishing, poll loop, cleanup, teardown      |
 | `controller/orchestrator.py`              | `CanyonOrchestrator`, and `orchestrator_for`                             |
 | `kubernetes/orchestrator.py`, `run_gc.py` | `KubernetesOrchestrator`, and the Global Controller as a pod             |

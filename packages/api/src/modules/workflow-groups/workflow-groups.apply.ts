@@ -1,30 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { z } from 'zod';
-
 import type { DeployedFingerprints, StoredLastApply } from '@api/db/schema';
-import * as docker from '@core/docker';
-import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
-import type { Container } from '@core/docker';
 
-import {
-  core_answer,
-  core_error,
-  find_controller,
-  read_progress,
-  run_in_controller,
-  signal,
-  stop_controller,
-} from './workflow-groups.controller';
+import { with_group_lock } from './workflow-groups.lock';
 import { workflow_groups_repo } from './workflow-groups.repo';
+import { target } from './workflow-groups.target';
 import type { WorkflowGroupRow } from './workflow-groups.repo';
+import type { ApplyFailure } from './workflow-groups.target';
 import type { ApplyAction, ApplyFailureCode, Fingerprints } from './workflow-groups.types';
 
 // The apply loop: once a workflow group's upload stops changing, start, restart, reload or stop
-// its Global Controller container to match it, and record the outcome, as the Global
-// Controller server did on Docker (canyonos_api_interface/api_interface.py `_apply_changes`).
+// its deploy to match it on this API's target (workflow-groups.target.ts), and record the
+// outcome.
 
 const apply_logger = logger.child({ domain: LOG_DOMAINS.WORKFLOW_GROUPS });
 
@@ -32,24 +21,12 @@ const apply_logger = logger.child({ domain: LOG_DOMAINS.WORKFLOW_GROUPS });
 const SETTLE_MS = 2_000;
 // How often a deploy that is still starting is looked at again.
 const STARTING_POLL_MS = 1_000;
-const RELOAD_TIMEOUT_SECONDS = 60;
-const RELOAD_POLL_MS = 500;
 const RETRY_MS = 5_000;
-const EXPLAINED_FAILURE_EXIT_CODE = 1;
 const WORKFLOW_GROUP_CONFIG = 'workflow_group.yaml';
 const ENV_FILE = '.env';
 
-const CheckedSchema = z.object({ ok: z.literal(true) });
-
-interface Failure {
-  error: string;
-  code: ApplyFailureCode;
-}
-
 /** What this API holds in memory per workflow group. */
 interface GroupState {
-  /** Serializes the jobs that change its /workspace and the actions on its container. */
-  lock: Promise<void>;
   /** Upload PUTs in progress, counted from before their body is read. */
   uploads: number;
   applying: Exclude<ApplyAction, 'none'> | null;
@@ -66,7 +43,6 @@ function group(workflow_group_id: string): GroupState {
   let state = groups.get(workflow_group_id);
   if (!state) {
     state = {
-      lock: Promise.resolve(),
       uploads: 0,
       applying: null,
       pending: false,
@@ -90,23 +66,6 @@ function changed(workflow_group_id: string, ms: number): Promise<void> {
   const timer = setTimeout(resolve, Math.max(ms, 0));
   group(workflow_group_id).waiters.add(resolve);
   return promise.finally(() => clearTimeout(timer));
-}
-
-/** Runs `work` holding the workflow group's lock, after whatever holds it now. */
-export async function with_group_lock<T>(
-  workflow_group_id: string,
-  work: () => Promise<T>
-): Promise<T> {
-  const state = group(workflow_group_id);
-  const previous = state.lock;
-  const { promise: released, resolve: release } = Promise.withResolvers<void>();
-  state.lock = released;
-  await previous;
-  try {
-    return await work();
-  } finally {
-    release();
-  }
 }
 
 /** Counts an upload PUT as in progress; the apply loop waits until none is. Returns the
@@ -170,9 +129,12 @@ export async function applied(
 }
 
 /** Starts the apply loop of each workflow group whose last change was not applied, as before
- * this API restarted. */
+ * this API restarted, once the target rebuilt what it keeps in memory. A target that rebuilds
+ * its deploys from where they run (Kubernetes) resumes none: its restored rows hold no
+ * workflows, and a loop would stop every deploy until the next upload. */
 export async function resume_apply_loops(): Promise<void> {
-  if (config.docker.socket === null) return;
+  await target.restore();
+  if (!target.resumes_apply_loops) return;
   for (const workflow_group_id of await workflow_groups_repo.list_unapplied()) {
     record_change(workflow_group_id);
   }
@@ -234,69 +196,6 @@ function choose_action(
 
 const message_of = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** Starts the container, having recorded what it runs first. */
-async function start(
-  row: WorkflowGroupRow,
-  controller: Container | null,
-  uploaded: DeployedFingerprints
-): Promise<Failure | null> {
-  if (!controller) {
-    return {
-      error: 'No Global Controller container to start: run `canyonos deploy` to create it',
-      code: 'start_failed',
-    };
-  }
-  await workflow_groups_repo.save_deployed(row.id, uploaded, controller.id);
-  try {
-    await docker.start(controller.id);
-  } catch (error) {
-    return {
-      error: `Could not start the Global Controller: ${message_of(error)}`,
-      code: 'start_failed',
-    };
-  }
-  apply_logger.info('Global Controller started', { workflow_group_id: row.id });
-  return null;
-}
-
-/** Has the running deploy reload the config in /workspace, without restarting the agents that
- * stay, and waits for its answer in the progress file. */
-async function reload(
-  row: WorkflowGroupRow,
-  controller: Container,
-  uploaded: DeployedFingerprints
-): Promise<Failure | null> {
-  const reply = await run_in_controller(controller, ['check']);
-  const violations = core_error(reply, EXPLAINED_FAILURE_EXIT_CODE);
-  if (violations !== null) return { error: violations, code: 'config_invalid' };
-  core_answer(reply, CheckedSchema);
-  const asked_seq = (await read_progress(controller)).reload?.seq ?? 0;
-  const stopped: Failure = { error: 'The deploy stopped while reloading.', code: 'reload_failed' };
-  if (!(await signal(controller, 'HUP'))) return stopped;
-  const deadline = Date.now() + RELOAD_TIMEOUT_SECONDS * 1000;
-  while (Date.now() < deadline) {
-    await Bun.sleep(RELOAD_POLL_MS);
-    const current = await docker.inspect(controller.id);
-    const progress = await read_progress(current);
-    if (progress.reload && progress.reload.seq > asked_seq) {
-      if (progress.reload.ok === false) {
-        return { error: progress.reload.error ?? 'Reload failed.', code: 'reload_failed' };
-      }
-      await workflow_groups_repo.save_deployed(
-        row.id,
-        { ...(row.deployed ?? uploaded), config: uploaded.config },
-        controller.id
-      );
-      return null;
-    }
-    if (!current.running || progress.finished) return stopped;
-  }
-  return {
-    error: `The Global Controller did not finish reloading within ${RELOAD_TIMEOUT_SECONDS} seconds.`,
-    code: 'reload_timeout',
-  };
-}
-
 // The code of an action that failed with an error of its own; `none` does nothing to fail.
 const FAILURE_OF_ACTION: Record<ApplyAction, ApplyFailureCode> = {
   none: 'start_failed',
@@ -306,35 +205,25 @@ const FAILURE_OF_ACTION: Record<ApplyAction, ApplyFailureCode> = {
   reload: 'reload_failed',
 };
 
-/** Brings the container in line with the upload once, holding the workflow group's lock. */
+/** Brings the deploy in line with the upload once, holding the workflow group's lock. */
 async function apply_once(workflow_group_id: string): Promise<void> {
   await with_group_lock(workflow_group_id, async () => {
-    let row = await workflow_groups_repo.find(workflow_group_id);
-    if (!row) return;
-    const controller = await find_controller(workflow_group_id);
-    // An upload that went into another container's volume is not in this one's.
-    if (controller && row.controller_container_id !== controller.id) {
-      row = await workflow_groups_repo.claim(workflow_group_id, controller.id);
-    }
+    const found = await workflow_groups_repo.find(workflow_group_id);
+    if (!found) return;
+    const pass = await target.begin_apply(found);
+    const { row } = pass;
     const { generation } = row;
     const uploaded = uploaded_fingerprints(row);
-    const action = choose_action(
-      is_ready(row),
-      controller?.running ?? false,
-      uploaded,
-      row.deployed
-    );
+    const action = choose_action(is_ready(row), pass.running, uploaded, row.deployed);
     const state = group(workflow_group_id);
     state.applying = action === 'none' ? null : action;
-    let failure: Failure | null = null;
+    let failure: ApplyFailure | null = null;
     try {
-      if (controller && (action === 'stop' || action === 'restart')) {
-        failure = await stop_controller(controller);
-      }
+      if (action === 'stop' || action === 'restart') failure = await pass.stop();
       if (action === 'start' || (action === 'restart' && !failure)) {
-        failure = await start(row, controller, uploaded);
-      } else if (controller && action === 'reload') {
-        failure = await reload(row, controller, uploaded);
+        failure = await pass.start(uploaded);
+      } else if (action === 'reload') {
+        failure = await pass.reload(uploaded);
       }
     } catch (error) {
       apply_logger.error('Applying the upload failed', { workflow_group_id, action, error });
@@ -372,9 +261,7 @@ async function apply_unapplied(workflow_group_id: string): Promise<void> {
     // second, so a DELETE that comes meanwhile stops it right away.
     for (;;) {
       if (!is_ready(row)) break;
-      const controller = await find_controller(workflow_group_id);
-      if (!controller?.running) break;
-      if ((await read_progress(controller)).phase !== 'starting') break;
+      if (!(await target.starting(workflow_group_id))) break;
       await changed(workflow_group_id, STARTING_POLL_MS);
       row = await workflow_groups_repo.find(workflow_group_id);
       if (!row) return;

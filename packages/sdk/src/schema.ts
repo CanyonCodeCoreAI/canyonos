@@ -673,7 +673,7 @@ export interface paths {
     };
     /**
      * List the workflow groups
-     * @description Every workflow group with an upload here or a Global Controller container, with the name its last PUT gave it, empty before one.
+     * @description Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one.
      */
     get: operations['listWorkflowGroups'];
     put?: never;
@@ -698,13 +698,13 @@ export interface paths {
     get: operations['getWorkflowGroupStatus'];
     /**
      * Upload workflow_group.yaml and its .env
-     * @description Writes `workflow_group.yaml` and the `.env` beside it into the Global Controller's /workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow group's name. With `workflows`, removes the uploaded workflows it leaves out; with `api_key_hash`, keeps it as the API key its endpoint checks, none when it is empty. 409 when the CLI has not created the Global Controller container.
+     * @description Writes `workflow_group.yaml` and the `.env` beside it into the workflow group's workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow group's name. With `workflows`, removes the uploaded workflows it leaves out; with `api_key_hash`, keeps it as the API key its endpoint checks, none when it is empty. On Docker, 409 `controller_missing` when the CLI has not created the Global Controller container. On Kubernetes, 403 unless the caller may update CanyonProjects in the namespace `config` names, and 409 `reupload_needed` for a PUT without `workflows` while the API holds none of the workflows, as after it restarted.
      */
     put: operations['putWorkflowGroup'];
     post?: never;
     /**
      * Stop the deploy and forget the upload
-     * @description Waits for the apply loop to stop the deploy, then forgets the upload; 504 when it did not stop in time and 500 when stopping it failed, keeping the upload. A Global Controller this API holds no upload for is stopped all the same.
+     * @description Waits for the apply loop to stop the deploy, then forgets the upload; 504 when it did not stop in time and 500 when stopping it failed, keeping the upload. A deploy this API holds no upload for is stopped all the same.
      */
     delete: operations['deleteWorkflowGroup'];
     options?: never;
@@ -726,13 +726,13 @@ export interface paths {
     get: operations['getWorkflow'];
     /**
      * Upload a workflow
-     * @description Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it into /workspace/<name>, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.
+     * @description Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it into the workflow group's workspace, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.
      */
     put: operations['putWorkflow'];
     post?: never;
     /**
      * Remove a workflow
-     * @description Removes from /workspace what workflow `name`'s last upload put there; 404 if it was never uploaded.
+     * @description Removes from the workflow group's workspace what workflow `name`'s last upload put there; 404 if it was never uploaded.
      */
     delete: operations['deleteWorkflow'];
     options?: never;
@@ -769,7 +769,7 @@ export interface paths {
     };
     /**
      * Read the controller log
-     * @description The Global Controller container's log since it last started, the last `tail` lines of it, as text; with `follow=true`, keeps streaming new lines until the container stops. Empty before it first starts.
+     * @description The deploy's log, the last `tail` lines of it, as text; with `follow=true`, keeps streaming new lines until the deploy stops. On Docker, the Global Controller container's log since it last started; on Kubernetes, the build pod's while it builds, then the Global Controller pod's. Empty before there is one.
      */
     get: operations['getControllerLog'];
     put?: never;
@@ -830,7 +830,7 @@ export interface paths {
     get?: never;
     /**
      * Register the workflow group's workflows with this dashboard
-     * @description Registers the running deploy's Redis, and a client certificate its CA signs when its Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures that may pass are retried for a minute; 502 when it is refused or never answers.
+     * @description Registers the running deploy's Redis, and a client certificate its CA signs when its Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures that may pass are retried for a minute; 502 when it is refused or never answers. On Kubernetes the operator's registry already lists the workflow group: returns the workflows the dashboard knows of it.
      */
     put: operations['putWorkflowGroupDashboard'];
     post?: never;
@@ -978,6 +978,8 @@ export interface components {
         | 'auth.control_key_unset'
         | 'auth.missing_key'
         | 'auth.invalid_key'
+        | 'auth.unauthenticated'
+        | 'auth.forbidden'
         | 'workflow_groups.bad_archive'
         | 'workflow_groups.workflow_invalid'
         | 'workflow_groups.upload_too_large'
@@ -992,6 +994,8 @@ export interface components {
         | 'workflow_groups.controller_failed'
         | 'workflow_groups.dashboard_unreachable'
         | 'workflow_groups.dashboard_refused'
+        | 'workflow_groups.reupload_needed'
+        | 'kubernetes.error'
         | 'docker.disabled'
         | 'docker.unavailable'
         | 'docker.timeout'

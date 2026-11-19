@@ -8,10 +8,11 @@ import { z } from 'zod';
 import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
-// On Kubernetes one dashboard serves every workflow, each with its own Redis. The
-// CanyonOS operator lists them, with how to reach and sign in to each Redis, in a
-// Secret the dashboard mounts as a file (CANYONOS_PROJECTS_FILE); nothing posts
-// registrations. On Docker there is no file and nothing here changes.
+// On Kubernetes one dashboard serves every workflow group, each with its own Redis. The
+// CanyonOS operator lists them, one entry per CanyonProject, with how to reach and sign in to
+// each Redis, in a Secret the dashboard mounts as a file (CANYONOS_PROJECTS_FILE); nothing posts
+// registrations. The workflows of each come from its Redis (canyonos.sync.ts). On Docker there
+// is no file and nothing here changes.
 
 const RegisteredRedis = z.object({
   host: z.string().min(1),
@@ -21,7 +22,8 @@ const RegisteredRedis = z.object({
   password: z.string().default(''),
 });
 
-// The operator's file still calls each workflow a project.
+// The operator's file still calls each workflow group a project: `project_id` is the
+// CanyonProject's projectID, which is the workflow_group_id.
 const RegistryEntrySchema = z.object({
   project_id: z.string().uuid(),
   name: z.string().min(1),
@@ -43,9 +45,9 @@ interface Cached {
 
 let cached: Cached | null = null;
 
-/** The workflows listed in the registry file, by workflow id; empty without a file. The file
- * is read again when it changes (a mounted Secret is replaced, not edited in place). */
-export function registered_workflows(
+/** The workflow groups listed in the registry file, by workflow_group_id; empty without a file.
+ * The file is read again when it changes (a mounted Secret is replaced, not edited in place). */
+export function registered_workflow_groups(
   path: string | null = config.canyonos.workflowsFile
 ): Map<string, RegistryEntry> {
   if (!path) return new Map();
@@ -65,7 +67,7 @@ export function registered_workflows(
     return entries;
   } catch (error) {
     // A half-written or broken file keeps the last good list rather than losing every workflow.
-    registry_logger.warn('Could not read the workflows registry', { error, path });
+    registry_logger.warn('Could not read the workflow groups registry', { error, path });
     return cached?.path === path ? cached.entries : new Map();
   }
 }

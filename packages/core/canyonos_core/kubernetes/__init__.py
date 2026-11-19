@@ -9,15 +9,16 @@
 - `run_gc`: the Global Controller alone, as a pod (`canyonos_core.cli run-gc`).
 - `manifests`: a deployment's CanyonProject, CanyonAgents and config ConfigMap.
 - `receiver`: a build pod's upload of the project (`canyonos_core.cli receive`).
-- `commands`: the `build`, `apply-project`, `receive` and `run-gc` subcommands.
+- `commands`: the `build`, `apply-project`, `receive` and `run-gc` subcommands, and
+  `kubernetes-plan` and `bundle-workspace`, which the CanyonOS API runs to build a
+  workflow group in the cluster.
 
 The `kubernetes:` section of `workflow_group.yaml` is parsed with every other section,
 in schema/kubernetes_block.py: the schema package parses the whole config, so moving
 one section here would make the two packages import each other.
 
-Only four modules outside this package import from it: controller/orchestrator.py
-(`orchestrator_for` picks `KubernetesOrchestrator`), cli.py (registers `commands`),
-schema/kubernetes_block.py (Kubernetes names) and canyonos_api_interface/kubernetes.py
-(the API server's Kubernetes side); tests/test_kubernetes_boundary.py checks it. This file
-imports none of the modules, so using one never loads the others.
+Only three modules outside this package import from it: controller/orchestrator.py
+(`orchestrator_for` picks `KubernetesOrchestrator`), cli.py (registers `commands`) and
+schema/kubernetes_block.py (Kubernetes names). This file imports none of the modules,
+so using one never loads the others.
 """

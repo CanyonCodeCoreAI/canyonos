@@ -14,8 +14,9 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# The canyonos-core image every project's global controller and endpoint run; empty:
-# this release's. A project may point at its own mirror (spec.controllerImage).
+# The canyonos-core image every project's global controller and endpoint, each build, and
+# the CanyonOS API's core container run; empty: this release's. A project may point at
+# its own mirror (spec.controllerImage).
 controllerImage: ""
 
 # The image of each project's internal Redis, e.g. from a registry mirror; empty uses
@@ -41,33 +42,43 @@ podAnnotations: {}
 metrics:
   enabled: true
 
-# The cluster's CanyonOS dashboard, one for every project, in its own namespace. The
-# operator lists the projects for it, and its API alone may reach each project's Redis.
-# Opened with a port-forward; nothing is exposed outside the cluster.
+# The CanyonOS API, which `canyonos deploy` runs every project through, with its Postgres,
+# in its own namespace; and, with enabled, the cluster's dashboard (the web front end on
+# that API), one for every project. The operator lists the projects for it, and the API
+# alone may reach each project's Redis. Opened with a port-forward, which every signed-in
+# user may open to the API; nothing is exposed outside the cluster. Postgres keeps its data
+# on a PersistentVolumeClaim, so the cluster needs a default StorageClass or
+# storageClassName.
 dashboard:
+  # The web front end only: the API and Postgres are always installed.
   enabled: false
   namespace: canyonos-dashboard
   createNamespace: true
-  # The canyonos-api and canyonos-web images; empty: this release's.
+  # The canyonos-api and canyonos-web images; empty: this release's. The API's core
+  # container runs controllerImage.
   apiImage: ""
   webImage: ""
   dbImage: postgres:16-alpine
   pullPolicy: IfNotPresent
   storage: 1Gi
   storageClassName: ""
-  # A Secret of your own with db-password and redis-password-key (the last at least 32
-  # characters), and api-key-hash when the API takes a key; empty: the chart makes one on
-  # install. Set it when the chart is rendered without the cluster (helm template, Argo
-  # CD), which cannot keep a generated password.
+  # A Secret of your own with db-password, redis-password-key (at least 32 characters)
+  # and api-key-hash; empty: the chart makes one on install. Set it when the chart is
+  # rendered without the cluster (helm template, Argo CD), which cannot keep a generated
+  # password.
   existingSecret: ""
-  # The sha256 of the dashboard's API key, as 64 lowercase hex characters
-  # (`printf %s "$KEY" | sha256sum`). The chart keeps it in its Secret (api-key-hash),
-  # and the API then answers only `Authorization: Bearer <key>`. Empty: the API answers
-  # anyone who reaches it, any project's global controller included, for a throwaway
-  # cluster only. Ignored with existingSecret, whose api-key-hash is used instead.
+  # Required unless existingSecret is set: the sha256 of the API key, as 64 lowercase hex
+  # characters (`printf %s "$KEY" | sha256sum`). The chart keeps it in its Secret
+  # (api-key-hash), and the API's dashboard routes then answer only `Authorization:
+  # Bearer <key>`. Every signed-in user may port-forward to the API, and every project's
+  # global controller reaches it, so the chart refuses to install it with no key. Ignored
+  # with existingSecret, whose api-key-hash is used instead.
   apiKeyHash: ""
-  # Run its images as their own users (postgres 70, bun and caddy 1000). Turn off on
-  # OpenShift, which assigns each namespace its own range of user IDs.
+  # The API's working space: every workflow group's uploaded workflows, while it runs.
+  workspaceSize: 4Gi
+  # Run its images as their own users (postgres 70, bun and caddy 1000; the API's core
+  # container as bun). Turn off on OpenShift, which assigns each namespace its own range
+  # of user IDs.
   fixedUsers: true
   # Days the API keeps raw five-second metric ticks (read for ranges of 30 minutes or
   # less) and five-minute rollups (read for longer ranges).

@@ -1,12 +1,9 @@
 The CanyonOS operator is installed in {{ .Release.Namespace }}{{ if .Values.watchNamespaces }}, running projects in: {{ join ", " .Values.watchNamespaces }}{{ else }}, running projects in any namespace{{ end }}.
+The CanyonOS API, which `canyonos deploy` runs every project through, is in {{ .Values.dashboard.namespace }}.
 
 Deploy a project with the CanyonOS CLI:  canyonos deploy --target kubernetes
 Check it:                                kubectl get canyonprojects,canyonagents -A
 {{- if .Values.dashboard.enabled }}
 Open the dashboard:                      kubectl -n {{ .Values.dashboard.namespace }} port-forward svc/canyonos-dashboard-web 8080:8080
-{{- if or .Values.dashboard.apiKeyHash .Values.dashboard.existingSecret }}
                                          then http://localhost:8080, signed in with the dashboard's API key
-{{- else }}
-                                         then http://localhost:8080. No API key is set (dashboard.apiKeyHash): the dashboard answers anyone who reaches it.
-{{- end }}
 {{- end }}

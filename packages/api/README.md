@@ -11,6 +11,14 @@ runs its Global Controller container through the Docker socket in `DOCKER_SOCKET
 at `/docs`, and the OpenAPI spec at `/docs/json`; `bun run sdk:generate` writes it to
 `openapi.json` and regenerates the [SDK](../sdk/README.md).
 
+On Kubernetes (`CANYONOS_TARGET=kubernetes`, as the operator's chart runs it) the same routes
+run each workflow group on the cluster instead: a CanyonBuild, then its CanyonProject, through
+the Kubernetes API with the pod's service account. There every `/v1` route takes the caller's
+Kubernetes token instead of the control key and checks it with a TokenReview and a
+SubjectAccessReview. Core's commands run in the pod's `core` container, which takes them from a
+queue in the `/workspace` folder both containers share. See
+[Kubernetes](../../docs/guides/KUBERNETES.md#the-canyonos-api).
+
 With `CANYONOS_API_KEY_HASH` set to the sha256 of the API key (64 lowercase hex characters),
 every `/workflows` and `/resources` route needs that key as `Authorization: Bearer <key>`, and
 answers 401 without it. Unset or empty, those routes are open; any other value refuses the

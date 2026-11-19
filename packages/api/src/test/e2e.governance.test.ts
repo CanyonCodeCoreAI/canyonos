@@ -446,9 +446,10 @@ describe('workflow governance', () => {
     expect(await read_governance_spend()).toEqual({});
   });
 
-  test('on Kubernetes spend goes to the Redis the operator lists, not to the stored port', async () => {
+  test("on Kubernetes spend goes to the Redis the operator lists for the workflow's group, not to the stored port", async () => {
     const { workflow_id } = await governed_workflow();
-    // The port stored for it leads nowhere: on Kubernetes the listed Redis is used.
+    // The port stored for it leads nowhere: on Kubernetes the Redis listed for its workflow group
+    // (a test workflow is its own group) is used.
     await register_at(workflow_id, CLOSED_PORT);
     await seed_review_spend(workflow_id, 'gov-publish-k8s');
     await seed_governance({
@@ -459,7 +460,7 @@ describe('workflow governance', () => {
         },
       },
     });
-    // Stored, but no longer listed: gone from the cluster, so it is skipped.
+    // Stored, but its workflow group is no longer listed: gone from the cluster, so it is skipped.
     const gone = await create_test_workflow({ name: 'Gone From The Cluster' });
     await register_at(gone.workflow_id, CLOSED_PORT);
 
@@ -468,7 +469,9 @@ describe('workflow governance', () => {
     const redis = { host: config.canyonos.redisHost, port: config.canyonos.redisPort };
     writeFileSync(
       path,
-      JSON.stringify({ projects: [{ project_id: workflow_id, name: 'governed', redis }] })
+      JSON.stringify({
+        projects: [{ project_id: workflow_id, name: 'governed', redis }],
+      })
     );
     const docker = config.canyonos.workflowsFile;
     config.canyonos.workflowsFile = path;

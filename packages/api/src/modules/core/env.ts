@@ -113,6 +113,30 @@ const docker = {
   socket: env.DOCKER_SOCKET === '' ? null : (env.DOCKER_SOCKET ?? '/var/run/docker.sock'),
 };
 
+/** `CANYONOS_TARGET`: where /v1 runs workflow groups, `kubernetes` in the cluster this API runs
+ * in, anything else on Docker. One per process, never both. */
+export type WorkflowGroupTargetName = 'docker' | 'kubernetes';
+
+const workflowGroups = {
+  target: (env.CANYONOS_TARGET === 'kubernetes'
+    ? 'kubernetes'
+    : 'docker') as WorkflowGroupTargetName,
+};
+
+const kubernetes = {
+  // Another API server than the pod's own, such as `kubectl proxy`, called without a token;
+  // the tests point it at a stand-in.
+  apiUrl: env.CANYONOS_K8S_API || null,
+  serviceHost: env.KUBERNETES_SERVICE_HOST || null,
+  servicePort: env.KUBERNETES_SERVICE_PORT || '443',
+  // The service account token, its CA and its namespace, as the chart projects them.
+  serviceAccountDir:
+    env.CANYONOS_K8S_SERVICE_ACCOUNT_DIR || '/var/run/secrets/kubernetes.io/serviceaccount',
+  // The emptyDir the API shares with its core sidecar: each workflow group's upload, and the
+  // sidecar's job queue, under `.canyonos`.
+  workspaceDir: env.CANYONOS_WORKSPACE_DIR || '/workspace',
+};
+
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';
 
 export function resolveDatabaseUrl(value: string | undefined, environment: AppEnvironment): string {
@@ -131,6 +155,8 @@ export const config = {
   governance,
   metrics,
   docker,
+  workflowGroups,
+  kubernetes,
   isDevelopment: environment === 'development',
   isProduction: environment === 'production',
   isDemo: environment === 'demo',

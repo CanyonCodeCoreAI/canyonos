@@ -8,10 +8,10 @@ read a workflow group don't each restate the same routes, payloads and failure m
 On Docker the API is the local stack's (`dashboard_stack`), on 127.0.0.1 at its host
 port, and every call sends this machine's control key; the API runs each workflow
 group's Global Controller container through Docker. On Kubernetes it is the cluster's,
-reached through a port-forward with the user's kubectl login
-(`kubernetes_target.kubernetes_state`). Both answer the same routes and shapes; an
-error is `{error, message, findings?, warnings?}` from the CanyonOS API and
-`{error, code, findings?, warnings?}` from the cluster's.
+the one the operator's chart installs, reached through a port-forward with the user's
+kubectl login (`kubernetes_target.kubernetes_state`); it runs each workflow group as a
+CanyonProject. Both answer the same routes and shapes, and an error is
+`{error, message, findings?, warnings?}`.
 """
 
 import json
@@ -26,18 +26,27 @@ from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
 STATUS_TIMEOUT_SECONDS = 5
-# Longer than the API's wait for the deploy to stop, which drains every replica first.
+# Longer than the API's wait for the deploy to stop, which drains every replica first:
+# on Docker, and on Kubernetes, where it waits up to 15 minutes for the operator.
 CLEAN_REQUEST_TIMEOUT_SECONDS = 270
+KUBERNETES_CLEAN_REQUEST_TIMEOUT_SECONDS = 905
 # Longer than one log read on a replica's machine, which may take up to 180s over SSH.
 LOGS_REQUEST_TIMEOUT_SECONDS = 200
 # Longer than the API's own wait for the dashboard to take the registration.
 DASHBOARD_REQUEST_TIMEOUT_SECONDS = 90
 
 PREFIX = "/v1/workflow-groups"
-# The CanyonOS API names its errors `workflow_groups.<code>`; the cluster's answers the
-# bare code.
+# The CanyonOS API names its errors `workflow_groups.<code>`.
 ERROR_PREFIX = "workflow_groups."
 UNKNOWN_WORKFLOW_GROUP = "unknown_workflow_group"
+# What an older chart's API answers on Kubernetes: no route there (a release before
+# the /v1 routes), or the /v1 routes of an API that drives only Docker, without Docker
+# or the control key.
+OLDER_CHART_ERRORS = {
+    404: (None, "not_found"),
+    503: ("docker.disabled",),
+    401: ("auth.control_key_unset",),
+}
 
 # Where the CanyonOS API answers on this machine, found once per command: the
 # commands that start it (`serve.ensure_api`) forget it, since it may move.
@@ -88,20 +97,25 @@ def forget_api_url():
     _docker_url = None
 
 
+def _on_kubernetes(state):
+    """Whether `state`'s workflow group is reached through the cluster's API."""
+    return bool(state and "api_url" in state)
+
+
 def _connection(state):
     """The base URL and headers a call about `state`'s workflow group goes to: the
     cluster's API on Kubernetes, else this machine's with the control key; this
     machine's when `state` is None."""
-    if state and "api_url" in state:
+    if _on_kubernetes(state):
         return state["api_url"], state["api_headers"]
     return docker_api_url(), control_header()
 
 
 def error_detail(body, status):
     """The error object of an answer's `body`, raw bytes, as `{error, code, findings,
-    warnings}`, `error` its message and `code` its code without the prefix: from the
-    CanyonOS API's `{error: code, message}` or the cluster's `{error: message, code}`;
-    the raw body as `error` when it is neither."""
+    warnings}`, `error` its message and `code` its code without the prefix, from the
+    CanyonOS API's `{error: code, message}`; the raw body as `error` when it is not
+    that."""
     text = body.decode(errors="replace").strip()
     try:
         parsed = json.loads(text)
@@ -114,14 +128,9 @@ def error_detail(body, status):
             "findings": (),
             "warnings": (),
         }
-    if "message" in parsed:
-        code = str(parsed["error"]).removeprefix(ERROR_PREFIX)
-        message = parsed["message"]
-    else:
-        code, message = parsed.get("code"), parsed["error"]
     return {
-        "error": message,
-        "code": code,
+        "error": parsed.get("message") or str(parsed["error"]),
+        "code": str(parsed["error"]).removeprefix(ERROR_PREFIX),
         "findings": parsed.get("findings") or (),
         "warnings": parsed.get("warnings") or (),
     }
@@ -141,8 +150,16 @@ def _open(state, method, path, action, data=None, headers=None, timeout=None):
         return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as e:
         detail = error_detail(e.read(), e.code)
+        message = detail["error"]
+        if _on_kubernetes(state) and detail["code"] in OLDER_CHART_ERRORS.get(
+            e.code, ()
+        ):
+            # Imported here: kubernetes_target imports this module.
+            from canyonos.kubernetes_target import UPGRADE_CHART
+
+            message = f"{UPGRADE_CHART} (the cluster's API answered: {message})"
         raise ApiError(
-            f"{action} failed: {detail['error']}",
+            f"{action} failed: {message}",
             status=e.code,
             code=detail["code"],
             findings=detail["findings"],
@@ -156,9 +173,9 @@ def _open(state, method, path, action, data=None, headers=None, timeout=None):
     except OSError as e:
         reason = getattr(e, "reason", e)
         hint = (
-            "Run `canyonos deploy` or `canyonos serve` to start it."
-            if not (state and "api_url" in state)
-            else ""
+            ""
+            if _on_kubernetes(state)
+            else "Run `canyonos deploy` or `canyonos serve` to start it."
         )
         raise ApiError(
             f"Could not reach the CanyonOS API at {base_url}: {reason}. {hint}".strip()
@@ -226,7 +243,7 @@ def start_api_for(state):
     `state` records is on this machine, so a command that only reads can ask it. A
     running API is left as it is, and one that won't start is left to the request that
     follows to report."""
-    if "api_url" in state:
+    if _on_kubernetes(state):
         return
     # Imported here: serve imports this module.
     from canyonos.serve import start_api_if_down
@@ -322,14 +339,16 @@ def put_dashboard(state):
 
 def delete_workflow_group(state):
     """Stop the workflow group's deploy and remove every upload, waiting until the deploy
-    has stopped: what removes the replica and Redis containers it started. Raises
-    ApiError on failure."""
+    has stopped: what removes the replicas and Redis it started. Raises ApiError on
+    failure."""
     return _request(
         state,
         "DELETE",
         _group_path(state),
         "Stop",
-        timeout=CLEAN_REQUEST_TIMEOUT_SECONDS,
+        timeout=KUBERNETES_CLEAN_REQUEST_TIMEOUT_SECONDS
+        if _on_kubernetes(state)
+        else CLEAN_REQUEST_TIMEOUT_SECONDS,
     )
 
 
@@ -354,10 +373,19 @@ def workflow_group_status(state):
     # A checkout's CLI runs whatever core image it is pointed at, as on Kubernetes.
     # A Global Controller that has not reported yet has no version to compare.
     if not env.is_development and version is not None and version != env.VERSION:
+        # On Kubernetes it is the cluster's API's, the chart's, which a deploy keeps.
+        if _on_kubernetes(state):
+            runs = "The cluster's CanyonOS API runs"
+            fix = f"Upgrade the CanyonOS operator chart to {env.VERSION}."
+        else:
+            runs = "This workflow group's Global Controller runs"
+            fix = (
+                f"Run `canyonos deploy <workflow folder>...` to restart it on "
+                f"{env.VERSION}."
+            )
         raise ApiError(
-            "This workflow group's Global Controller runs CanyonOS "
-            f"{version or 'an older release'} and this CLI is {env.VERSION}. Run "
-            f"`canyonos deploy <workflow folder>...` to restart it on {env.VERSION}.",
+            f"{runs} CanyonOS {version or 'an older release'} and this CLI is "
+            f"{env.VERSION}. {fix}",
             code="version_mismatch",
         )
     return status

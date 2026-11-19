@@ -4,7 +4,9 @@
 """The `canyonos_core` commands the core image runs. On Docker, the Global Controller
 container runs `run-deploy`, which runs `deploy`; the CanyonOS API runs the commands that
 read the running deploy inside that container and the ones that change its workspace in
-a one-off container, each showing one JSON object on stdout and logging to stderr."""
+a one-off container, each showing one JSON object on stdout and logging to stderr. On
+Kubernetes, the CanyonOS API pod's `core` container runs `job-worker`, which runs those
+that change a workspace, and the Kubernetes ones, for the API."""
 
 import argparse
 import glob
@@ -629,6 +631,15 @@ def _cmd_dashboard_credentials(args):
     _show_result(controller_status.dashboard_credentials)
 
 
+def _cmd_job_worker(args):
+    """Run the commands the CanyonOS API puts in the queue folder --queue, each in its
+    workflow group's folder of the workspace in the current folder, until stopped
+    (job_worker.py), then exit."""
+    from canyonos_core import job_worker
+
+    sys.exit(job_worker.run(os.getcwd(), args.queue))
+
+
 # ------------------------------------------------------------------ #
 #  Main entry point                                                    #
 # ------------------------------------------------------------------ #
@@ -719,6 +730,15 @@ def main():
         help="Show the Redis credentials the dashboard registers, as JSON",
     )
     dashboard_credentials.set_defaults(func=_cmd_dashboard_credentials)
+
+    job_worker = subparsers.add_parser(
+        "job-worker",
+        help="Run the CanyonOS API's jobs from a queue folder, on Kubernetes",
+    )
+    job_worker.add_argument(
+        "--queue", required=True, help="The folder the API puts its job requests in"
+    )
+    job_worker.set_defaults(func=_cmd_job_worker)
 
     args = parser.parse_args()
     if not args.command:

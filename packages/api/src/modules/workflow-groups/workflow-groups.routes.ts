@@ -8,6 +8,7 @@ import type { Context } from 'elysia';
 import { early_refusal, payloadTooLarge } from '@core/errors';
 
 import { upload_started } from './workflow-groups.apply';
+import { check_settings_caller } from './workflow-groups.caller';
 import {
   agent_logs,
   check_health,
@@ -39,11 +40,15 @@ const PREFIX = '/v1/workflow-groups';
 // The PUTs that change an upload, counted from before their body is read.
 const UPLOAD_PATH = /^\/v1\/workflow-groups\/([^/]+)(?:\/workflows\/[^/]+)?$/;
 
-const doc = { tags: ['WorkflowGroups'], security: [{ controlKey: [] }] };
+// The control key on Docker, the caller's own Kubernetes login on Kubernetes.
+const security: Record<string, string[]>[] = [{ controlKey: [] }, { kubernetesToken: [] }];
+const doc = { tags: ['WorkflowGroups'], security };
 
 const refused = 'WorkflowGroupError' as const;
-// Every route: no control key (401), a request it cannot read (422), Docker out of reach (503).
-const refusals = { 401: refused, 422: refused, 503: refused } as const;
+// Every route: not signed in (401), not allowed in the workflow group's namespace (403, on
+// Kubernetes), a request it cannot read (422), the Kubernetes API failing (502), Docker out of
+// reach (503).
+const refusals = { 401: refused, 403: refused, 422: refused, 502: refused, 503: refused } as const;
 
 const GZIP_BODY = {
   required: true,
@@ -81,20 +86,22 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
   })
   .onAfterResponse(({ request }) => upload_releases.get(request)?.())
   .get('', () => list_workflow_groups(), {
-    response: { 200: 'WorkflowGroups', 401: refused, 503: refused },
+    response: { 200: 'WorkflowGroups', 401: refused, 502: refused, 503: refused },
     detail: {
       ...doc,
       operationId: 'listWorkflowGroups',
       summary: 'List the workflow groups',
       description:
-        'Every workflow group with an upload here or a Global Controller container, with the ' +
-        'name its last PUT gave it, empty before one.',
+        'Every workflow group with an upload here or a deploy (a Global Controller container on ' +
+        'Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty ' +
+        'before one.',
     },
   })
   .put(
     '/:workflow_group_id',
-    (context) => {
+    async (context) => {
       lift_idle_timeout(context);
+      await check_settings_caller(context.request, context.body.config);
       return put_workflow_group(context.params.workflow_group_id, context.body);
     },
     {
@@ -107,11 +114,14 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         operationId: 'putWorkflowGroup',
         summary: 'Upload workflow_group.yaml and its .env',
         description:
-          "Writes `workflow_group.yaml` and the `.env` beside it into the Global Controller's " +
-          '/workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow ' +
+          "Writes `workflow_group.yaml` and the `.env` beside it into the workflow group's " +
+          'workspace, removing that `.env` when `env` is null, and keeps `name` as the workflow ' +
           "group's name. With `workflows`, removes the uploaded workflows it leaves out; with " +
           '`api_key_hash`, keeps it as the API key its endpoint checks, none when it is empty. ' +
-          '409 when the CLI has not created the Global Controller container.',
+          'On Docker, 409 `controller_missing` when the CLI has not created the Global ' +
+          'Controller container. On Kubernetes, 403 unless the caller may update CanyonProjects ' +
+          'in the namespace `config` names, and 409 `reupload_needed` for a PUT without ' +
+          '`workflows` while the API holds none of the workflows, as after it restarted.',
       },
     }
   )
@@ -130,8 +140,8 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         summary: 'Stop the deploy and forget the upload',
         description:
           'Waits for the apply loop to stop the deploy, then forgets the upload; 504 when it did ' +
-          'not stop in time and 500 when stopping it failed, keeping the upload. A Global ' +
-          'Controller this API holds no upload for is stopped all the same.',
+          'not stop in time and 500 when stopping it failed, keeping the upload. A deploy this ' +
+          'API holds no upload for is stopped all the same.',
       },
     }
   )
@@ -153,16 +163,13 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     '/:workflow_group_id/workflows/:name',
     (context) => {
       lift_idle_timeout(context);
-      const { params, body } = context;
-      return put_workflow(
-        params.workflow_group_id,
-        params.name,
-        new Uint8Array(body as ArrayBuffer)
-      );
+      const { params, request } = context;
+      return put_workflow(params.workflow_group_id, params.name, request.body);
     },
     {
       params: WorkflowParams,
-      parse: 'arrayBuffer',
+      // Read by the target: on Kubernetes it is streamed to disk, never held in memory.
+      parse: 'none',
       response: {
         200: 'Uploaded',
         ...refusals,
@@ -177,8 +184,8 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         summary: 'Upload a workflow',
         description:
           'Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it ' +
-          'into /workspace/<name>, removing what its last upload had and this one lacks; on a ' +
-          '400 (bad archive, unsafe path or findings) the old files stay.',
+          "into the workflow group's workspace, removing what its last upload had and this one " +
+          'lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.',
         requestBody: GZIP_BODY,
       },
     }
@@ -197,8 +204,8 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         operationId: 'deleteWorkflow',
         summary: 'Remove a workflow',
         description:
-          "Removes from /workspace what workflow `name`'s last upload put there; 404 if it was " +
-          'never uploaded.',
+          "Removes from the workflow group's workspace what workflow `name`'s last upload put " +
+          'there; 404 if it was never uploaded.',
       },
     }
   )
@@ -243,9 +250,10 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         operationId: 'getControllerLog',
         summary: 'Read the controller log',
         description:
-          "The Global Controller container's log since it last started, the last `tail` lines of " +
-          'it, as text; with `follow=true`, keeps streaming new lines until the container stops. ' +
-          'Empty before it first starts.',
+          "The deploy's log, the last `tail` lines of it, as text; with `follow=true`, keeps " +
+          'streaming new lines until the deploy stops. On Docker, the Global Controller ' +
+          "container's log since it last started; on Kubernetes, the build pod's while it " +
+          "builds, then the Global Controller pod's. Empty before there is one.",
       },
     }
   )
@@ -259,7 +267,7 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     {
       params: AgentParams,
       query: TailQuery,
-      response: { 200: 'ReplicaLogs', ...refusals, 404: refused, 409: refused, 502: refused },
+      response: { 200: 'ReplicaLogs', ...refusals, 404: refused, 409: refused },
       detail: {
         ...doc,
         operationId: 'getAgentLogs',
@@ -279,7 +287,7 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     },
     {
       params: WorkflowGroupParams,
-      response: { 200: 'Health', ...refusals, 404: refused, 409: refused, 502: refused },
+      response: { 200: 'Health', ...refusals, 404: refused, 409: refused },
       detail: {
         ...doc,
         operationId: 'getWorkflowGroupHealth',
@@ -298,13 +306,7 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     },
     {
       params: WorkflowGroupParams,
-      response: {
-        200: 'DashboardWorkflows',
-        ...refusals,
-        404: refused,
-        409: refused,
-        502: refused,
-      },
+      response: { 200: 'DashboardWorkflows', ...refusals, 404: refused, 409: refused },
       detail: {
         ...doc,
         operationId: 'putWorkflowGroupDashboard',
@@ -312,7 +314,9 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         description:
           "Registers the running deploy's Redis, and a client certificate its CA signs when its " +
           'Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures ' +
-          'that may pass are retried for a minute; 502 when it is refused or never answers.',
+          'that may pass are retried for a minute; 502 when it is refused or never answers. On ' +
+          "Kubernetes the operator's registry already lists the workflow group: returns the " +
+          'workflows the dashboard knows of it.',
       },
     }
   );

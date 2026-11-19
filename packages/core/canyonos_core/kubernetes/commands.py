@@ -3,22 +3,34 @@
 
 """The `canyonos_core` subcommands that run only on Kubernetes, which `cli.main`
 registers: `build` and `apply-project` (the in-cluster build Job), `receive` (its
-upload) and `run-gc` (the Global Controller's pod)."""
+upload), `run-gc` (the Global Controller's pod), and `kubernetes-plan` and
+`bundle-workspace`, which the CanyonOS API's job worker runs to start a build."""
 
 import json
 import logging
 import os
 import subprocess
 import sys
+import tarfile
 
 from canyonos_core.cli import (
     _checked_config,
     _generate_build_contexts,
+    _show_result,
     _validate_or_exit,
     _write_bake_file,
 )
+from canyonos_core.controller.utils.config_env import read_dotenv
 from canyonos_core.kubernetes.api import KubernetesApi, resource_name
-from canyonos_core.schema import DEPLOYMENT_CONFIG, load_deployment_config
+from canyonos_core.schema import (
+    DEPLOYMENT_CONFIG,
+    SchemaError,
+    check_deployment,
+    load_deployment_config,
+    SchemaViolation,
+    render_violation,
+    workflow_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +240,109 @@ def _cmd_run_gc(args):
     run_gc.run(args.config)
 
 
+def kubernetes_plan(workspace, name):
+    """Check the workflow group in `workspace`, named `name`, and return what the
+    CanyonOS API needs to build it in the cluster: its `kubernetes:` settings, the
+    Secrets to apply with the `.env` values of the group and of each workflow, its
+    project label and its workflows. Raise CommandError with every violation when the
+    schema rejects it or it has no `kubernetes:` section."""
+    from canyonos_core.workspace_jobs import CommandError
+
+    manifest, violations = check_deployment(workspace)
+    spec = manifest and manifest.kubernetes
+    if not violations and spec is None:
+        violations = (
+            SchemaViolation(
+                os.path.join(workspace, DEPLOYMENT_CONFIG),
+                0,
+                "kubernetes",
+                "is missing -- run `canyonos target kubernetes` to add one",
+            ),
+        )
+    if violations or spec is None:
+        raise CommandError(
+            str(SchemaError(violations)),
+            violations=[render_violation(violation) for violation in violations],
+        )
+    try:
+        project = resource_name(name)
+    except ValueError:
+        raise CommandError(
+            f"The workflow group's name {name!r} has no letters or digits to name its "
+            "Kubernetes objects by."
+        ) from None
+    env = read_dotenv(os.path.join(workspace, ".env"))
+    workflows = list(workflow_names(workspace))
+    secrets = {}
+    if not spec.env_secret:
+        # Each workflow's agents get its own .env, by the name manifests.py gives it.
+        secrets = {
+            f"{project}-{resource_name(workflow)}-env": read_dotenv(
+                os.path.join(workspace, workflow, ".env")
+            )
+            for workflow in workflows
+        }
+        if env:
+            secrets[f"{project}-env"] = env
+    return {
+        "ok": True,
+        "namespace": spec.namespace,
+        "registry": spec.registry,
+        "platform": spec.platform,
+        "image_pull_secret": spec.image_pull_secret,
+        "env_secret": spec.env_secret or (f"{project}-env" if env else None),
+        "secrets": secrets,
+        "project": project,
+        "workflows": workflows,
+    }
+
+
+# What the CanyonOS API keeps in a workflow group's folder for itself, such as what
+# each upload unpacked; the build has no use for it.
+API_FOLDER = ".canyonos"
+
+
+def _without_env(info):
+    """Leave every `.env` file out of the bundle: its values reach the build and the
+    agents as Secrets instead."""
+    return None if os.path.basename(info.name).startswith(".env") else info
+
+
+def bundle_workspace(workspace, out):
+    """Write the workflow group in `workspace` as a gzipped tar to `out`, for the build
+    pod's upload, without its `.env` files and the API's own folder; return its path
+    and size. Raise CommandError when it can't be written."""
+    from canyonos_core.workspace_jobs import CommandError
+
+    out, workspace = os.path.abspath(out), os.path.abspath(workspace)
+    if os.path.commonpath([out, workspace]) == workspace:
+        raise CommandError(f"{out} is inside the workflow group's folder {workspace}.")
+    try:
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with tarfile.open(f"{out}.tmp", mode="w:gz") as tar:
+            for entry in sorted(os.listdir(workspace)):
+                if entry != API_FOLDER:
+                    tar.add(os.path.join(workspace, entry), entry, filter=_without_env)
+        os.replace(f"{out}.tmp", out)
+    except OSError as e:
+        if os.path.lexists(f"{out}.tmp"):
+            os.remove(f"{out}.tmp")
+        raise CommandError(f"Could not bundle the workflow group: {e}") from None
+    return {"path": out, "bytes": os.path.getsize(out)}
+
+
+def _cmd_kubernetes_plan(args):
+    """Show, as JSON on stdout, what the CanyonOS API builds the workflow group in the
+    current folder with on Kubernetes, or every reason it can't be built there."""
+    _show_result(kubernetes_plan, os.getcwd(), args.name)
+
+
+def _cmd_bundle_workspace(args):
+    """Write the workflow group in the current folder to --out for a build pod's
+    upload, and show its path and size as JSON on stdout."""
+    _show_result(bundle_workspace, os.getcwd(), args.out)
+
+
 def add_parsers(subparsers):
     """Add the Kubernetes subcommands to `canyonos_core`'s parser."""
     # canyonos_core build: a Kubernetes deploy's images, built and pushed in the cluster
@@ -292,3 +407,23 @@ def add_parsers(subparsers):
         help=f"Path to the deployment's config (default: {DEPLOYMENT_CONFIG})",
     )
     run_gc.set_defaults(func=_cmd_run_gc)
+
+    # canyonos_core kubernetes-plan: what the CanyonOS API builds a workflow group with
+    kubernetes_plan = subparsers.add_parser(
+        "kubernetes-plan",
+        help="Show the workflow group's Kubernetes settings and Secrets, as JSON",
+    )
+    kubernetes_plan.add_argument(
+        "--name", required=True, help="The workflow group's name"
+    )
+    kubernetes_plan.set_defaults(func=_cmd_kubernetes_plan)
+
+    # canyonos_core bundle-workspace: the workflow group for a build pod's upload
+    bundle_workspace = subparsers.add_parser(
+        "bundle-workspace",
+        help="Write the workflow group without its .env files as a gzip tar, as JSON",
+    )
+    bundle_workspace.add_argument(
+        "--out", required=True, help="The gzip tar to write, outside the folder"
+    )
+    bundle_workspace.set_defaults(func=_cmd_bundle_workspace)

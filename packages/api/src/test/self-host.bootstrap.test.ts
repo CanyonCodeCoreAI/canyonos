@@ -102,28 +102,23 @@ describe('canyonos bootstrap', () => {
     expect(await count_workflows()).toBe(before);
   });
 
-  test('every workflow the operator lists is stored once, by its name', async () => {
-    const workflow_id = '77777777-7777-4777-8777-777777777777';
+  // e2e.canyonos-workflows.test.ts stores a listed workflow group's workflows from a real Redis.
+  test('a listed workflow group whose Redis cannot be read stores nothing, and never itself as a workflow', async () => {
+    const workflow_group_id = '77777777-7777-4777-8777-777777777777';
     const dir = mkdtempSync(join(tmpdir(), 'registry-'));
     const path = join(dir, 'projects.json');
     const entry = {
-      project_id: workflow_id,
+      project_id: workflow_group_id,
       name: 'helloworld',
-      redis: { host: 'canyonos-redis.hello.svc', port: 6379, password: 'x' },
+      redis: { host: '127.0.0.1', port: 1, password: 'x' },
     };
     writeFileSync(path, JSON.stringify({ projects: [entry] }));
     try {
-      await sync_registered_workflows(path);
       const before = await count_workflows();
       await sync_registered_workflows(path);
-
-      expect((await read_workflow(workflow_id))?.name).toBe('helloworld');
-      expect(await count_workflows()).toBe(before);
-
-      // Renamed on the cluster: the dashboard follows the operator's list.
-      writeFileSync(path, JSON.stringify({ projects: [{ ...entry, name: 'hello-renamed' }] }));
       await sync_registered_workflows(path);
-      expect((await read_workflow(workflow_id))?.name).toBe('hello-renamed');
+
+      expect(await read_workflow(workflow_group_id)).toBeUndefined();
       expect(await count_workflows()).toBe(before);
     } finally {
       rmSync(dir, { recursive: true, force: true });

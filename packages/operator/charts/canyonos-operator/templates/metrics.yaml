@@ -46,7 +46,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
   - kind: ServiceAccount
     name: canyonos-api
-    namespace: {{ .Release.Namespace }}
+    namespace: {{ .Values.dashboard.namespace }}
 {{- if .Values.metrics.enabled }}
 ---
 # Grant to whatever scrapes the operator (e.g. Prometheus's ServiceAccount).
