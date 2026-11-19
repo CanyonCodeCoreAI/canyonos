@@ -26,6 +26,12 @@ export const manifests: Manifest[] = [
     pattern: /^(\s*"version": ")([^"]+)(",?)$/m,
     semver: true,
   },
+  // The API's spec states the API's version, and CI checks the spec against the API.
+  {
+    path: 'packages/api/openapi.json',
+    pattern: /^( {2}"info": \{\n(?: {4}.*\n)*? {4}"version": ")([^"]+)(")$/m,
+    semver: true,
+  },
   // The operator image defaults to the chart's appVersion, so both follow the release.
   {
     path: 'packages/operator/charts/canyonos-operator/Chart.yaml (version)',

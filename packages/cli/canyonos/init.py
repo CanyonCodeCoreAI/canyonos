@@ -4,8 +4,9 @@
 """
 Logic for `canyonos init`, does the following:
 1. Pull the Global Controller image
-2. Start a container from it
-3. Record where it's listening so cli knows where to send requests.
+2. Create a container from it, which the CanyonOS API starts once the workflow group's
+   files are uploaded
+3. Record the container so later commands find it.
 """
 
 import json
@@ -16,8 +17,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 
 # Formatting
 from pyfiglet import figlet_format
@@ -40,25 +39,24 @@ from canyonos.docker_cmd import (
     DOCKER_PULL_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
     DOCKER_RUN_TIMEOUT,
+    DOCKER_SOCKET,
+    active_docker_socket,
     cleanup_docker,
+    mounted_docker_socket,
     run_docker,
 )
-from canyonos.port_utils import (
-    RESERVED_PORTS_ENV,
-    is_port_conflict,
-    next_port,
-)
+from canyonos.port_utils import RESERVED_PORTS_ENV
 
 
 # Production is `env.PROD_CORE_IMAGE`; a developer can point this at the image
 # built from their checkout instead.
 GC_IMAGE = env.core_image
-GC_CONTAINER_PORT = 8000
-# Hands the container the secret its API then requires as a Bearer token.
-GC_SECRET_ENV = "CANYONOS_CONTROLLER_SECRET"
+# Handed to the container in its environment, never on the command line, so a later
+# Global Controller of the workflow group still opens a Redis that outlived the last.
+REDIS_PASSWORD_ENV = "CANYONOS_REDIS_PASSWORD"
 
 # The workflow group's workspace volume (`deployment.workspace_volume()`) is mounted here.
-# Files are uploaded through the container's API, not mounted live, so host-side
+# Files are uploaded through the CanyonOS API, not mounted live, so host-side
 # edits don't reach a running build. `canyonos stop` removes the volume.
 GC_WORKSPACE_PATH = "/workspace"
 
@@ -176,43 +174,6 @@ def _ensure_docker_running(timeout=DOCKER_START_TIMEOUT):
     )
 
 
-GC_DOCKER_SOCKET = "/var/run/docker.sock"
-
-
-def _docker_endpoint():
-    """The engine plain `docker` calls reach right now (`DOCKER_HOST`, else the active
-    context's): `unix://` a socket, `npipe://` Docker Desktop's pipe on Windows,
-    `tcp://` or `ssh://` a remote engine. None when the context can't be read."""
-    host = os.environ.get("DOCKER_HOST")
-    if host is not None:
-        return host
-    result = subprocess.run(
-        ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
-
-
-def docker_is_local():
-    """True when plain `docker` talks to an engine on this machine, so a folder here
-    can be bind-mounted: a unix socket, or Docker Desktop's named pipe on Windows."""
-    endpoint = _docker_endpoint()
-    return endpoint is not None and endpoint.startswith(("unix://", "npipe://"))
-
-
-def active_docker_socket():
-    """Real path of the unix socket plain `docker` calls resolve to right now, or None
-    for a named pipe or a remote endpoint (no socket on this machine to name)."""
-    endpoint = _docker_endpoint()
-    if endpoint is None or not endpoint.startswith("unix://"):
-        return None
-    return os.path.realpath(endpoint[len("unix://") :])
-
-
 def docker_env(state):
     """Env for a host-side `docker` call that should target the exact engine
     a deploy's container was created on, rather than whatever context happens
@@ -257,23 +218,6 @@ def _pull_image(image=GC_IMAGE):
         )
 
 
-def _port_reachable(port, headers, attempts=50, delay=0.1):
-    """
-    A successful `docker run` only means Docker accepted the port binding --
-    not that traffic actually flows. Confirm the container is actually reachable before trusting it.
-    """
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1/workflow-groups", headers=headers
-    )
-    for _ in range(attempts):
-        try:
-            urllib.request.urlopen(request, timeout=1)
-            return True
-        except (urllib.error.URLError, OSError):
-            time.sleep(delay)
-    return False
-
-
 def _named_container(name=None):
     """(id, running) for the container holding exactly this name, or (None, False).
     The name defaults to this workflow group's Global Controller container."""
@@ -297,10 +241,8 @@ def _named_container(name=None):
 def _free_container_name():
     """Remove a leftover container squatting on the workflow group's Global Controller name.
 
-    A fixed --name only works if nothing else holds it, and two things leave a
-    dead holder behind: a crashed run whose state file is gone, and a failed
-    port binding, since docker creates the container before it publishes ports.
-    A *running* holder is something else entirely -- a live controller this CLI
+    A fixed --name only works if nothing else holds it, and a crashed run whose state
+    file is gone leaves a dead holder behind. A *running* holder is something else entirely -- a live controller this CLI
     lost track of, e.g. another HOME sharing the daemon or a run whose state
     file never got written. Tearing it down would orphan the Redis and agent
     containers it spawned, so refuse the way the raw name conflict used to.
@@ -336,32 +278,47 @@ def _create_workspace_volume():
     )
 
 
-def _run_container(
+def _redis_password():
+    """The password this workflow group's Redis container was started with, so a new
+    Global Controller still opens a Redis that outlived the last one, else a new random
+    one when there is no such container."""
+    name = deployment.redis_container_name()
+    try:
+        inspect = run_docker(
+            [
+                "docker",
+                "inspect",
+                "-f",
+                "{{range .Config.Env}}{{println .}}{{end}}",
+                name,
+            ],
+            timeout=DOCKER_QUICK_TIMEOUT,
+            action=f"Inspecting Docker container {name}",
+        )
+    except RuntimeError:
+        inspect = None
+    if inspect is not None and inspect.returncode == 0:
+        for line in inspect.stdout.splitlines():
+            key, _, value = line.partition("=")
+            if key == REDIS_PASSWORD_ENV and value:
+                return value
+    return secrets.token_hex(32)
+
+
+def _create_container(
     image=GC_IMAGE,
-    port=GC_CONTAINER_PORT,
     redis_port=DEFAULT_REDIS_PORT,
     api_port=None,
-    max_attempts=50,
     reserved=frozenset(),
     auth_env=(),
 ):
-    """Start this workflow group's Global Controller container, published on 127.0.0.1 at
-    `port`, or at the next free port after it that isn't `reserved`, and tell it
-    Redis's port, the `reserved` ports and, for an endpoint whose port isn't set, the
-    port it had last deploy. `auth_env` are the `docker run` options that hand it the
-    API key hash. Returns its ID, port and docker socket, and the headers that send the
-    new secret its API requires."""
-    if port in reserved:
-        port = next_port(port, reserved)
-    start_port = port
-    # The real socket behind whatever's active right now, not the
-    # /var/run/docker.sock alias -- some other app can hold that alias and
-    # point it at a different engine than the one every other `docker`
-    # command here is actually using.
+    """Create this workflow group's Global Controller container, which the CanyonOS API
+    starts once the workflow group's files are uploaded, and tell it Redis's port, the
+    `reserved` ports and, for an endpoint whose port isn't set, the port it had last
+    deploy. `auth_env` are the `docker create` options that hand it the API key hash.
+    Returns its ID and the socket it was handed, when that is a real one on this
+    machine."""
     active_socket = active_docker_socket()
-    # Without a unix socket here (Docker Desktop's named pipe on Windows), the engine
-    # still serves the alias inside its own VM, so that is what gets mounted.
-    host_socket = active_socket or GC_DOCKER_SOCKET
     # Idempotent: succeeds silently if the network already exists (created by a
     # prior deploy).
     network_name = deployment.deployment_group()
@@ -381,124 +338,102 @@ def _run_container(
     host_private_ip = private_ip()
     host_public_ip = public_ip()
     ca_env = internal_ca.gc_env()
-    secret = secrets.token_hex(32)
-    gc_env = {**os.environ, **ca_env, GC_SECRET_ENV: secret}
-    headers = {"Authorization": f"Bearer {secret}"}
+    # Secrets travel in the environment of `docker create`, named bare below, so they
+    # never show on its command line.
+    gc_env = {**os.environ, **ca_env, REDIS_PASSWORD_ENV: _redis_password()}
+    workflow_group_id = read_config(deployment_config_path())["workflow_group_id"]
     _create_workspace_volume()
-    for _ in range(max_attempts):
-        _free_container_name()
-        cmd = [
-            "docker",
-            "run",
-            "-d",
-            # As PID 1 the server ignores SIGTERM, making `docker stop` wait 10s.
-            "--init",
-            *deployment.deployment_label_args(),
-            *deployment.gc_role_label_args(),
-            "--name",
-            deployment.gc_container_name(),
-            "-p",
-            f"127.0.0.1:{port}:{GC_CONTAINER_PORT}",
-            "--network",
-            network_name,
-            # Docker-outside-of-Docker: GC shells out to `docker` to launch
-            # Redis/agent containers, so it needs the host's real daemon --
-            # specifically the same one this command itself just used, not
-            # whatever the GC_DOCKER_SOCKET alias happens to point to.
-            "-v",
-            f"{host_socket}:{GC_DOCKER_SOCKET}",
-            "-v",
-            f"{deployment.workspace_volume()}:{GC_WORKSPACE_PATH}",
-            "--add-host=host.docker.internal:host-gateway",
-            "-e",
-            f"CANYONOS_REDIS_HOST={deployment.redis_container_name()}",
-            "-e",
-            f"CANYONOS_REDIS_PORT={redis_port}",
-            *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
-            "-e",
-            f"{RESERVED_PORTS_ENV}={','.join(map(str, sorted(reserved | {port})))}",
-            # So the GC's own docker-outside-of-docker calls resolve the
-            # socket unambiguously too, instead of falling back to whatever
-            # a bare `docker` invocation inside the container would default to.
-            "-e",
-            f"DOCKER_HOST=unix://{GC_DOCKER_SOCKET}",
-            # The GC launches sibling containers (the machine metrics collector) from
-            # its own image; it cannot read that from inside, so pass it in.
-            "-e",
-            f"CANYONOS_CONTROLLER_IMAGE={image}",
-            # Machines other than this one run their collector from the official
-            # release image instead, since a dev image here is in no registry.
-            "-e",
-            f"CANYONOS_COLLECTOR_IMAGE={env.PROD_CORE_IMAGE}",
-            # A bare name copies the host's value when set, so agent images match its CPU.
-            "-e",
-            "CANYONOS_DOCKER_PLATFORM",
-            # Names and labels every container the GC launches with this workflow group.
-            "-e",
-            f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
-            "-e",
-            f"CANYONOS_WORKFLOW_GROUP_ID={read_config(deployment_config_path())['workflow_group_id']}",
-            *auth_env,
-            "-e",
-            GC_SECRET_ENV,
-            *(arg for name in ca_env for arg in ("-e", name)),
-        ]
-        if host_private_ip:
-            cmd.extend(["-e", f"CANYONOS_PRIVATE_IP={host_private_ip}"])
-        if host_public_ip:
-            cmd.extend(["-e", f"CANYONOS_PUBLIC_IP={host_public_ip}"])
-        cmd.append(image)  # image must come after all flags
-        result = run_docker(
-            cmd,
-            timeout=DOCKER_RUN_TIMEOUT,
-            action="Starting the Global Controller container",
-            env=gc_env,
-        )
-        if result.returncode == 0:
-            container_id = result.stdout.strip()
-            if not container_id:
-                raise RuntimeError(
-                    "Docker started the Global Controller but returned no container ID."
-                )
-            if _port_reachable(port, headers):
-                # Only a real socket on this machine is recorded: later host-side
-                # `docker` calls are pointed at it, and the alias names no socket here.
-                return container_id, port, active_socket, headers
-            # Port bound fine but never actually became reachable -- treat
-            # like a conflict, since that's effectively what it is.
-            failure = cleanup_docker(
-                ["docker", "rm", "-f", container_id],
-                action=f"Removing unreachable Global Controller {container_id[:12]}",
-                missing_text="No such container",
-            )
-            if failure:
-                raise RuntimeError(failure)
-            port = next_port(port, reserved)
-            continue
-        if is_port_conflict(result.stderr):
-            port = next_port(port, reserved)
-            continue
+    _free_container_name()
+    cmd = [
+        "docker",
+        "create",
+        # PID 1 ignores a SIGTERM it has no handler for; the init forwards it to the
+        # deploy, which then removes its replicas before the container exits.
+        "--init",
+        *deployment.deployment_label_args(),
+        *deployment.gc_role_label_args(),
+        *deployment.workflow_group_label_args(workflow_group_id),
+        "--name",
+        deployment.gc_container_name(),
+        "--network",
+        network_name,
+        # Docker-outside-of-Docker: GC shells out to `docker` to launch
+        # Redis/agent containers, so it needs the host's real daemon --
+        # specifically the same one this command itself just used, not
+        # whatever the DOCKER_SOCKET alias happens to point to.
+        "-v",
+        f"{mounted_docker_socket()}:{DOCKER_SOCKET}",
+        "-v",
+        f"{deployment.workspace_volume()}:{GC_WORKSPACE_PATH}",
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        f"CANYONOS_REDIS_HOST={deployment.redis_container_name()}",
+        "-e",
+        f"CANYONOS_REDIS_PORT={redis_port}",
+        *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
+        "-e",
+        f"{RESERVED_PORTS_ENV}={','.join(map(str, sorted(reserved)))}",
+        # So the GC's own docker-outside-of-docker calls resolve the
+        # socket unambiguously too, instead of falling back to whatever
+        # a bare `docker` invocation inside the container would default to.
+        "-e",
+        f"DOCKER_HOST=unix://{DOCKER_SOCKET}",
+        # The GC launches sibling containers (the machine metrics collector) from
+        # its own image; it cannot read that from inside, so pass it in.
+        "-e",
+        f"CANYONOS_CONTROLLER_IMAGE={image}",
+        # Machines other than this one run their collector from the official
+        # release image instead, since a dev image here is in no registry.
+        "-e",
+        f"CANYONOS_COLLECTOR_IMAGE={env.PROD_CORE_IMAGE}",
+        # A bare name copies the host's value when set, so agent images match its CPU.
+        "-e",
+        "CANYONOS_DOCKER_PLATFORM",
+        # Names and labels every container the GC launches with this workflow group.
+        "-e",
+        f"{deployment.DOCKER_PROJECT_ENV}={deployment.deployment_name()}",
+        "-e",
+        f"CANYONOS_WORKFLOW_GROUP_ID={workflow_group_id}",
+        *auth_env,
+        "-e",
+        REDIS_PASSWORD_ENV,
+        *(arg for name in ca_env for arg in ("-e", name)),
+    ]
+    if host_private_ip:
+        cmd.extend(["-e", f"CANYONOS_PRIVATE_IP={host_private_ip}"])
+    if host_public_ip:
+        cmd.extend(["-e", f"CANYONOS_PUBLIC_IP={host_public_ip}"])
+    cmd.append(image)  # image must come after all flags
+    result = run_docker(
+        cmd,
+        timeout=DOCKER_RUN_TIMEOUT,
+        action="Creating the Global Controller container",
+        env=gc_env,
+    )
+    if result.returncode != 0:
         raise RuntimeError(
-            "Could not start the CanyonOS controller container: "
+            "Could not create the CanyonOS controller container: "
             f"{result.stderr.strip()}"
         )
-    raise RuntimeError(
-        f"no free port found after {max_attempts} attempts starting at {start_port}"
-    )
+    container_id = result.stdout.strip()
+    if not container_id:
+        raise RuntimeError(
+            "Docker created the Global Controller but returned no container ID."
+        )
+    # Only a real socket on this machine is recorded: later host-side `docker` calls
+    # are pointed at it, and the alias names no socket here.
+    return container_id, active_socket
 
 
 def _save_state(
     container_id,
-    port,
     docker_socket=None,
     redis_port=None,
     api_port=None,
     auth_disabled=False,
-    headers=None,
 ):
     """Atomically write GC state so interruption cannot truncate the old record;
-    `auth_disabled` records a deploy with no API key, for `canyonos list`, and `headers`
-    send the secret the container's API requires."""
+    `auth_disabled` records a deploy with no API key, for `canyonos list`."""
     state_dir = deployment.state_dir()
     os.makedirs(state_dir, exist_ok=True)
     temporary_path = None
@@ -515,7 +450,6 @@ def _save_state(
             json.dump(
                 {
                     "container_id": container_id,
-                    "port": port,
                     "docker_socket": docker_socket,
                     "redis_port": redis_port,
                     "api_port": api_port,
@@ -524,7 +458,6 @@ def _save_state(
                     ),
                     "workflow_group_dir": os.getcwd(),
                     "auth_disabled": auth_disabled,
-                    "headers": headers,
                 },
                 f,
             )
@@ -541,11 +474,11 @@ def _save_state(
 
 
 def load_state(state_path=None):
-    """Read this workflow group's Global Controller container and port from its state
+    """Read this workflow group's Global Controller container and ports from its state
     file under `~/.canyonos/deployments`, or from the state file at `state_path`. On
     Kubernetes, return this folder's state from `kubernetes_state` instead."""
     if state_path is None and deployment.configured_target() == "kubernetes":
-        # Imported here: kubernetes_target imports gc, which imports this module.
+        # Imported here: kubernetes_target imports api, which imports this module.
         from canyonos.kubernetes_target import kubernetes_state
 
         return kubernetes_state()
@@ -565,8 +498,6 @@ def load_state(state_path=None):
         not isinstance(state, dict)
         or not isinstance(state.get("container_id"), str)
         or not state["container_id"]
-        or not isinstance(state.get("port"), int)
-        or not 1 <= state["port"] <= 65535
     ):
         raise RuntimeError(
             f"CanyonOS state at {state_path} is invalid. "
@@ -576,10 +507,10 @@ def load_state(state_path=None):
 
 
 def stop_existing():
-    """Tear down a previously started Global Controller, if state records one.
+    """Tear down a previously created Global Controller, if state records one.
 
-    Without this each run starts another container on the next free port and
-    orphans the last one, which then can't be reached through state.json.
+    Without this each run creates another container and orphans the last one, which
+    then can't be reached through state.json.
     """
     # Deferred: stop.py imports from this module, so a top-level import cycles.
     from canyonos.stop import stop_if_safe
@@ -609,63 +540,73 @@ def remember_api_port(api_port):
         return
     _save_state(
         state["container_id"],
-        state["port"],
         state.get("docker_socket"),
         state.get("redis_port"),
         api_port,
         state.get("auth_disabled", False),
-        state.get("headers"),
     )
 
 
+def _inspect_container(state):
+    """Docker's record of the container `state` records, on the engine it was created
+    on, or None when it is gone or Docker can't say."""
+    try:
+        result = run_docker(
+            ["docker", "container", "inspect", state["container_id"]],
+            timeout=DOCKER_QUICK_TIMEOUT,
+            action=f"Inspecting Docker container {state['container_id'][:12]}",
+            env=docker_env(state),
+        )
+    except RuntimeError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)[0]
+    except (ValueError, IndexError, KeyError):
+        return None
+
+
 def _can_reuse_container(state, image, auth_env):
-    """True when the Global Controller container `state` records is running from
-    `image` with this workflow group's id, the Redis port the config asks for and the
-    API key hash `auth_env` hands it, so a deploy can upload to it instead of
-    replacing it."""
+    """True when the Global Controller container `state` records runs, or was created
+    and not started yet, from `image` with this workflow group's id, the label the
+    CanyonOS API finds it by, the Redis port the config asks for and the API key hash
+    `auth_env` hands it, so a deploy can upload to it instead of replacing it. One that
+    stopped is replaced, so a deploy that failed starts clean."""
+    workflow_group_id = read_config(deployment_config_path())["workflow_group_id"]
     if (
         not state
-        or state.get("workflow_group_id")
-        != read_config(deployment_config_path())["workflow_group_id"]
+        or state.get("workflow_group_id") != workflow_group_id
         or local_redis_port(existing_config_path())
         not in (None, state.get("redis_port"))
     ):
         return False
-    container = run_docker(
-        [
-            "docker",
-            "inspect",
-            "--format",
-            "{{.State.Running}} {{.Image}} {{json .Config.Env}}",
-            state["container_id"],
-        ],
-        timeout=DOCKER_QUICK_TIMEOUT,
-        action=f"Inspecting Docker container {state['container_id'][:12]}",
-        env=docker_env(state),
-    )
+    container = _inspect_container(state)
+    if container is None:
+        return False
     wanted = run_docker(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image],
         timeout=DOCKER_QUICK_TIMEOUT,
         action=f"Inspecting image {image}",
     )
-    if container.returncode != 0:
-        return False
-    running, image_id, container_env = container.stdout.strip().split(" ", 2)
-    # The hash reaches the Global Controller only at start, so a new key replaces it.
+    config = container.get("Config") or {}
+    labels = config.get("Labels") or {}
+    # The hash reaches the Global Controller only at create, so a new key replaces it.
     return (
-        running == "true"
-        and image_id == wanted.stdout.strip()
-        and set(auth_env[1::2]) <= set(json.loads(container_env))
+        (container.get("State") or {}).get("Status") in ("running", "created")
+        and container.get("Image") == wanted.stdout.strip()
+        and labels.get(deployment.WORKFLOW_GROUP_LABEL) == workflow_group_id
+        and set(auth_env[1::2]) <= set(config.get("Env") or [])
     )
 
 
 def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
-    """Keep this workflow group's Global Controller container when it runs `image` with
-    the config's Redis port and `auth_env`; otherwise replace it with a fresh one from
-    `image` and save its ID and port for later commands. Run at the start of `canyonos
-    deploy`. A new container is published on the last deploy's port or 8000, or the
-    next free port after it, and gets `auth_env`, the options that hand it the API key
-    hash; the state records `auth_disabled`, a deploy with no key."""
+    """Keep this workflow group's Global Controller container when it runs, or waits to
+    be started, from `image` with the config's Redis port and `auth_env`; otherwise
+    replace it with a fresh one created from `image`, which the CanyonOS API starts
+    once the files are uploaded, and save its ID for later commands. Run at the start
+    of `canyonos deploy`. A new container gets `auth_env`, the options that hand it the
+    API key hash; the state records `auth_disabled`, a deploy with no key."""
     if banner:
         ui.gradient(figlet_format("CANYON OS", font="ansi_shadow", width=200))
 
@@ -674,12 +615,11 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
     with ui.status("Pulling Global Controller image..."):
         _pull_image(image)
     if _can_reuse_container(saved, image, auth_env):
-        ui.ok(
-            f"Global Controller already running in container "
-            f"{saved['container_id'][:12]} on port {saved['port']}"
-        )
+        container = _inspect_container(saved) or {}
+        running = (container.get("State") or {}).get("Running")
+        kept = "already running" if running else "kept"
+        ui.ok(f"Global Controller {kept} in container {saved['container_id'][:12]}")
         return
-    preferred = saved.get("port") or GC_CONTAINER_PORT
     stop_existing()
 
     # After stop_existing(), so the last deploy's ports read as free. Picked and saved
@@ -708,10 +648,9 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
             preferred_api = saved.get("api_port") or DEFAULT_API_PORT
             last_api_port = ports.pick(preferred_api, "the endpoint", claims)
             claims[last_api_port] = "the endpoint"
-        with ui.status("Starting Global Controller container..."):
-            container_id, port, docker_socket, headers = _run_container(
+        with ui.status("Creating Global Controller container..."):
+            container_id, docker_socket = _create_container(
                 image=image,
-                port=preferred,
                 redis_port=redis_port,
                 api_port=last_api_port,
                 reserved=frozenset(claims),
@@ -720,12 +659,10 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
         try:
             _save_state(
                 container_id,
-                port,
                 docker_socket,
                 redis_port,
                 last_api_port,
                 auth_disabled,
-                headers,
             )
         except OSError as e:
             cleanup_failure = cleanup_docker(
@@ -742,6 +679,4 @@ def run_init(banner=True, image=GC_IMAGE, auth_env=(), auth_disabled=False):
                 f"Could not save Global Controller state at {deployment.state_path()}: "
                 f"{e}. Removed container {container_id[:12]}.{detail}"
             ) from None
-    ui.ok(f"Global Controller running in container {container_id[:12]} on port {port}")
-    if port != preferred:
-        ui.warn(f"Port {preferred} is taken, so the Global Controller is on {port}.")
+    ui.ok(f"Global Controller created in container {container_id[:12]}")

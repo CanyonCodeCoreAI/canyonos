@@ -14,6 +14,7 @@ from canyonos.constants import CANYON_DIR, deployment_config_path
 from canyonos.stop import (
     agent_images,
     confirm_clean_all,
+    ensure_api_for_stop,
     remove_images,
     stop_all,
     stop_unused_dashboard,
@@ -128,9 +129,11 @@ def run_clean(all_deployments=False, yes=False, refs=()):
                 "CanyonOS workflow."
             )
         return choice.ok
+    deployed = [target for target in choice.deployments if target.state is not None]
+    if deployed:
+        ensure_api_for_stop()
     stop = stopper(choice)
     cleaned = [_clean_deployment(target, stop) for target in choice.deployments]
-    deployed = [target for target in choice.deployments if target.state is not None]
     if deployed and not stop_unused_dashboard(deployed):
         cleaned.append(False)
     if not all(cleaned):

@@ -5,10 +5,11 @@
 Put this checkout's CanyonOS on a machine `canyonos provision` launched, for when it
 runs from a development CLI and you choose the dev version over the official release.
 
-The Global Controller image is built here for the machine's platform and streamed to
-it over SSH; the checkout is copied with rsync and the CLI installed from it with uv,
-in development mode, so `canyonos deploy` on the machine uses that image. Nothing here
-depends on which cloud the machine is in.
+The Global Controller image and the CanyonOS API image, which runs it, are built here
+for the machine's platform and streamed to it over SSH; the checkout is copied with
+rsync and the CLI installed from it with uv, in development mode, so `canyonos deploy`
+on the machine uses those images. Nothing here depends on which cloud the machine is
+in.
 """
 
 import shlex
@@ -18,10 +19,18 @@ import time
 
 from canyonos import env
 
-# Agent machines are x86, so the image the controller runs is built for them too.
+# Agent machines are x86, so the images the machine runs are built for them too.
 PLATFORM = "linux/amd64"
-# A tag of its own here, so this machine's `canyonos-core:dev` (often arm64) is kept.
+# Tags of their own here, so this machine's `canyonos-core:dev` and `canyonos-api:dev`
+# (often arm64) are kept.
 BUILD_TAG = f"{env.LOCAL_CORE_IMAGE}-amd64"
+API_BUILD_TAG = f"{env.LOCAL_API_IMAGE}-amd64"
+# Each image shipped: the tag it is built under here, its build context and Dockerfile
+# in the checkout, and the dev tag the machine's CLI uses.
+IMAGES = (
+    (BUILD_TAG, "packages/core", "packages/core/Dockerfile", env.LOCAL_CORE_IMAGE),
+    (API_BUILD_TAG, ".", "packages/api/Dockerfile", env.LOCAL_API_IMAGE),
+)
 REMOTE_CHECKOUT = "canyonos"
 TOOLS = ("docker", "rsync", "ssh")
 # Rebuilt on the machine, or must not travel: build output, caches, and the local
@@ -38,10 +47,11 @@ SYNC_EXCLUDES = (
     "build",
     "packages/cli/.env",
 )
-# The machine's CLI uses the shipped image; the dashboard and skill fall back to the
-# ones this version pins, since only the Global Controller image is shipped.
+# The machine's CLI uses the shipped images; the dashboard's web app and the skill
+# fall back to the ones this version pins, since only those two images are shipped.
 REMOTE_ENV = f"""CANYONOS_ENV={env.DEVELOPMENT}
 CANYONOS_CORE_IMAGE={env.LOCAL}
+CANYONOS_API_IMAGE={env.LOCAL}
 """
 BOOT_TIMEOUT_SECONDS = 900
 # What `ssh` exits with when it couldn't connect, as opposed to the command failing.
@@ -74,25 +84,26 @@ def ssh_command(key_path, address, user):
     ]
 
 
-def build_core_image():
-    """Build the Global Controller image from this checkout for the machine's platform,
-    showing Docker's output in the terminal. Takes a while on an Arm machine, which
-    emulates x86 to build it."""
-    subprocess.run(
-        [
-            "docker",
-            "build",
-            "--platform",
-            PLATFORM,
-            "-f",
-            "packages/core/Dockerfile",
-            "-t",
-            BUILD_TAG,
-            "packages/core",
-        ],
-        cwd=env.REPO_ROOT,
-        check=True,
-    )
+def build_images():
+    """Build the Global Controller and CanyonOS API images from this checkout for the
+    machine's platform, showing Docker's output in the terminal. Takes a while on an
+    Arm machine, which emulates x86 to build them."""
+    for tag, context, dockerfile, _dev_tag in IMAGES:
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                "--platform",
+                PLATFORM,
+                "-f",
+                dockerfile,
+                "-t",
+                tag,
+                context,
+            ],
+            cwd=env.REPO_ROOT,
+            check=True,
+        )
 
 
 def wait_for_boot(ssh, timeout_seconds=BOOT_TIMEOUT_SECONDS):
@@ -134,17 +145,17 @@ def sync_command(ssh, destination):
 
 
 def ship_command(ssh, compressor="gzip"):
-    """The shell pipeline that streams the built image to the machine, loads it into
-    its Docker, and tags it as the dev image the machine's CLI uses."""
+    """The shell pipeline that streams the built images to the machine, loads them into
+    its Docker, and tags each as the dev image the machine's CLI uses."""
     decompress = {"zstd": "zstd -dc", "gzip": "gunzip -c"}[compressor]
-    remote = (
-        f"{decompress} | docker load && docker tag {BUILD_TAG} {env.LOCAL_CORE_IMAGE}"
+    tags = " && ".join(
+        f"docker tag {shlex.quote(tag)} {shlex.quote(dev_tag)}"
+        for tag, _context, _dockerfile, dev_tag in IMAGES
     )
+    remote = f"{decompress} | docker load && {tags}"
     compress = "zstd -c -T0" if compressor == "zstd" else "gzip -1 -c"
-    return (
-        f"docker save {shlex.quote(BUILD_TAG)} | {compress} | "
-        f"{shlex.join(ssh)} {shlex.quote(remote)}"
-    )
+    built = " ".join(shlex.quote(tag) for tag, *_rest in IMAGES)
+    return f"docker save {built} | {compress} | {shlex.join(ssh)} {shlex.quote(remote)}"
 
 
 def install_command(destination):
@@ -181,7 +192,7 @@ def install_on(key_path, address, user, status):
             capture_output=True,
         )
     compressor = "zstd" if shutil.which("zstd") else "gzip"
-    with status("Sending the Global Controller image to the machine"):
+    with status("Sending the Global Controller and CanyonOS API images to the machine"):
         _run(
             ["bash", "-o", "pipefail", "-c", ship_command(ssh, compressor)],
             "Sending the image",

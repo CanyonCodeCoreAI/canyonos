@@ -12,6 +12,7 @@ exclude = [
     "packages/api",
     "packages/cli-usage-api",
     "packages/operator",
+    "packages/sdk",
     "packages/tsconfig",
     "packages/ui",
     "packages/web",
@@ -23,7 +24,6 @@ required-version = ">=0.12.15"
 [tool.uv.sources]
 canyonos-core = { workspace = true }
 canyonos = { workspace = true }
-canyonos-api-interface = { workspace = true }
 
 [dependency-groups]
 dev = [

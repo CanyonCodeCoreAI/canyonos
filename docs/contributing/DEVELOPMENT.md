@@ -122,7 +122,7 @@ To change the API or web code without rebuilding images, run the dashboard on th
 In the dev shell:
 
 ```bash
-canyonos deploy helloworld --serve false   # the workflow, without the dashboard's images
+canyonos deploy helloworld --serve false   # the workflow, without the dashboard's web app
 bun run dashboard:dev                      # Postgres, then the API on :3000 and Vite on :5173
 ```
 
@@ -175,20 +175,21 @@ Good to know:
 From the dev shell, `canyonos provision` > **Provision AWS** asks whether the machine
 runs **this checkout** or the official release. With this checkout, it:
 
-1. Builds the Global Controller image here for `linux/amd64`, before anything is created
-   in AWS. It's tagged `canyonos-core:dev-amd64`, so your own `canyonos-core:dev` is
+1. Builds the Global Controller and CanyonOS API images here for `linux/amd64`, before
+   anything is created in AWS. They're tagged `canyonos-core:dev-amd64` and
+   `canyonos-api:dev-amd64`, so your own `canyonos-core:dev` and `canyonos-api:dev` are
    kept. On an Arm Mac, Docker emulates x86, so this takes a while.
 2. Launches the machine with uv and rsync instead of the released CLI.
 3. Once it has booted, copies the checkout to `~/canyonos` with rsync, without `.git`,
-   `.venv`, `node_modules` or build output, and streams the image over SSH into the
-   machine's Docker as `canyonos-core:dev`.
+   `.venv`, `node_modules` or build output, and streams the images over SSH into the
+   machine's Docker as `canyonos-core:dev` and `canyonos-api:dev`.
 4. Installs the CLI from that copy with `uv tool install --editable`, with a
-   `packages/cli/.env` that sets `CANYONOS_ENV=development` and
-   `CANYONOS_CORE_IMAGE=local`.
+   `packages/cli/.env` that sets `CANYONOS_ENV=development`,
+   `CANYONOS_CORE_IMAGE=local` and `CANYONOS_API_IMAGE=local`.
 
-Only the Global Controller image is shipped. The dashboard images and the skill are the
-ones this version pins, so they must be released. On the machine, `canyonos -v` prints
-`canyonos development`.
+Only the Global Controller and CanyonOS API images are shipped. The dashboard's web
+image and the skill are the ones this version pins, so they must be released. On the
+machine, `canyonos -v` prints `canyonos development`.
 
 It needs `docker`, `rsync` and `ssh` here, and the private key of the key pair you
 choose: a new one, `~/.ssh/<name>.pem`, or a path it asks for. To pick up later changes,

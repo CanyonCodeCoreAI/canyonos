@@ -124,4 +124,6 @@ jobs:
           kubectl get pods -A -o wide || true
           kubectl get canyonprojects,canyonagents,canyonbuilds -A -o wide || true
           kubectl -n canyonos-system logs deploy/canyonos-controller-manager --tail=200 || true
+          kubectl -n canyonos-e2e describe pods -l canyonos.canyoncode.ai/build || true
+          kubectl -n canyonos-e2e logs -l canyonos.canyoncode.ai/build --all-containers --prefix --tail=100 || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -50

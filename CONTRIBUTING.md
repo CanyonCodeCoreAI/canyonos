@@ -13,11 +13,12 @@ Issues for newcomers are labeled `good first issue`; issues open to outside help
 | ------------------------ | -------------------------------------------------------------------------------- | ------------------------ |
 | `packages/core`          | Runtime: controllers, LLM Gateway, policy, telemetry (`canyonos_core`)           | Python                   |
 | `packages/cli`           | The `canyonos` command line                                                      | Python                   |
-| `packages/api`           | Dashboard API                                                                    | TypeScript (Bun)         |
+| `packages/api`           | Dashboard API, and the API the CLI runs Docker workflow groups through           | TypeScript (Bun)         |
 | `packages/web`           | Dashboard frontend                                                               | TypeScript (React, Vite) |
 | `packages/ui`            | Shared React components for `web`                                                | TypeScript (React)       |
 | `packages/operator`      | Kubernetes operator and its Helm chart                                           | Go                       |
 | `packages/cli-usage-api` | The API that receives the CLI's usage reports and `canyonos feedback`            | TypeScript (Bun)         |
+| `packages/sdk`           | Typed TypeScript client for the `/v1` API, generated from its OpenAPI            | TypeScript               |
 | `packages/tsconfig`      | Shared TypeScript settings                                                       | JSON                     |
 | `skills/`                | Skills for coding agents; `canyonos convert` installs `converting-to-canyonos`   | Markdown, Python         |
 | `examples/`              | Sample workflows to deploy with `canyonos deploy`                                | Python                   |

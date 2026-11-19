@@ -33,10 +33,10 @@ from canyonos.dashboard_registration import (
     add_sample_data,
     register_workflows,
 )
-from canyonos.dashboard_stack import _existing_dashboard_port, dashboard_url
+from canyonos.api import deploy_status, is_running
+from canyonos.dashboard_stack import dashboard_url, running_web_port
 from canyonos.deploy import run_deploy
 from canyonos.doctor import run_doctor
-from canyonos.gc import deploy_status
 from canyonos.init import load_state
 from canyonos.new_app import PYTHON_TEMPLATE_SUFFIX
 from canyonos.os_support import write_private_file
@@ -386,8 +386,7 @@ def _deploy_is_up():
     """Whether a deploy is running right now. Asked on the way out of an
     interrupted run, so it can say what it left behind."""
     try:
-        state = load_state()
-        return bool((deploy_status(state) or {}).get("running"))
+        return is_running(deploy_status(load_state()))
     except (KeyError, OSError, RuntimeError, ValueError):
         return False
 
@@ -445,7 +444,7 @@ def _sample_query(folder="."):
 def _show_dashboard(caption="Watch it run in the dashboard:"):
     """Show the dashboard address in the terminal, or say how to start it. Never
     opens a browser: on a server there is none to open."""
-    port = _existing_dashboard_port()
+    port = running_web_port()
     if port is None:
         ui.warn("The dashboard is not running -- start it with `canyonos serve`.")
         return

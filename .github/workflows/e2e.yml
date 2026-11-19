@@ -19,8 +19,8 @@ on:
       - 'packages/ui/**'
       - 'packages/tsconfig/**'
       - 'packages/cli-usage-api/package.json'
-      # The CLI calls the API through it, and the dashboard images install its package.json.
-      - 'packages/api-interface/**'
+      # The dashboard images install its package.json.
+      - 'packages/sdk/package.json'
       - 'examples/**'
       - 'scripts/**'
       - 'tests/e2e/**'
@@ -39,8 +39,8 @@ on:
       - 'packages/ui/**'
       - 'packages/tsconfig/**'
       - 'packages/cli-usage-api/package.json'
-      # The CLI calls the API through it, and the dashboard images install its package.json.
-      - 'packages/api-interface/**'
+      # The dashboard images install its package.json.
+      - 'packages/sdk/package.json'
       - 'examples/**'
       - 'scripts/**'
       - 'tests/e2e/**'
@@ -115,7 +115,7 @@ jobs:
 
       - run: uv sync --locked
 
-      # The core and web images come from their caches; the api builds in seconds.
+      # Each job builds the three images once; the harness builds only the ones not named here.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -133,11 +133,19 @@ jobs:
           load: true
           tags: canyonos-web:ci
           cache-from: type=gha,scope=canyonos-web
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          load: true
+          tags: canyonos-api:ci
+          cache-from: type=gha,scope=canyonos-api
 
       - name: Run the cases for ${{ matrix.workflow }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
+          CANYONOS_API_IMAGE: canyonos-api:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -201,12 +209,20 @@ jobs:
           load: true
           tags: canyonos-web:ci
           cache-from: type=gha,scope=canyonos-web
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          load: true
+          tags: canyonos-api:ci
+          cache-from: type=gha,scope=canyonos-api
 
       # context-propagation is staged from examples/helloworld/helloworld, so its .python-version picks the agents' Python.
       - name: Run context-propagation with agents on Python ${{ matrix.python }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
+          CANYONOS_API_IMAGE: canyonos-api:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           # Also what the workflow's check expects both agents to run on.
@@ -269,11 +285,18 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          load: true
+          tags: canyonos-api:ci
 
       - name: Run ${{ matrix.scenario }}
         env:
           CANYONOS_CORE_IMAGE: canyonos-core:ci
           CANYONOS_WEB_IMAGE: canyonos-web:ci
+          CANYONOS_API_IMAGE: canyonos-api:ci
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           BEDROCK_SWITCH_MODEL_ID: ${{ vars.BEDROCK_SWITCH_MODEL_ID || 'meta.llama3-8b-instruct-v1:0' }}

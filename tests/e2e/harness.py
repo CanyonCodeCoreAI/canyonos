@@ -750,13 +750,13 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
 
 
 def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
-    """The headers the CLI sends the workflow group's Global Controller, with the secret
-    its state.json holds."""
+    """The headers the CLI sends the CanyonOS API's `/v1` routes, which run the
+    workflow group's Global Controller: this machine's control key."""
     return cli_value(
         recorder,
         workspace,
-        "load_state()['headers']",
-        "from canyonos.init import load_state",
+        "control_header()",
+        "from canyonos.auth import control_header",
     )
 
 
@@ -826,13 +826,14 @@ def workflow_group_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
 def deployed_endpoint(
     recorder: Recorder, workspace: Path, *, keyed: bool = True
 ) -> Endpoint:
-    """Ask the running Global Controller for the endpoint, from the workflow group folder,
-    called with the session's API key unless `keyed` is False."""
+    """Ask the CanyonOS API for the running workflow group's endpoint, from the
+    workflow group folder, called with the session's API key unless `keyed` is
+    False."""
     endpoint = cli_value(
         recorder,
         workspace,
-        "deploy_status(load_state())['endpoint']",
-        "from canyonos.gc import deploy_status; from canyonos.init import load_state",
+        "deployed_endpoint(load_state())",
+        "from canyonos.api import deployed_endpoint; from canyonos.init import load_state",
     )
     route = endpoint["routes"][0]
     return Endpoint(

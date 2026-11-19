@@ -24,6 +24,13 @@ handle /healthz {
 	respond "ok" 200
 }
 
+# The workflow groups routes drive Docker on this machine: only the CLI calls them, on the API's
+# own port, never through the dashboard's public one. Telemetry's /api/v1/{traces,metrics,logs}
+# still reach the API.
+handle /api/v1/workflow-groups* {
+	respond 404
+}
+
 # The dashboard and the API share one origin, so the bundle carries no host. `handle_path`
 # strips `/api` before forwarding, which is why the API keeps serving its unprefixed routes.
 handle_path /api/* {

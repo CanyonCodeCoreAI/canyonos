@@ -14,7 +14,10 @@ import json
 import re
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
 
 from .harness import CliCase
 from .test_quickstart import _runtime_environment, needs_a_runtime
@@ -27,6 +30,15 @@ OPEN_WARNING = (
     "No API key is set: the endpoint and the dashboard answer anyone who reaches "
     "them. Set one with --api-key <key>."
 )
+
+
+@pytest.fixture(autouse=True)
+def _stop_what_the_deploy_started(cli_case: CliCase) -> Iterator[None]:
+    """A deploy brings up this machine's CanyonOS API, which outlives the case's home;
+    stop it and what it runs, so the next case finds no API but its own."""
+    yield
+    if (cli_case.home / ".canyonos" / "dashboard" / ".env").exists():
+        cli_case.run_cli(["stop", "--all"], timeout=300, env=_runtime_environment())
 
 
 def _said(result: subprocess.CompletedProcess[str]) -> str:

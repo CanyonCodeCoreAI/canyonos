@@ -1,13 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""
-CanyonOS CLI
-
-Entry point for the `canyonos` command. Provides these subcommands:
-    canyonos deploy               — Build (stubs + Docker images) then launch
-                                  agents via the Global Controller
-"""
+"""The `canyonos_core` commands the core image runs. On Docker, the Global Controller
+container runs `run-deploy`, which runs `deploy`; the CanyonOS API runs the commands that
+read the running deploy inside that container and the ones that change its workspace in
+a one-off container, each showing one JSON object on stdout and logging to stderr."""
 
 import argparse
 import glob
@@ -534,13 +531,112 @@ def _cmd_clean(args):
 
 
 # ------------------------------------------------------------------ #
+#  Commands the CanyonOS API runs on Docker                            #
+# ------------------------------------------------------------------ #
+
+
+def _cmd_run_deploy(args):
+    """Run the deploy of the workflow group in the current folder as the Global
+    Controller container's main process, keeping its progress in the container's
+    progress file, and exit with its exit code."""
+    from canyonos_core import deploy_runner
+
+    sys.exit(deploy_runner.run())
+
+
+def _show_result(command, *command_args):
+    """Run `command` with `command_args` and show its result on stdout as one JSON
+    object; when it fails, show `{"error": ...}` there instead and exit non-zero. Logs
+    go to stderr, so stdout holds only the JSON."""
+    from canyonos_core.workspace_jobs import CommandError
+
+    try:
+        result = command(*command_args)
+    except CommandError as e:
+        print(json.dumps({"error": str(e), **e.fields}))
+        sys.exit(e.exit_code)
+    except Exception as e:
+        logger.exception("%s failed", command.__name__)
+        print(json.dumps({"error": f"{type(e).__name__}: {e}"}))
+        sys.exit(1)
+    print(json.dumps(result))
+
+
+# The commands below import their module only when they run: the controller modules
+# read `CANYONOS_REDIS_PORT` on import, and in a Kubernetes build pod that variable is
+# the `canyonos-redis` Service's `tcp://` link, which would break `receive` there.
+
+
+def _cmd_put_workflow(args):
+    """Check an uploaded workflow and unpack it into the workspace in the current
+    folder, for the CanyonOS API's upload of a workflow."""
+    from canyonos_core import workspace_jobs
+
+    _show_result(workspace_jobs.put_workflow, os.getcwd(), args.name, args.archive)
+
+
+def _cmd_remove_workflows(args):
+    """Remove uploaded workflows from the workspace in the current folder."""
+    from canyonos_core import workspace_jobs
+
+    _show_result(workspace_jobs.remove_workflows, os.getcwd(), args.names)
+
+
+def _cmd_write_group_files(args):
+    """Write `workflow_group.yaml` and its `.env` into the workspace in the current
+    folder, from what the CanyonOS API put in `/tmp/group.json`."""
+    from canyonos_core import workspace_jobs
+
+    _show_result(workspace_jobs.write_group_files, os.getcwd())
+
+
+def _cmd_check(args):
+    """Check the workflow group in the current folder before the CanyonOS API has the
+    running deploy reload it."""
+    from canyonos_core import controller_status
+
+    _show_result(controller_status.check, os.getcwd())
+
+
+def _cmd_runtime_status(args):
+    """Show the running deploy's endpoint, agents and machine errors, for
+    `canyonos status`."""
+    from canyonos_core import controller_status
+
+    _show_result(controller_status.runtime_status, os.getcwd())
+
+
+def _cmd_health(args):
+    """Show the running deploy's health checks, for `canyonos doctor`."""
+    from canyonos_core import controller_status
+
+    _show_result(controller_status.health, os.getcwd())
+
+
+def _cmd_agent_logs(args):
+    """Show the last lines of the replicas of the agent, or of the replica, `args.name`
+    names, for `canyonos logs <agent>`."""
+    from canyonos_core import controller_status
+
+    _show_result(controller_status.agent_logs, os.getcwd(), args.name, args.tail)
+
+
+def _cmd_dashboard_credentials(args):
+    """Show the Redis credentials the CanyonOS API registers this workflow group with
+    the dashboard by."""
+    from canyonos_core import controller_status
+
+    _show_result(controller_status.dashboard_credentials)
+
+
+# ------------------------------------------------------------------ #
 #  Main entry point                                                    #
 # ------------------------------------------------------------------ #
 
 
 def main():
-    """Run the core command given on the command line. The container's server uses it to
-    build and deploy the workflow group when the CLI asks."""
+    """Run the core command given on the command line: a deploy, a command the CanyonOS
+    API runs on Docker, a cleanup, or one of the Kubernetes commands."""
     parser = argparse.ArgumentParser(
         prog="canyonos_core",
         description="CanyonOS — Distributed Agent Orchestration Framework",
@@ -565,6 +661,64 @@ def main():
         help="Remove generated stubs, compiled protos, and Docker contexts",
     )
     clean.set_defaults(func=_cmd_clean)
+
+    run_deploy = subparsers.add_parser(
+        "run-deploy",
+        help="Run the deploy as the Global Controller container's main process",
+    )
+    run_deploy.set_defaults(func=_cmd_run_deploy)
+
+    put_workflow = subparsers.add_parser(
+        "put-workflow", help="Check an uploaded workflow and unpack it, as JSON"
+    )
+    put_workflow.add_argument("name", help="The workflow's name")
+    put_workflow.add_argument(
+        "--archive", required=True, help="The gzip tar of the workflow's folder"
+    )
+    put_workflow.set_defaults(func=_cmd_put_workflow)
+
+    remove_workflows = subparsers.add_parser(
+        "remove-workflows", help="Remove uploaded workflows, as JSON"
+    )
+    remove_workflows.add_argument("names", nargs="+", help="The workflows' names")
+    remove_workflows.set_defaults(func=_cmd_remove_workflows)
+
+    write_group_files = subparsers.add_parser(
+        "write-group-files",
+        help="Write workflow_group.yaml and its .env from /tmp/group.json, as JSON",
+    )
+    write_group_files.set_defaults(func=_cmd_write_group_files)
+
+    check = subparsers.add_parser(
+        "check", help="Check the workflow group's config before a reload, as JSON"
+    )
+    check.set_defaults(func=_cmd_check)
+
+    runtime_status = subparsers.add_parser(
+        "runtime-status",
+        help="Show the running deploy's endpoint, agents and machine errors, as JSON",
+    )
+    runtime_status.set_defaults(func=_cmd_runtime_status)
+
+    health = subparsers.add_parser(
+        "health", help="Check the running deploy's health, as JSON"
+    )
+    health.set_defaults(func=_cmd_health)
+
+    agent_logs = subparsers.add_parser(
+        "agent-logs", help="Show the last log lines of an agent's replicas, as JSON"
+    )
+    agent_logs.add_argument("name", help="An agent's name or a replica's ID")
+    agent_logs.add_argument(
+        "--tail", default="all", help="Lines per replica: a number or `all`"
+    )
+    agent_logs.set_defaults(func=_cmd_agent_logs)
+
+    dashboard_credentials = subparsers.add_parser(
+        "dashboard-credentials",
+        help="Show the Redis credentials the dashboard registers, as JSON",
+    )
+    dashboard_credentials.set_defaults(func=_cmd_dashboard_credentials)
 
     args = parser.parse_args()
     if not args.command:

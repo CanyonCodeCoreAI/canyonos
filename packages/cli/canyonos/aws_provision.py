@@ -693,11 +693,12 @@ class _AwsProvision:
         self._confirm(subnet_id, group, machine_type, key_name, profile, ami_id)
         if self.dev:
             ui.say(
-                f"Building the Global Controller image for {dev_machine.PLATFORM}. "
-                "On an Arm machine this emulates x86 and takes a while."
+                "Building the Global Controller and CanyonOS API images for "
+                f"{dev_machine.PLATFORM}. On an Arm machine this emulates x86 and "
+                "takes a while."
             )
-            dev_machine.build_core_image()
-            ui.ok(f"Built {dev_machine.BUILD_TAG}")
+            dev_machine.build_images()
+            ui.ok(f"Built {dev_machine.BUILD_TAG} and {dev_machine.API_BUILD_TAG}")
 
         group_id = self._prepare_security_group(vpc_id, group)
         key_name, key_path = self._prepare_key_pair(key_name)
@@ -730,7 +731,10 @@ class _AwsProvision:
             dev_machine.install_on(
                 key_path, machine["PublicIpAddress"], SSH_USER, ui.status
             )
-            ui.ok("The machine runs this checkout's CLI and Global Controller image")
+            ui.ok(
+                "The machine runs this checkout's CLI, Global Controller and CanyonOS "
+                "API images"
+            )
         self._show_next_steps(machine, key_name, key_path, profile)
 
     def _choose_version(self):

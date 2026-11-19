@@ -17,8 +17,8 @@ which reads the key's hash again, a redeploy keeps the dashboard, the workflow's
 id and the workflow group's CA, example runs go in with the machine's API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
-anything starts, a dashboard starting with a deploy takes its `dashboard_port` while
-8000-8003 are held, and with 8080 held and no dashboard up, the endpoint and the
+anything starts, a dashboard starting with a deploy takes its `dashboard_port` and its
+Global Controller publishes no port, and with 8080 held and no dashboard up, the endpoint and the
 dashboard starting with it end up on different ports. The cases are steps on one
 fleet: once one fails, the rest are skipped."""
 
@@ -638,9 +638,11 @@ def test_a_starting_dashboard_takes_its_dashboard_port(recorder, fleet):
         ),
     )
     try:
-        with _held(8000), _held(8001), _held(8002), _held(8003):
-            _deploy(recorder, directory, "helloworld")
+        _deploy(recorder, directory, "helloworld")
         assert dashboard_port(recorder) == 8301
+        controller = f"{fleet.groups['helloworld']}-global-controller"
+        published = docker(recorder, ["port", controller]).output.strip()
+        assert not published, published
     finally:
         stop = stop_workflow_group(recorder, directory)
     assert stop is None or stop.code == 0, stop.output

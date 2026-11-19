@@ -61,6 +61,65 @@ export const workflows = pgTable('workflows', {
     .defaultNow(),
 });
 
+/** A workflow as its last upload left it: each file's SHA-256 by `<workflow>/<path>`, and its
+ * `config/test_query.txt`. */
+export interface StoredWorkflow {
+  digests: Record<string, string>;
+  test_query: string | null;
+}
+
+/** The fingerprints the Global Controller container was last started or reloaded with. */
+export interface DeployedFingerprints {
+  code: string;
+  config: string;
+  auth: { apiKeyHash?: string };
+}
+
+export interface StoredLastApply {
+  generation: number;
+  action: 'none' | 'start' | 'restart' | 'reload' | 'stop';
+  ok: boolean;
+  error: string | null;
+  code:
+    | 'config_invalid'
+    | 'reload_failed'
+    | 'reload_timeout'
+    | 'stop_timeout'
+    | 'stop_failed'
+    | 'start_failed'
+    | null;
+}
+
+// One row per workflow group /v1 drives on Docker: what the CLI uploaded (the files themselves
+// are in the Global Controller container's /workspace volume) and how far the apply loop got. It
+// holds no secrets: the `.env` is kept only as its digest.
+export const workflowGroups = pgTable('workflow_groups', {
+  // The `workflow_group_id` of its workflow_group.yaml.
+  id: uuid('id').primaryKey(),
+  name: text('name').notNull().default(''),
+  // workflow_group.yaml's text, null until a PUT sends one.
+  config: text('config'),
+  // The SHA-256 of the `.env` beside it, null for none.
+  env_digest: text('env_digest'),
+  api_key_hash: text('api_key_hash'),
+  // The Global Controller container the upload went into; another one starts from nothing.
+  controller_container_id: text('controller_container_id'),
+  workflows: jsonb('workflows').$type<Record<string, StoredWorkflow>>().notNull().default({}),
+  generation: integer('generation').notNull().default(0),
+  applied_generation: integer('applied_generation').notNull().default(0),
+  last_change_at: timestamp('last_change_at', { withTimezone: true, mode: 'date' })
+    .notNull()
+    .defaultNow(),
+  deployed: jsonb('deployed').$type<DeployedFingerprints>(),
+  last_apply: jsonb('last_apply').$type<StoredLastApply>(),
+  created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
+    .notNull()
+    .defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+    .notNull()
+    .defaultNow(),
+});
+
 // One row per stored version of an agent function's system prompt. The first versions come from
 // the workflow's prompts.yaml; dashboard saves add the rest. `live` marks the version agents are sent.
 export const systemPrompts = pgTable(

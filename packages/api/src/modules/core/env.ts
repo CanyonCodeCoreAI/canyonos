@@ -36,6 +36,17 @@ export function resolveApiKeyHash(value: string | undefined): string | null {
   );
 }
 
+/** `CANYONOS_CONTROL_KEY_HASH`: the sha256 of the control key the CLI drives workflow groups with,
+ * in lowercase hex, or null when unset, which refuses every /v1 request. */
+export function resolveControlKeyHash(value: string | undefined): string | null {
+  if (value === undefined || value === '') return null;
+  if (API_KEY_HASH.test(value)) return value;
+  throw new Error(
+    'CANYONOS_CONTROL_KEY_HASH must be the sha256 of the control key as 64 lowercase hex ' +
+      'characters, or empty to refuse every /v1 request'
+  );
+}
+
 const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
 const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
 
@@ -96,6 +107,12 @@ const metrics = {
   ),
 };
 
+const docker = {
+  // The Docker Engine socket /v1 drives each workflow group's Global Controller container
+  // through; empty runs the API without Docker, and every /v1 route answers 503.
+  socket: env.DOCKER_SOCKET === '' ? null : (env.DOCKER_SOCKET ?? '/var/run/docker.sock'),
+};
+
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';
 
 export function resolveDatabaseUrl(value: string | undefined, environment: AppEnvironment): string {
@@ -113,6 +130,7 @@ export const config = {
   canyonos,
   governance,
   metrics,
+  docker,
   isDevelopment: environment === 'development',
   isProduction: environment === 'production',
   isDemo: environment === 'demo',
@@ -134,6 +152,7 @@ export const config = {
   },
   auth: {
     apiKeyHash: resolveApiKeyHash(env.CANYONOS_API_KEY_HASH),
+    controlKeyHash: resolveControlKeyHash(env.CANYONOS_CONTROL_KEY_HASH),
   },
 };
 

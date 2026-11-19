@@ -21,9 +21,8 @@ from canyonos import deployment, kubernetes_target, ui
 from canyonos.auth import auth_header, machine_api_key
 from canyonos.constants import existing_config_path
 from canyonos.deploy import _curl_example
-from canyonos.gc import (
+from canyonos.api import (
     NoDeployError,
-    _error_body,
     deployed_endpoint,
     existing_deploy,
     test_queries,
@@ -35,6 +34,19 @@ DEFAULT_QUERY = "hello"
 REQUEST_TIMEOUT = 300
 SUBMIT_TIMEOUT = 30
 POLL_INTERVAL = 2
+
+
+def _error_body(e):
+    """The workflow endpoint's JSON error object; `{"error": <raw body>}` when it isn't
+    one with an `error` field."""
+    body = e.read().decode(errors="replace").strip()
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("error"):
+        return parsed
+    return {"error": body or f"HTTP {e.code}"}
 
 
 def _send_query(url, body, headers):

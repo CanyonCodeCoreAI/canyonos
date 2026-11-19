@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos sync`: upload a workflow group to the Global Controller container's
-/workspace volume: its `workflow_group.yaml` and the `.env` beside it, and each workflow's
-folder, with the `.env` in it, as one gzip tar per workflow; then wait for the
-container to apply them to the running deploy.
+Logic for `canyonos sync`: upload a workflow group through the CanyonOS API to its
+Global Controller container's /workspace volume: its `workflow_group.yaml` and the
+`.env` beside it, and each workflow's folder, with the `.env` in it, as one gzip tar
+per workflow; then wait for the API to apply them to the deploy.
 
 Files live inside the container's named volume (see `init.py`), not on a live
-bind mount, so host-side edits don't reach a running build. The container removes
+bind mount, so host-side edits don't reach a running build. The API removes
 the files the last upload had and this one lacks, and keeps the ones it made.
 """
 
@@ -19,7 +19,18 @@ import tempfile
 import time
 from pathlib import Path
 
-from canyonos import deployment, ui
+import yaml
+
+from canyonos import deployment, env, ui
+from canyonos.api import (
+    ApiError,
+    NoDeployError,
+    deploy_status,
+    put_workflow,
+    put_workflow_group,
+    require_state,
+    workflow_group_status,
+)
 from canyonos.auth import machine_api_key
 from canyonos.constants import (
     DEPLOYMENT_CONFIG,
@@ -27,17 +38,11 @@ from canyonos.constants import (
     workflow_env_path,
     workflow_folder,
 )
-from canyonos.gc import (
-    GCError,
-    NoDeployError,
-    deploy_status,
-    put_workflow,
-    put_workflow_group,
-    require_state,
-)
 from canyonos.init import load_state
 
 ENV_NAME = ".env"
+# The providers that put agents on machines other than this one.
+_REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
 
 
 def workflow_archive(folder):
@@ -62,10 +67,31 @@ def workflow_archive(folder):
     return buffer
 
 
+def collector_image_warnings(config_text):
+    """Machines other than this one run their metrics collector from the official
+    release image; warn when this deploy's Global Controller runs another core image,
+    such as a dev build, and `config_text`, the workflow group's config, puts agents
+    on such machines."""
+    if env.core_image == env.PROD_CORE_IMAGE:
+        return []
+    try:
+        config = yaml.safe_load(config_text)
+    except yaml.YAMLError:
+        config = None
+    provider = config.get("provider") if isinstance(config, dict) else None
+    if str(provider or "").casefold() not in _REMOTE_PROVIDERS:
+        return []
+    return [
+        f"Agent machines run the machine metrics collector from {env.PROD_CORE_IMAGE}, "
+        f"not {env.core_image}: changes to it here don't reach them, and if "
+        f"{env.VERSION} isn't published they report no machine metrics."
+    ]
+
+
 def _wait_for_apply(state, generation):
-    """Poll the Global Controller's status until it has applied `generation`, and
-    return that answer; raise GCError when that apply failed or the container stops
-    answering."""
+    """Poll the CanyonOS API's status until it has applied `generation`, and return
+    that answer; raise ApiError when that apply failed, including a Global Controller
+    that would not start, or the API stops answering."""
     misses = 0
     while misses < 2:
         status = deploy_status(state)
@@ -73,26 +99,26 @@ def _wait_for_apply(state, generation):
         if status and status["applied_generation"] >= generation:
             last_apply = status["last_apply"]
             if not last_apply["ok"]:
-                raise GCError(last_apply["error"], error_code=last_apply["code"])
+                raise ApiError(last_apply["error"], code=last_apply["code"])
             return status
         time.sleep(1)
-    raise GCError("Could not reach Global Controller container.")
+    raise ApiError("Could not reach the CanyonOS API.")
 
 
 def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
-    """Upload the workflow group to the Global Controller container: `workflow_group.yaml`
-    and the `.env` beside it, `api_key_hash` when a deploy gives it, and each of
-    `workflows` (name to folder) with the `.env` in its folder, printing the container's
-    warnings about them; then wait until it has applied them. A workflow the container
-    holds but `workflows` leaves out is removed, unless `keep_other_workflows`. Returns
-    its status then, or False when a file could not be read."""
+    """Upload the workflow group through the CanyonOS API: `workflow_group.yaml` and the
+    `.env` beside it, `api_key_hash` when a deploy gives it, and each of `workflows`
+    (name to folder) with the `.env` in its folder, printing the API's warnings about
+    them; then wait until it has applied them. A workflow the API holds but
+    `workflows` leaves out is removed, unless `keep_other_workflows`. Returns its
+    status then, or False when a file could not be read."""
     state = require_state()
     label = f"Syncing {', '.join(workflows)}"
     warnings = []
     try:
         with ui.status(f"{label}..."), contextlib.ExitStack() as archives:
             try:
-                env = (
+                env_text = (
                     Path(ENV_NAME).read_text("utf-8")
                     if os.path.isfile(ENV_NAME)
                     else None
@@ -109,18 +135,20 @@ def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
             answer = put_workflow_group(
                 state,
                 config,
-                env,
+                env_text,
                 None if keep_other_workflows else list(workflows),
                 api_key_hash,
             )
             warnings += answer["warnings"]
+            if deployment.configured_target() != "kubernetes":
+                warnings += collector_image_warnings(config)
             for name, tar in tars.items():
                 answer = put_workflow(state, name, tar)
                 warnings += answer["warnings"]
             for warning in warnings:
                 ui.warn(warning)
             status = _wait_for_apply(state, answer["generation"])
-    except GCError as e:
+    except ApiError as e:
         if not e.findings:
             raise
         for warning in [*warnings, *e.warnings]:
@@ -129,9 +157,9 @@ def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
             ui.fail(finding)
             ui.blank()
         ui.fail(f"{len(e.findings)} error(s).")
-        raise GCError(
+        raise ApiError(
             "Fix the workflow errors `canyonos validate` reports, then rerun.",
-            error_code=e.error_code,
+            code=e.code,
         ) from None
     ui.ok("Sync complete.")
     return status
@@ -141,7 +169,7 @@ def run_sync_and_reload(folders):
     """Run `canyonos sync`: upload the workflow group's config and the workflows in
     `folders`, leaving its other workflows as they are, then have the Global Controller
     apply them: start, reload or restart the deploy. Returns True once applied, or when no
-    Global Controller container runs; raises GCError when applying fails."""
+    Global Controller container runs; raises ApiError when applying fails."""
     try:
         state = load_state()
     except FileNotFoundError:
@@ -149,7 +177,12 @@ def run_sync_and_reload(folders):
             "No workflow group running; changes apply on the next `canyonos deploy`."
         )
         return True
-    if deploy_status(state) is None:
+    if "api_url" not in state:
+        # Imported here: serve imports the stack, which this module has no need of.
+        from canyonos.serve import ensure_api
+
+        ensure_api()
+    if workflow_group_status(state) is None:
         raise NoDeployError(
             "Nothing is running for this workflow group. Run `canyonos stop` to clean up."
         )

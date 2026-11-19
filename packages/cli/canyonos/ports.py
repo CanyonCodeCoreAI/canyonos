@@ -8,9 +8,9 @@ port) is used as it is, or refused when it is taken: what reads it back would
 otherwise look for it where it isn't. Any other port starts at the one it had last
 time, or its default, and moves to the next one that is free on every interface
 (`port_utils.is_port_free`) and claimed by nothing else of CanyonOS here: another
-workflow group's Global Controller, Redis or endpoint (its state.json), a running
-port-forward (its record), or the dashboard. The Global Controller skips the same
-ports when Docker makes it move one (`port_utils.RESERVED_PORTS_ENV`).
+workflow group's Redis or endpoint (its state.json), a running port-forward (its
+record), or the dashboard. The Global Controller skips the same ports when Docker
+makes it move one (`port_utils.RESERVED_PORTS_ENV`).
 
 A command picks its ports and writes them down under `held()`, so two commands at
 the same moment never pick the same one.
@@ -42,10 +42,14 @@ def claimed(dashboard_port=None, picking_dashboard=False):
     """The ports CanyonOS holds here or has picked to, each with what holds it: the
     dashboard's are the running one's, else the ones it starts on next
     (`dashboard_stack.service_ports`, with `dashboard_port`, the config's). When
-    `picking_dashboard`, a dashboard's own ports are being picked, so only a
-    dashboard already running holds them."""
+    `picking_dashboard`, the dashboard's own ports are being picked, so only the ones
+    its running services publish hold: a port it merely picked to is its to take."""
     # Imported here: both pick their own ports through this module.
-    from canyonos.dashboard_stack import _existing_dashboard_port, service_ports
+    from canyonos.dashboard_stack import (
+        running_api_port,
+        running_web_port,
+        service_ports,
+    )
     from canyonos.forwards import forward_port, running_forwards
 
     claims = {}
@@ -55,12 +59,15 @@ def claimed(dashboard_port=None, picking_dashboard=False):
                 path = os.path.join(deployment.deployments_dir(), name, "state.json")
                 with open(path, encoding="utf-8") as f:
                     state = json.load(f)
-                for key in ("port", "redis_port", "api_port"):
+                for key in ("redis_port", "api_port"):
                     if isinstance(state.get(key), int):
                         claims[state[key]] = f"workflow group {name}"
     for name in running_forwards():
         claims[forward_port(name)] = f"the port-forward {name}"
-    if not picking_dashboard or _existing_dashboard_port():
+    if picking_dashboard:
+        published = (running_web_port(), running_api_port())
+        claims.update({port: DASHBOARD for port in published if port})
+    else:
         claims.update(dict.fromkeys(service_ports(dashboard_port).values(), DASHBOARD))
     return claims
 

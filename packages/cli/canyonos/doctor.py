@@ -12,13 +12,14 @@ import shutil
 import subprocess
 
 from canyonos import deployment, ui
+from canyonos.api import ApiError, deploy_health, is_running, workflow_group_status
 from canyonos.dashboard_stack import (
     _container_health,
     _container_name,
     _endpoint_healthy,
-    _existing_dashboard_port,
+    running_api_port,
+    running_web_port,
 )
-from canyonos.gc import deploy_health, deploy_status
 from canyonos.init import docker_running, docker_start_command, load_state
 
 
@@ -71,15 +72,8 @@ def _print_check(label, ok, detail, fix):
     return ok
 
 
-def _dashboard_checks():
-    """Postgres/API/web checks, or one hint if the dashboard was never started
-    from here -- it's an optional, separate step from the deploy itself.
-    """
-    port = _existing_dashboard_port()
-    if port is None:
-        ui.hint("Dashboard not running -- start it with `canyonos serve`")
-        return True
-
+def _api_checks():
+    """Postgres and the CanyonOS API, which runs every deploy here, on its own port."""
     db_name = _container_name("db")
     db_ok = _print_check(
         "Postgres (db)",
@@ -87,19 +81,29 @@ def _dashboard_checks():
         db_name,
         f"the dashboard's Postgres container isn't healthy -- `canyonos serve` again, or check `docker logs {db_name}`",
     )
+    port = running_api_port()
     api_ok = _print_check(
-        "Dashboard API",
-        _endpoint_healthy(f"http://127.0.0.1:{port}/api/healthz"),
-        f"127.0.0.1:{port}/api/healthz",
-        "the dashboard API isn't answering -- `canyonos serve` again",
+        "CanyonOS API",
+        port is not None and _endpoint_healthy(f"http://127.0.0.1:{port}/healthz"),
+        f"127.0.0.1:{port}/healthz",
+        "the CanyonOS API isn't answering -- `canyonos serve` again",
     )
-    web_ok = _print_check(
+    return db_ok and api_ok
+
+
+def _web_check():
+    """The dashboard's web app, or one hint when it isn't running -- `canyonos deploy
+    --serve false` leaves it out."""
+    port = running_web_port()
+    if port is None:
+        ui.hint("Dashboard not running -- start it with `canyonos serve`")
+        return True
+    return _print_check(
         "Dashboard web",
         _endpoint_healthy(f"http://127.0.0.1:{port}/healthz"),
         f"127.0.0.1:{port}/healthz",
         "the dashboard web isn't answering -- `canyonos serve` again",
     )
-    return db_ok and api_ok and web_ok
 
 
 def _guard(label, check):
@@ -133,15 +137,18 @@ def _print_health(state):
 
 def _print_post_deploy(state):
     """Health-check the running deploy: the Global Controller, Redis, the workflow
-    agents and the endpoint, as the Global Controller sees them, then the dashboard.
+    agents and the endpoint, as the CanyonOS API sees them, then on Docker the API and
+    the dashboard.
 
-    Both are guarded, so one erroring probe never hides the other or aborts the
+    Each is guarded, so one erroring probe never hides another or aborts the
     whole report.
     """
-    results = [
-        _guard("Global Controller", lambda: _print_health(state)),
-        _guard("Dashboard", _dashboard_checks),
-    ]
+    results = [_guard("Global Controller", lambda: _print_health(state))]
+    if deployment.configured_target() != "kubernetes":
+        results += [
+            _guard("CanyonOS API", _api_checks),
+            _guard("Dashboard", _web_check),
+        ]
     return all(results)
 
 
@@ -161,22 +168,27 @@ def _run_checks(checks):
 
 
 def run_doctor():
-    """Print the pre- or post-deploy checklist, whichever applies, and return True if it all passed."""
+    """Print the pre- or post-deploy checklist, whichever applies, and return True if it
+    all passed. A CanyonOS API that doesn't answer is reported, not started."""
     try:
         state = load_state()
     except FileNotFoundError:
         state = None
 
     status = None
+    api_ok = True
     if state:
         try:
-            status = deploy_status(state)
-        except (KeyError, OSError, ValueError) as e:
-            ui.warn(
-                f"Could not read deploy status ({e}); assuming no workflow group is running."
+            status = workflow_group_status(state)
+        except ApiError as e:
+            api_ok = _print_check(
+                "CanyonOS API",
+                False,
+                None,
+                str(e),
             )
 
-    if status and status.get("running"):
+    if is_running(status):
         ui.say("Deploy is up -- post-deploy checks:")
         return _print_post_deploy(state)
 
@@ -184,6 +196,6 @@ def run_doctor():
         ui.say(
             "No workflow group running -- run `canyonos deploy <workflow folder>...`"
         )
-        return True
+        return api_ok
     ui.say("No workflow group running -- pre-deploy checks:")
-    return _run_checks(_pre_deploy_checks())
+    return _run_checks(_pre_deploy_checks()) and api_ok

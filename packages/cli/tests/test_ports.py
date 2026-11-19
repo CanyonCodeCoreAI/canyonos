@@ -13,7 +13,6 @@ from canyonos import dashboard_stack, deployment, forwards, ports
 def home(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    monkeypatch.setattr(dashboard_stack, "_existing_dashboard_port", lambda: None)
     monkeypatch.setattr(dashboard_stack, "_published_port", lambda *_a: None)
     return tmp_path
 
@@ -35,13 +34,13 @@ def _forward(name, port, fresh=True):
 
 
 def test_every_deployments_ports_are_claimed(home):
-    _state("a-1", container_id="x", port=8000, redis_port=6379, api_port=8080)
-    _state("b-2", container_id="y", port=8001)
+    _state("a-1", container_id="x", redis_port=6379, api_port=8080)
+    _state("b-2", container_id="y", redis_port=6380)
 
     claims = ports.claimed()
 
-    assert {claims[port] for port in (8000, 6379, 8080)} == {"workflow group a-1"}
-    assert claims[8001] == "workflow group b-2"
+    assert {claims[port] for port in (6379, 8080)} == {"workflow group a-1"}
+    assert claims[6380] == "workflow group b-2"
 
 
 def test_running_forwards_are_claimed_and_stale_ones_are_not(home):
@@ -55,9 +54,6 @@ def test_running_forwards_are_claimed_and_stale_ones_are_not(home):
 
 
 def _running_dashboard(monkeypatch, published):
-    monkeypatch.setattr(
-        dashboard_stack, "_existing_dashboard_port", lambda: published["web"]
-    )
     monkeypatch.setattr(
         dashboard_stack, "_published_port", lambda service, _port: published[service]
     )

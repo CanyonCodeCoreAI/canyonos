@@ -134,6 +134,9 @@ def _docker_is_usable(docker: Mapping[str, str]) -> bool:
 # Set with `CANYONOS_ENV=development`, which the CLI requires before it accepts a
 # core image override at all.
 CORE_IMAGE = os.environ.get("CANYONOS_CORE_IMAGE", "").strip()
+# The CanyonOS API image every deploy brings up with its database; unset, the CLI pulls
+# its own version's image from ghcr, which does not exist for an unreleased checkout.
+API_IMAGE = os.environ.get("CANYONOS_API_IMAGE", "").strip()
 _HOST, _CONFIG = _real_docker_config()
 DOCKER = {
     name: value
@@ -170,10 +173,14 @@ def deployed_workflow(cli_case: CliCase) -> Iterator[tuple[CliCase, Path]]:
 
 
 def _runtime_environment() -> dict[str, str]:
-    """What the CLI needs to reach a core image and the daemon. The case's
-    environment blanks the CANYONOS_* variables, so the one that matters is put
+    """What the CLI needs to reach the core and API images and the daemon. The case's
+    environment blanks the CANYONOS_* variables, so the ones that matter are put
     back here."""
-    return {"CANYONOS_CORE_IMAGE": CORE_IMAGE, **DOCKER}
+    return {
+        "CANYONOS_CORE_IMAGE": CORE_IMAGE,
+        "CANYONOS_API_IMAGE": API_IMAGE,
+        **DOCKER,
+    }
 
 
 def _bearer(api_key: str | None) -> dict[str, str]:

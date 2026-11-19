@@ -8,6 +8,15 @@ on:
     paths:
       - 'packages/cli/**'
       - 'packages/core/**'
+      # Every deploy brings up the CanyonOS API, and its image installs these manifests.
+      - 'packages/api/**'
+      - 'packages/tsconfig/**'
+      - 'packages/ui/package.json'
+      - 'packages/web/package.json'
+      - 'packages/cli-usage-api/package.json'
+      - 'packages/sdk/package.json'
+      - '.dockerignore'
+      - 'bun.lock'
       - 'examples/**'
       - 'scripts/bundle-starters.ts'
       - 'package.json'
@@ -20,6 +29,15 @@ on:
     paths:
       - 'packages/cli/**'
       - 'packages/core/**'
+      # Every deploy brings up the CanyonOS API, and its image installs these manifests.
+      - 'packages/api/**'
+      - 'packages/tsconfig/**'
+      - 'packages/ui/package.json'
+      - 'packages/web/package.json'
+      - 'packages/cli-usage-api/package.json'
+      - 'packages/sdk/package.json'
+      - '.dockerignore'
+      - 'bun.lock'
       - 'examples/**'
       - 'scripts/bundle-starters.ts'
       - 'package.json'
@@ -39,7 +57,7 @@ permissions:
 jobs:
   e2e:
     runs-on: blacksmith-4vcpu-ubuntu-2604
-    # The core image build and a real deploy, on top of the rest of the suite.
+    # The core and API image builds and a real deploy, on top of the rest of the suite.
     timeout-minutes: 15
 
     steps:
@@ -61,7 +79,8 @@ jobs:
       - run: uv sync --locked
 
       # The bundled Hello World case deploys for real, so the Global Controller
-      # needs an image. Built from the cache core-image.yml fills on main.
+      # needs an image, built from the cache core-image.yml fills on main, and so
+      # does the CanyonOS API that every deploy brings up.
       - name: Setup Blacksmith Builder
         uses: useblacksmith/setup-docker-builder@v1
       - uses: useblacksmith/build-push-action@v2 # v7.4.0
@@ -70,14 +89,21 @@ jobs:
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          load: true
+          tags: canyonos-api:ci
 
       - name: Run CLI E2E tests
         run: bun run cli:test:e2e
         env:
           PYTEST_ADDOPTS: --basetemp=${{ runner.temp }}/cli-e2e
-          # `development` because a core image override is refused in production.
+          # `development` because an image override is refused in production.
           CANYONOS_ENV: development
           CANYONOS_CORE_IMAGE: canyonos-core:ci
+          CANYONOS_API_IMAGE: canyonos-api:ci
 
       - if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -6,9 +6,10 @@ name: API E2E Tests
 on:
   push:
     branches: [main, master]
-    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
+    # The workflow group tests run Global Controllers from the core image.
+    paths: ['packages/api/**', 'packages/core/**', '.github/workflows/api-e2e.yml']
   pull_request:
-    paths: ['packages/api/**', '.github/workflows/api-e2e.yml']
+    paths: ['packages/api/**', 'packages/core/**', '.github/workflows/api-e2e.yml']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -55,6 +56,17 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # The workflow group tests create Global Controller and job containers on this
+      # runner's Docker from the core image. Built from the cache core-image.yml fills on main.
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+        with:
+          context: packages/core
+          file: packages/core/Dockerfile
+          load: true
+          tags: canyonos-core:ci
+
       - name: Run E2E Tests
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
         with:
@@ -68,6 +80,7 @@ jobs:
           DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
           CANYONOS_REDIS_HOST: 127.0.0.1
           CANYONOS_REDIS_PORT: '6379'
+          CANYONOS_CORE_IMAGE: canyonos-core:ci
 
       - name: Run CanyonOS self-hosted bootstrap tests
         run: cd packages/api && bun run test:canyonos

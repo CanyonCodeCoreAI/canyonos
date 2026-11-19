@@ -52,6 +52,10 @@
     "./governance": {
       "types": "./dist/governance.d.ts",
       "import": "./dist/governance.js"
+    },
+    "./workflow-groups": {
+      "types": "./dist/workflow-groups.d.ts",
+      "import": "./dist/workflow-groups.js"
     }
   },
   "scripts": {
@@ -61,6 +65,7 @@
     "dev:server": "bun run --watch src/server.ts",
     "dev:sdk": "tsup --watch",
     "start": "bun run src/server.ts",
+    "api:openapi": "bun run src/openapi.ts && prettier --ignore-path ../../.gitignore --write openapi.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",

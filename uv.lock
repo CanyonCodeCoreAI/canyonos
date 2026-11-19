@@ -14,7 +14,6 @@ resolution-markers = [
 [manifest]
 members = [
     "canyonos",
-    "canyonos-api-interface",
     "canyonos-core",
 ]
 
@@ -226,7 +225,6 @@ version = "0.2.3.dev2"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "boto3", extra = ["crt"] },
-    { name = "canyonos-api-interface" },
     { name = "cryptography" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
@@ -247,7 +245,6 @@ release = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", extras = ["crt"], specifier = ">=1.43.109" },
-    { name = "canyonos-api-interface", editable = "packages/api-interface" },
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
@@ -262,17 +259,6 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
 ]
 release = [{ name = "nuitka", specifier = "==4.2.2" }]
-
-[[package]]
-name = "canyonos-api-interface"
-version = "1.0.0"
-source = { editable = "packages/api-interface" }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.4" }]
 
 [[package]]
 name = "canyonos-core"

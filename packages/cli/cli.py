@@ -34,7 +34,7 @@ from canyonos.doctor import run_doctor
 from canyonos import kubernetes_local, kubernetes_target
 from canyonos.feedback import run_feedback
 from canyonos.forwards import FORWARD_ARGUMENT, run_forward
-from canyonos.gc import NoDeployError
+from canyonos.api import NoDeployError
 from canyonos.logs import run_logs
 from canyonos.new_app import run_new_app
 from canyonos.os_support import prepare_console

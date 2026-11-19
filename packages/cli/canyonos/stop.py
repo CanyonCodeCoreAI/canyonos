@@ -5,16 +5,25 @@
 Logic for `canyonos stop`: tear down the deploys of the workflow groups it is given or picks
 (see selection.py), or of every workflow group with --all, found by label whether or not its
 folder still exists.
-Its containers, /workspace volume and network go; its images and `.canyon` stay for a
-fast redeploy, and the shared dashboard is stopped with its history kept once no other
-workflow group's Global Controller runs. `canyonos deploy` and `canyonos clean` reuse it.
+The CanyonOS API stops a workflow group's Global Controller, so on Docker it comes up
+first. Its containers, /workspace volume and network go; its images and `.canyon` stay
+for a fast redeploy, and the shared dashboard is stopped with its history kept once no
+other workflow group's Global Controller runs. `canyonos deploy` and `canyonos clean`
+reuse it.
 """
 
-import json
 import os
 import shutil
 
 from canyonos import deployment, selection, ui
+from canyonos.api import (
+    UNKNOWN_WORKFLOW_GROUP,
+    ApiError,
+    delete_workflow_group,
+    list_workflow_groups,
+    workflow_group_status,
+)
+from canyonos.auth import hash_api_key, machine_api_key
 from canyonos.docker_cmd import (
     DOCKER_CLEANUP_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -23,14 +32,13 @@ from canyonos.docker_cmd import (
 )
 from canyonos.dashboard_stack import (
     COMPOSE_PROJECT,
-    _container_name,
-    _existing_dashboard_port,
     leave_deployment_network,
+    running_web_port,
     stop_dashboard,
     teardown_dashboard,
 )
-from canyonos.gc import GCError, delete_workflow_group, list_workflow_groups
-from canyonos.init import GC_CONTAINER_PORT, GC_SECRET_ENV, docker_env, load_state
+from canyonos.init import docker_env, load_state
+from canyonos.serve import ensure_api
 from canyonos.usage.consent import is_interactive
 from utils.tui import select_menu
 
@@ -56,17 +64,37 @@ def _container_state(container_id, env):
     return True, result.stdout.strip() == "true"
 
 
-def controller_running(state):
-    """True when the Global Controller `state` records runs, on the Docker engine it was
-    deployed on."""
-    return _container_state(state["container_id"], docker_env(state))[1]
+def ensure_api_for_stop():
+    """Bring up the CanyonOS API, which stops a workflow group's Global Controller, with
+    it checking this machine's API key; raise RuntimeError when it can't start."""
+    ensure_api(hash_api_key(machine_api_key()))
+
+
+def _status(state):
+    """The CanyonOS API's status of the workflow group `state` records, or None when the
+    API knows no such workflow group. Raises ApiError when the API can't say."""
+    return workflow_group_status(state)
+
+
+def _delete(state):
+    """Have the CanyonOS API stop the workflow group `state` records and forget it;
+    returns why it couldn't, or None. A workflow group the API doesn't know is already
+    stopped as far as it goes."""
+    try:
+        delete_workflow_group(state)
+    except ApiError as e:
+        if e.code != UNKNOWN_WORKFLOW_GROUP:
+            return f"Stopping the workflow group failed: {e}"
+    return None
 
 
 def stop_deployment(state, name=None):
-    """Stop workflow group `name`, by default this folder's: through its Global Controller
-    while it runs, else by removing every container, volume and network labelled with
-    the workflow group. The dashboard is left. Returns what it couldn't remove; the state
-    file stays whenever something is left, so the stop can be retried.
+    """Stop workflow group `name`, by default this folder's: have the CanyonOS API stop
+    its Global Controller, then remove the container, its network and volume; when its
+    deploy was not running, remove every container, volume and network labelled with
+    the workflow group. The dashboard is left. Returns what it couldn't remove; the
+    state file stays whenever something is left, so the stop can be retried. When the
+    API can't be asked, nothing is removed.
 
     It decides nothing: whether a workflow group may be stopped is `stop_if_safe`'s call.
     Teardown reports rather than raises, since it is also a step of `canyonos deploy`.
@@ -76,14 +104,21 @@ def stop_deployment(state, name=None):
     # context is active now -- they can differ (see docker_env).
     env = docker_env(state)
     with ui.status(f"Tearing down {name}..."):
-        # A stale record cannot answer the DELETE, so establish this before
-        # making an HTTP request that would otherwise add a full request timeout.
-        if controller_running(state):
-            failures = _tear_down(name, state, env)
+        try:
+            status = _status(state)
+        except ApiError as e:
+            failures = [str(e)]
         else:
-            failures = _remove_deployment_resources([name], env) or _remove_state_files(
-                [name]
-            )
+            # Always first: it stops a running deploy, and forgets the workflow group
+            # either way.
+            failure = _delete(state)
+            failures = [failure] if failure else []
+            if status is not None and status["running"]:
+                failures += _tear_down(name, state, env)
+            else:
+                failures += _remove_deployment_resources(
+                    [name], env
+                ) or _remove_state_files([name])
     if failures:
         ui.fail(f"Teardown of {name} incomplete:\n- " + "\n- ".join(failures))
         ui.hint(
@@ -95,13 +130,32 @@ def stop_deployment(state, name=None):
     return failures
 
 
+def _safe_to_stop(state, status):
+    """True when the CanyonOS API's `status` says the workflow group's deploy runs, so
+    its stop removes what it started, or its Global Controller container `state`
+    records is still there and never started, or ended and cleaned up after itself;
+    False when the API knows no such workflow group, the container is gone, or it
+    exited without finishing, so what it started may still be there."""
+    if status is None:
+        return False
+    if status["running"]:
+        return True
+    exists = _container_state(state["container_id"], docker_env(state))[0]
+    return exists and status.get("error_code") != "controller_exited"
+
+
 def stop_if_safe(state, name=None):
     """`stop_deployment` for workflow group `name`, by default this folder's, unless its
-    Global Controller is not running: why it went down is unknown, so what it started
-    is removed only when the user names the workflow group. Returns what it couldn't
-    stop."""
+    Global Controller is gone or exited without finishing: why is unknown, so what it
+    started is removed only when the user names the workflow group. Returns what it
+    couldn't stop."""
     name = name or deployment.deployment_name()
-    if controller_running(state):
+    try:
+        status = _status(state)
+    except ApiError as e:
+        ui.fail(str(e))
+        return [str(e)]
+    if _safe_to_stop(state, status):
         return stop_deployment(state, name)
     failure = (
         f"Could not stop `{name}`: its Global Controller is not running, so removing "
@@ -118,20 +172,15 @@ def stopper(choice):
 
 
 def _tear_down(name, state, env):
-    """Have the running Global Controller of workflow group `name` remove its deploy, then
-    remove it, the workflow group's network and volume, and the state files; returns what it
-    couldn't."""
+    """Remove the Global Controller container of workflow group `name`, which the
+    CanyonOS API has stopped, the workflow group's network and volume, and the state
+    files; returns what it couldn't."""
     container_id = state["container_id"]
     failures = []
-    # Stop any running deploy first, so the local controller and Redis
-    # containers it spawned via docker-outside-of-docker get torn down
-    # too. Removing the GC container itself doesn't touch them -- they're
-    # sibling containers on the host, not nested inside it.
-    try:
-        delete_workflow_group(state)
-    except GCError as e:
-        failures.append(f"Cleaning the running workflow group failed: {e}")
-
+    # The API stopped the deploy first, so the replica and Redis containers it
+    # spawned via docker-outside-of-docker are torn down too. Removing the GC
+    # container itself doesn't touch them -- they're sibling containers on the host,
+    # not nested inside it.
     failure = cleanup_docker(
         ["docker", "stop", container_id],
         action=f"Stopping Global Controller {container_id[:12]}",
@@ -202,50 +251,39 @@ def _list_docker(argv, action, env=None):
     return result.stdout.splitlines()
 
 
-def _clean_deployments():
-    """Ask every running Global Controller to tear down its deploy, as `stop` does, so
-    what it started elsewhere (EC2 machines) goes too; returns what it couldn't."""
-    listed = _list_docker(
-        [
-            "docker",
-            "ps",
-            "-q",
-            "--filter",
-            f"label={deployment.ROLE_LABEL}={deployment.GC_ROLE}",
-        ],
-        "Listing running Global Controllers",
-    )
-    if isinstance(listed, str):
-        return [listed]
-    failures = []
-    for container_id in listed:
-        published = _list_docker(
-            ["docker", "port", container_id, f"{GC_CONTAINER_PORT}/tcp"],
-            f"Finding Global Controller {container_id[:12]}'s port",
-        )
-        if isinstance(published, str) or not published:
-            failures.append(
-                published or f"Global Controller {container_id[:12]} has no port"
-            )
-            continue
-        port = published[0].rpartition(":")[2]
-        inspected = _list_docker(
-            ["docker", "inspect", "--format", "{{json .Config.Env}}", container_id],
-            f"Reading Global Controller {container_id[:12]}'s secret",
-        )
-        if isinstance(inspected, str):
-            failures.append(inspected)
-            continue
-        env = dict(item.partition("=")[::2] for item in json.loads(inspected[0]))
-        headers = {"Authorization": f"Bearer {env.get(GC_SECRET_ENV)}"}
+def _recorded_ids(deployments):
+    """The workflow group of each of `deployments` this machine records, by its
+    `workflow_group_id`."""
+    recorded = {}
+    for name in deployments:
+        state_path = os.path.join(deployment.deployments_dir(), name, "state.json")
         try:
-            for held in list_workflow_groups(port, headers):
-                delete_workflow_group({"port": port, "headers": headers, **held})
-        except GCError as e:
-            failures.append(
-                f"Cleaning Global Controller {container_id[:12]}'s deploy failed: {e}"
-            )
-    return failures
+            state = load_state(state_path)
+        except (FileNotFoundError, RuntimeError):
+            continue
+        if state.get("workflow_group_id"):
+            recorded[state["workflow_group_id"]] = name
+    return recorded
+
+
+def _stop_listed_deployments(deployments):
+    """Have the CanyonOS API stop every workflow group it holds or finds a Global
+    Controller of, as `stop` does, so what each started elsewhere (EC2 machines) goes
+    too. Returns what it couldn't stop, and those of `deployments` it couldn't stop,
+    which are left as they are: all of them when the API could not list them."""
+    try:
+        listed = list_workflow_groups()
+    except ApiError as e:
+        return [f"Listing the workflow groups failed: {e}"], set(deployments)
+    recorded = _recorded_ids(deployments)
+    failures, kept = [], set()
+    for held in listed:
+        failure = _delete(held)
+        if failure:
+            name = recorded.get(held["workflow_group_id"])
+            failures.append(f"{name or held['name'] or 'A workflow group'}: {failure}")
+            kept.add(name)
+    return failures, kept
 
 
 # Containers first: Docker refuses to remove a volume or network still in use.
@@ -289,21 +327,10 @@ def _remove_deployment_resources(deployments, env=None):
             and line.split()[1] != COMPOSE_PROJECT
         ]
         if kind == "networks":
-            # A stopped dashboard api keeps its place on each workflow group's network and
-            # would not start again on one that is gone.
+            # The dashboard's api and db keep their place on each workflow group's
+            # network, and a stopped api would not start again on one that is gone.
             for network in names:
-                _list_docker(
-                    [
-                        "docker",
-                        "network",
-                        "disconnect",
-                        "--force",
-                        network,
-                        _container_name("api"),
-                    ],
-                    f"Disconnecting the dashboard from {network}",
-                    env,
-                )
+                leave_deployment_network(network)
         if names:
             failure = cleanup_docker(
                 [*remove, *names],
@@ -450,25 +477,32 @@ def confirm_clean_all():
     return answer is True
 
 
+def _stop_stack(remove_everything):
+    """Stop the dashboard's stack, keeping its history, or with `remove_everything`
+    remove it and its data; returns what it couldn't."""
+    if remove_everything:
+        return [] if teardown_dashboard() else ["Removing the dashboard stack failed"]
+    return [] if stop_dashboard() else ["Stopping the dashboard failed"]
+
+
 def stop_all(remove_everything=False):
     """`canyonos stop --all`: tear down every CanyonOS workflow group on this machine, from
     any folder, and stop the dashboard, keeping its history. With `remove_everything`,
     for `canyonos clean --all`, also remove the dashboard and its data, CanyonOS's
-    images and `~/.canyonos`, leaving only the CLI to uninstall. Returns True when
-    everything was removed."""
+    images and `~/.canyonos`, leaving only the CLI to uninstall. The CanyonOS API stops
+    each Global Controller, so the stack goes last, and stays when one could not be
+    stopped. Returns True when everything was removed."""
     try:
         deployments = os.listdir(deployment.deployments_dir())
     except FileNotFoundError:
         deployments = []
     ui.json_result["workflow_groups"] = deployments
+    ensure_api_for_stop()
     with ui.status("Tearing down every CanyonOS workflow group..."):
-        failures = []
-        if remove_everything:
-            if not teardown_dashboard():
-                failures.append("Removing the dashboard stack failed")
-        elif not stop_dashboard():
-            failures.append("Stopping the dashboard failed")
-        failures += _clean_deployments()
+        failures, kept = _stop_listed_deployments(deployments)
+        # Whatever the API could not stop keeps the API, and so the stack, it needs.
+        stack_needed = bool(failures)
+        deployments = [name for name in deployments if name not in kept]
         failures += _remove_deployment_resources(deployments)
         failure = cleanup_docker(
             ["docker", "network", "rm", LEGACY_NETWORK],
@@ -480,6 +514,10 @@ def stop_all(remove_everything=False):
             failures.append(failure)
         if not failures:
             failures += _remove_state_files(deployments)
+        # Last, since the API stopped the workflow groups; one it couldn't stop still
+        # needs it.
+        if not stack_needed:
+            failures += _stop_stack(remove_everything)
         if remove_everything and not failures:
             failures += remove_images(
                 [*_OWN_IMAGES, *(agent_images(name) for name in deployments)]
@@ -533,7 +571,7 @@ def stop_unused_dashboard(deployments):
         if not dashboard_kept and not stop_dashboard():
             ui.fail("Stopping the dashboard failed")
             return False
-    if dashboard_kept and _existing_dashboard_port() is not None:
+    if dashboard_kept and running_web_port() is not None:
         ui.hint(
             "The dashboard was left running because another CanyonOS workflow group is "
             "still deployed."
@@ -561,4 +599,5 @@ def run_stop(all_deployments=False, refs=()):
         if choice.ok:
             ui.warn("No workflow group is running.")
         return choice.ok
+    ensure_api_for_stop()
     return stop_deployments(choice) and choice.ok

@@ -6,12 +6,12 @@ Logic for `canyonos logs`: re-subscribe to the running deploy's log stream.
 """
 
 from canyonos import ui
-from canyonos.gc import (
+from canyonos.api import (
     NoDeployError,
     controller_log,
-    deploy_status,
     deployed_logs,
     require_state,
+    workflow_group_status,
 )
 
 
@@ -22,7 +22,7 @@ def run_logs(follow=True, tail="200", agent=None):
     NoDeployError when no deploy runs."""
     state = require_state()
 
-    status = deploy_status(state)
+    status = workflow_group_status(state)
     if status is None:
         raise NoDeployError(
             "Nothing is running for this workflow group. Run `canyonos stop` to clean up."

@@ -51,17 +51,6 @@
         "zod": ">=3.25.3 <4",
       },
     },
-    "packages/api-interface": {
-      "name": "@canyoncode/canyonos-api-interface",
-      "version": "1.0.0",
-      "dependencies": {
-        "openapi-fetch": "0.17.0",
-      },
-      "devDependencies": {
-        "openapi-typescript": "7.13.0",
-        "typescript": "5.9.3",
-      },
-    },
     "packages/cli-usage-api": {
       "name": "@canyonos/cli-usage-api",
       "dependencies": {
@@ -74,6 +63,17 @@
         "@canyonos/tsconfig": "workspace:*",
         "@types/aws-lambda": "8.10.163",
         "bun-types": "1.4.2",
+        "typescript": "5.9.3",
+      },
+    },
+    "packages/sdk": {
+      "name": "@canyoncode/canyonos-sdk",
+      "version": "1.0.0",
+      "dependencies": {
+        "openapi-fetch": "0.17.0",
+      },
+      "devDependencies": {
+        "openapi-typescript": "7.13.0",
         "typescript": "5.9.3",
       },
     },
@@ -337,7 +337,7 @@
 
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
 
-    "@canyoncode/canyonos-api-interface": ["@canyoncode/canyonos-api-interface@workspace:packages/api-interface"],
+    "@canyoncode/canyonos-sdk": ["@canyoncode/canyonos-sdk@workspace:packages/sdk"],
 
     "@canyonos/api": ["@canyonos/api@workspace:packages/api"],
 
@@ -591,7 +591,7 @@
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.4", "", {}, "sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ=="],
 
-    "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.30.1", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-H2HxLvC3HDNybePJaLdSrU1hhUK5iQw+WvV1b01myFyI7sdVGe1u/IPTE5D9fGCiJDVtgMV/lmFkQXLmQyIFYA=="],
+    "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.32.1", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw=="],
 
     "@modelcontextprotocol/server-filesystem": ["@modelcontextprotocol/server-filesystem@2026.8.31", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.30.0", "diff": "^8.0.3", "glob": "^13.0.6", "minimatch": "^10.0.1" }, "bin": { "mcp-server-filesystem": "dist/index.js" } }, "sha512-kKaFkyAh6oipvc9+EAbJ552JafnMnOq5nzmzWkp1jJdBhTAAGpmIpWihUG1+rfNhmEFM98gUZDdCHCDD4v6a7Q=="],
 
@@ -2267,7 +2267,7 @@
 
     "@ai-sdk/provider-utils/undici": ["undici@6.29.0", "", {}, "sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg=="],
 
-    "@anthropic-ai/claude-agent-sdk/zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
+    "@anthropic-ai/claude-agent-sdk/zod": ["zod@4.6.6", "", {}, "sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA=="],
 
     "@azure/ai-projects/openai": ["openai@6.49.0", "", { "peerDependencies": { "@aws-sdk/credential-provider-node": ">=3.972.0 <4", "@smithy/hash-node": ">=4.3.0 <5", "@smithy/signature-v4": ">=5.4.0 <6", "ws": "^8.18.0", "zod": "^3.25 || ^4.0" }, "optionalPeers": ["@aws-sdk/credential-provider-node", "@smithy/hash-node", "@smithy/signature-v4", "ws", "zod"] }, "sha512-aYCc0C6L864eR6WSYIwQGyXriw/nIyZx0ObvhzOEVuk0zoBDpynjSbrionWI7q65B5H8jJX0DXR9snEzM6bfPg=="],
 
@@ -2296,8 +2296,6 @@
     "@fal-ai/client/eventsource-parser": ["eventsource-parser@1.1.2", "", {}, "sha512-v0eOBUbiaFojBu2s2NPBfYUoRR9GjcDNvCXVaqEf5vVfpIAh9f8RCo4vXTP8c63QRKCFwoLpMpTdPwwhEKVgzA=="],
 
     "@modelcontextprotocol/sdk/zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
-
-    "@modelcontextprotocol/server-filesystem/@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.32.1", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw=="],
 
     "@modelcontextprotocol/server-filesystem/diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
@@ -2399,8 +2397,6 @@
 
     "promptfoo/@aws-sdk/client-s3": ["@aws-sdk/client-s3@3.1149.0", "", { "dependencies": { "@aws-sdk/checksums": "^3.1001.2", "@aws-sdk/core": "^3.978.2", "@aws-sdk/credential-provider-node": "^3.972.85", "@aws-sdk/middleware-sdk-s3": "^3.972.78", "@aws-sdk/signature-v4-multi-region": "^3.996.48", "@aws-sdk/types": "^3.974.6", "@smithy/core": "^3.35.2", "@smithy/fetch-http-handler": "^5.8.0", "@smithy/node-http-handler": "^4.12.1", "@smithy/types": "^4.19.0", "tslib": "^2.6.2" } }, "sha512-wEccG+3/ap7iIBO4DbWwqNHh2u5Qm5OCQJzJaAvtVFIoZbp0qia8HIXv4rpnNmJJEX8205mlq67F9QJ0nKlcxg=="],
 
-    "promptfoo/@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.32.1", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw=="],
-
     "promptfoo/zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
 
     "prop-types/react-is": ["react-is@16.13.1", "", {}, "sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ=="],
@@ -2482,8 +2478,6 @@
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.18.20", "", { "os": "win32", "cpu": "ia32" }, "sha512-Wv7QBi3ID/rROT08SABTS7eV4hX26sVduqDOTe1MvGMjNd3EjOz4b7zeexIR62GTIEKrfJXKL9LFxTYgkyeu7g=="],
 
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-x64": ["@esbuild/win32-x64@0.18.20", "", { "os": "win32", "cpu": "x64" }, "sha512-kTdfRcSiDfQca/y9QIkng02avJ+NCaQvrMejlsB3RRv5sE9rRoeBPISaZpKxHELzRxZyLvNts1P27W3wV+8geQ=="],
-
-    "@modelcontextprotocol/server-filesystem/@modelcontextprotocol/sdk/zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
 
     "@redocly/openapi-core/minimatch/brace-expansion": ["brace-expansion@2.1.8", "", { "dependencies": { "balanced-match": "^1.0.0" } }, "sha512-BnlDzDYQoplTsZSvPi86CNzmbcb07X8ufR8fk1zivaiEJlXJkiq1MQyDCVmlWcsWbj6aWXqHnrwwevbrm/Saig=="],
 

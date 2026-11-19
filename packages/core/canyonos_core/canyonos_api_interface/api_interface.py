@@ -1,20 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""HTTP server that runs in the Global Controller container on Docker, holding its one
-workflow group, and beside the operator on Kubernetes, holding every workflow group
+"""HTTP server that runs beside the operator on Kubernetes, holding every workflow group
 there; the CLI uploads a workflow group to it, a background loop per workflow group
 starts, restarts, reloads or stops its deploy to match, and the CLI reads the deploy's
-status, logs and health from it."""
+status, logs and health from it. On Docker the CanyonOS API serves these routes
+instead."""
 
-import base64
 import hashlib
-import hmac
 import importlib.metadata
 import json
 import logging
 import os
 import shutil
+import sys
 import tarfile
 import tempfile
 import threading
@@ -29,15 +28,13 @@ from flask import Response, g, jsonify, request
 from flask_openapi3 import Info, OpenAPI
 from werkzeug.serving import run_simple
 
-from canyonos_core.controller.controller_context import DEFAULT_REDIS_PORT
 from canyonos_core.controller.orchestrator import TARGET_ENV
-from canyonos_core.controller.utils import internal_ca, internal_tls
 from canyonos_core.controller.utils.config_env import read_dotenv
 from canyonos_core.controller.utils.container_names import (
     COLLECTOR_IMAGE,
     CONTROLLER_IMAGE,
 )
-from canyonos_core.controller.utils.redis_client import PASSWORD_ENV
+from canyonos_core.controller_status import dashboard_credentials
 from canyonos_core.kubernetes.receiver import MAX_UPLOAD_BYTES
 from canyonos_core.schema import DEPLOYMENT_CONFIG
 from canyonos_core.canyonos_api_interface.models import (
@@ -61,6 +58,8 @@ from canyonos_core.canyonos_api_interface.models import (
     WorkflowPath,
     Workflows,
 )
+from canyonos_core.canyonos_api_interface import kubernetes as target
+from canyonos_core.canyonos_api_interface.kubernetes import check_caller, restore
 from canyonos_core.validate import finding_text, validate_root
 from canyonos_core.workspace_upload import (
     archive_digests,
@@ -69,17 +68,8 @@ from canyonos_core.workspace_upload import (
     remove_stale_entries,
 )
 
-# Docker unless CANYONOS_TARGET is kubernetes, as the Global Controller's orchestrator.
-KUBERNETES = os.environ.get(TARGET_ENV) == "kubernetes"
-if KUBERNETES:
-    from canyonos_core.canyonos_api_interface import kubernetes as target
-    from canyonos_core.canyonos_api_interface.kubernetes import check_caller, restore
-else:
-    from canyonos_core.canyonos_api_interface import docker as target
-
-# The workflow group is uploaded here (into a named volume) by the PUT routes: its
-# workflow_group.yaml and a folder per workflow. Deploy builds and launches against it.
-# On Kubernetes each workflow group has a folder in it, named by its workflow_group_id.
+# Each workflow group is uploaded into a folder here, named by its workflow_group_id, by
+# the PUT routes: its workflow_group.yaml and a folder per workflow.
 WORKSPACE_DIR = "/workspace"
 
 # How long the upload must stay unchanged before the apply loop acts on it.
@@ -172,11 +162,13 @@ def _uncount_put(_error):
             _changes.notify_all()
 
 
+# After `_count_put`, so a refused PUT is still counted once and uncounted once; before
+# `_refuse_other_workflow_groups`, so who may not call learns no workflow_group_id.
+@app.before_request
 def _check_caller():
-    """On Kubernetes, answer 401 unless the request's Bearer token signs a user in, and
-    403 unless they may change, or for a GET read, CanyonProjects in the namespace of
-    the workflow group it names, as uploaded and as a PUT of its settings would make
-    it."""
+    """Answer 401 unless the request's Bearer token signs a user in, and 403 unless they
+    may change, or for a GET read, CanyonProjects in the namespace of the workflow group
+    it names, as uploaded and as a PUT of its settings would make it."""
     workflow_group_id = (request.view_args or {}).get("workflow_group_id")
     configs = []
     if workflow_group_id in _workflow_groups:
@@ -195,40 +187,16 @@ def _check_caller():
     )
 
 
-def _check_secret():
-    """On Docker, answer 401 unless the request sends `Authorization: Bearer <secret>`
-    with the secret the CLI started this container with."""
-    sent = request.headers.get("Authorization", "").encode()
-    expected = f"Bearer {os.environ['CANYONOS_CONTROLLER_SECRET']}".encode()
-    if not hmac.compare_digest(sent, expected):
-        return jsonify(
-            {
-                "error": "Send the Authorization header saved in this workflow group's "
-                "~/.canyonos/deployments/<workflow group>/state.json.",
-                "code": "unauthenticated",
-            }
-        ), 401
-
-
-# After `_count_put`, so a refused PUT is still counted once and uncounted once; before
-# `_refuse_other_workflow_groups`, so who may not call learns no workflow_group_id.
-if KUBERNETES:
-    app.before_request(_check_caller)
-else:
-    app.before_request(_check_secret)
-
-
 @app.before_request
 def _refuse_other_workflow_groups():
-    """Answer 404 to a route naming a workflow group this server doesn't hold, except,
-    on Kubernetes, the PUT of a new workflow group's settings, which adds it."""
+    """Answer 404 to a route naming a workflow group this server doesn't hold, except
+    the PUT of a new workflow group's settings, which adds it."""
     workflow_group_id = (request.view_args or {}).get("workflow_group_id")
     # Not `.` or `..`: that workflow group's folder would hold the other ones'.
-    adding = (
-        KUBERNETES
-        and request.endpoint == "put_workflow_group"
-        and workflow_group_id not in (".", "..")
-    )
+    adding = request.endpoint == "put_workflow_group" and workflow_group_id not in {
+        ".",
+        "..",
+    }
     if (
         workflow_group_id is not None
         and workflow_group_id not in _workflow_groups
@@ -340,18 +308,14 @@ def _add_workflow_group(workflow_group_id, workspace):
     return workflow_group
 
 
-if not KUBERNETES:
-    _add_workflow_group(os.environ["CANYONOS_WORKFLOW_GROUP_ID"], WORKSPACE_DIR)
-
-
 @app.get(
     "/v1/workflow-groups",
     summary="List the workflow groups",
     responses={200: WorkflowGroups},
 )
 def list_workflow_groups():
-    """Return the one workflow group this server holds, with the name its last `PUT`
-    gave it."""
+    """Return every workflow group this server holds, with the name its last `PUT` gave
+    it."""
     with _changes:
         workflow_groups = [
             {"workflow_group_id": workflow_group_id, "name": workflow_group.name}
@@ -372,7 +336,7 @@ def put_workflow_group(path: WorkflowGroupPath, body: WorkflowGroupBody):
     it as the workflow group's API key, none when it is empty."""
     with _changes:
         workflow_group = _workflow_groups.get(path.workflow_group_id)
-        # Only on Kubernetes, where its first `PUT` adds a workflow group.
+        # Its first `PUT` adds a workflow group.
         if workflow_group is None:
             workspace = os.path.join(WORKSPACE_DIR, path.workflow_group_id)
             os.makedirs(workspace, exist_ok=True)
@@ -732,19 +696,10 @@ def put_dashboard(path: WorkflowGroupPath, body: DashboardBody):
     certificate its CA signs when its Redis takes only TLS, to the dashboard api at
     `url` and return the workflows it registered. Connection failures and 5xx answers
     are retried for a minute; 502 when the api refuses it or never answers."""
-    payload = {
-        "redis_host": os.environ["CANYONOS_REDIS_HOST"],
-        "redis_port": DEFAULT_REDIS_PORT,
-        "redis_password": os.environ[PASSWORD_ENV],
-    }
-    # Redis takes only TLS clients with a certificate the workflow group's CA signed.
-    if internal_ca.available():
-        cert, key = internal_ca.sign(["dashboard"])
-        payload["redis_tls"] = {
-            "ca": base64.b64decode(os.environ[internal_tls.CA_CERT_ENV]).decode(),
-            "cert": cert.decode(),
-            "key": key.decode(),
-        }
+    payload = dashboard_credentials()
+    # The dashboard api takes no `redis_tls` rather than a null one.
+    if payload["redis_tls"] is None:
+        del payload["redis_tls"]
     registration = urllib.request.Request(
         f"{body.url}/canyonos/workflows",
         data=json.dumps(payload).encode(),
@@ -786,8 +741,12 @@ def _dashboard_error(error):
 
 
 if __name__ == "__main__":
-    # No banner or request lines among the deploy's output in the container's log.
+    if os.environ.get(TARGET_ENV) != "kubernetes":
+        sys.exit(
+            f"This server runs only on Kubernetes ({TARGET_ENV}=kubernetes); on Docker "
+            "the CanyonOS API serves the workflow groups."
+        )
+    # No banner or request lines among the deploy's output in the pod's log.
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
-    if KUBERNETES:
-        restore(_add_workflow_group, WORKSPACE_DIR)
+    restore(_add_workflow_group, WORKSPACE_DIR)
     run_simple("0.0.0.0", 8000, app, threaded=True)

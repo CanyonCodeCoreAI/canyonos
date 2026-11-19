@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Join the local dashboard to a workflow group's network and have the workflow group's
-Global Controller tell the dashboard api which Redis it uses.
+"""Join the local dashboard to a workflow group's network and have the CanyonOS API tell
+the dashboard which Redis the workflow group's Global Controller uses.
 
 Temporary: applied now so a dashboard of several workflow groups works without blocking
 the flow; revisit with the workflow-key design in CAN-521 (the api should not hold
@@ -17,12 +17,8 @@ import urllib.request
 
 from canyonos import deployment
 from canyonos.auth import auth_header
-from canyonos.dashboard_stack import (
-    SERVICE_PORTS,
-    _container_name,
-    join_deployment_network,
-)
-from canyonos.gc import GCError, put_dashboard
+from canyonos.api import ApiError, put_dashboard
+from canyonos.dashboard_stack import join_deployment_network
 
 TIMEOUT_SECONDS = 10
 # Replaying a recorded week writes tens of thousands of rows; seconds on a fast
@@ -72,18 +68,16 @@ def _api_port() -> int:
 
 
 def register_workflows(state: dict) -> list[dict]:
-    """Connect the dashboard api to the workflow group's network, then have the Global
-    Controller `state` records register the workflow group's workflows. Returns the api's
-    `{workflow_id, name}` of each workflow; raises RegistrationError with Docker's or the
-    controller's message."""
+    """Connect the dashboard api to the workflow group's network, where it reaches the
+    workflow group's Redis by name, then have the CanyonOS API register the workflow
+    group `state` records. Returns the dashboard's `{workflow_id, name}` of each
+    workflow; raises RegistrationError with Docker's or the API's message."""
     joined = join_deployment_network(deployment.deployment_group())
     if joined is not None:
         raise RegistrationError(joined)
     try:
-        return put_dashboard(
-            state, f"http://{_container_name('api')}:{SERVICE_PORTS['api'][0]}"
-        )["workflows"]
-    except GCError as e:
+        return put_dashboard(state)["workflows"]
+    except ApiError as e:
         raise RegistrationError(str(e)) from None
 
 

@@ -28,8 +28,9 @@ One workflow group runs one Global Controller for all its workflows. Every part 
 
 | Component | What it does | Code |
 | --- | --- | --- |
-| [CLI](CLI.md) | The `canyonos` command, a thin client of the Global Controller | `packages/cli/` |
-| [Global Controller](CONTROLLER.md#global-controller) | Publishes the config, polls the replicas, cleans up requests | `packages/core/canyonos_core/controller/`, `canyonos_api_interface/`, `cli.py` |
+| [CLI](CLI.md) | The `canyonos` command, a thin client of the CanyonOS API | `packages/cli/` |
+| [CanyonOS API](CONTROLLER.md#global-controller) | Docker: takes each workflow group's uploads and starts, reloads and stops its Global Controller container. Also the dashboard's backend | `packages/api/` |
+| [Global Controller](CONTROLLER.md#global-controller) | Publishes the config, polls the replicas, cleans up requests | `packages/core/canyonos_core/controller/`, `cli.py`, `deploy_runner.py` |
 | [Local Controller](CONTROLLER.md#local-controller) | Serves one replica over gRPC and routes its calls | `packages/core/canyonos_core/controller/` |
 | [Endpoint](ENDPOINT.md) | The workflow's HTTP API: queues a call, reports its result | `packages/core/canyonos_core/endpoint/` |
 | [LLM Gateway](LLM_GATEWAY.md) | Carries each replica's model calls: prompts, limits, tokens | `packages/core/canyonos_core/llm_gateway/` |
@@ -44,7 +45,7 @@ One workflow group runs one Global Controller for all its workflows. Every part 
 
 On Docker and EC2:
 
-1. `canyonos deploy` starts the Global Controller's container, and uploads `workflow_group.yaml` and each workflow to it, which starts the deploy.
+1. `canyonos deploy` creates the Global Controller's container and uploads `workflow_group.yaml` and each workflow to the CanyonOS API, which writes them into the container and starts it.
 2. In the container, the build generates the stubs and Docker contexts and starts building the agent images, while the Global Controller starts.
 3. The Global Controller starts Redis and a metrics poller on its machine, publishes the config, and starts the Reconciler and the OTLP exporter as supervised processes.
 4. When the images are built, the Reconciler starts any EC2 machines (each with its own Redis and metrics poller), launches the replicas and the endpoint, and publishes the routing table.

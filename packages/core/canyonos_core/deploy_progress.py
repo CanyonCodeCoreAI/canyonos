@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Read a deploy's output lines into its progress: the phase it is in, the steps it
-finished, and why it failed. The server's
+finished, and why it failed. `run-deploy` writes it to the Global Controller
+container's progress file on Docker, and the Kubernetes server's
 `GET /v1/workflow-groups/<workflow_group_id>` reports it."""
 
 import re
@@ -152,9 +153,7 @@ class PhaseTracker:
 
         opened = _STEP_OPEN.match(line)
         if opened:
-            self.open_steps.setdefault(
-                opened.group(1), (opened.group(2), time.monotonic())
-            )
+            self.open_steps.setdefault(opened.group(1), (opened.group(2), time.time()))
         closed = _STEP_CLOSE.match(line)
         if closed:
             self.open_steps.pop(closed.group(1), None)
@@ -193,7 +192,8 @@ class PhaseTracker:
         return None, None, False
 
     def oldest_open_step(self):
-        """The buildx step that has been running longest, as (name, started), or None.
+        """The buildx step that has been running longest, as (name, started), or None;
+        `started` is a wall-clock time in seconds.
 
         buildx builds every image at once and reprints a step's header whenever its
         output resumes, so the last header seen is not the step holding things up.
@@ -261,9 +261,9 @@ _KEPT_LINES = 20_000
 
 
 class DeployProgress:
-    """One deploy as the server sees it: its process, its last 20,000 output lines (the
-    controller log), its phase, and its last reload's outcome. The server's reader
-    thread feeds it each line the process prints, then calls `finish` once it exits."""
+    """One deploy as its runner sees it: its process, its last 20,000 output lines (the
+    controller log), its phase, and its last reload's outcome. A reader thread feeds it
+    each line the process prints, then calls `finish` once it exits."""
 
     def __init__(self, process, deployed):
         self.process = process
@@ -275,10 +275,13 @@ class DeployProgress:
         self.error_code = None
         self.root_cause = None
         self.reload = None
+        # Counts the reloads answered, so a caller that sent a SIGHUP sees its answer.
+        self.reload_seq = 0
         self.deployed = deployed
         self.lines = deque(maxlen=_KEPT_LINES)
         # Every line added so far, including those `lines` no longer keeps.
         self.line_count = 0
+        # Wall-clock seconds of the last line, so another process can tell idle time.
         self.last_output = None
         self.stopping = False
         self.finished = False
@@ -293,7 +296,7 @@ class DeployProgress:
         with self.changed:
             self.lines.append(line)
             self.line_count += 1
-            self.last_output = time.monotonic()
+            self.last_output = time.time()
             self._apply(line)
             self.changed.notify_all()
 
@@ -302,9 +305,11 @@ class DeployProgress:
         if message == _RELOADED:
             self.reload = {"ok": True, "error": None}
             self.reload_answered = True
+            self.reload_seq += 1
         elif message.startswith(_RELOAD_FAILED):
             self.reload = {"ok": False, "error": message[len(_RELOAD_FAILED) :]}
             self.reload_answered = True
+            self.reload_seq += 1
 
         if self._trigger is not None:
             self._after.append(line)
@@ -352,7 +357,7 @@ class DeployProgress:
         """Return the deploy's fields of
         `GET /v1/workflow-groups/<workflow_group_id>`."""
         with self.changed:
-            now = time.monotonic()
+            now = time.time()
             oldest = self.tracker.oldest_open_step()
             return {
                 "running": not self.finished,

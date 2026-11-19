@@ -351,14 +351,15 @@ With `target: docker`, a deploy opens these ports on the machine that runs
 | ----------------------------------- | ------------------- | --------------------------------------------------------- | --------------- |
 | Endpoint                            | `endpoint.api_port` | `8080`, else the next free one that isn't the dashboard's | every interface |
 | Redis                               | `redis.port`        | `6379`, else the next free one                            | `127.0.0.1`     |
-| Global Controller                   | none                | `8000`, else the next free one                            | `127.0.0.1`     |
 | Each database                       | its `db_port`       | `5432`                                                    | every interface |
 | Dashboard, shared by every workflow | `dashboard_port`    | `8081`, else the next free one                            | every interface |
 | The dashboard's API                 | none                | `3000`, else the next free one                            | every interface |
 
 Agents open no port: the Global Controller reaches them over the workflow group's private
-Docker network. The dashboard's own database opens none either: workflows reach it by
-name on their Docker network, so a database of yours can keep `5432`.
+Docker network. Nor does the Global Controller: the CLI reaches it through the
+dashboard's API, which every Docker deploy starts. The dashboard's own database opens
+none either: workflows reach it by name on their Docker network, so a database of yours
+can keep `5432`.
 
 With `provider: ec2-pool` or `ec2-assign`, each machine also opens `50051` and up for
 its agents, on its private IP only; see [EC2 workflow group](EC2.md).

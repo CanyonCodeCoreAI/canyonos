@@ -13,7 +13,7 @@ CLI paths below are under `packages/cli/canyonos/`, and Core paths under
 | [Loading](#loading)                         | Core `schema/manifest.py`, `controller/utils/config_env.py`                |
 | [Validation](#validation)                   | Core `schema/`                                                             |
 | [Applying it](#applying-it)                 | Core `controller/controller_context.py`, `controller/global_controller.py` |
-| [Reloading](#reloading)                     | CLI `sync.py`, Core `canyonos_api_interface/`                              |
+| [Reloading](#reloading)                     | CLI `sync.py`, API `workflow-groups.apply.ts`, Core `controller_status.py` |
 
 ## Where the files are
 
@@ -25,8 +25,11 @@ itself (`workflow_folder` and `workflow_config_path`).
 On Docker, `canyonos deploy` uploads `workflow_group.yaml` and the `.env` beside it to the
 Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, with
 its `.env`, to `/workspace/<workflow>/` as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<name>`:
-`run_sync` in `sync.py`, `put_workflow` in `canyonos_api_interface/api_interface.py`). The container reads only that copy, so a host-side edit
-reaches it only through `canyonos sync`, `canyonos config` or the next deploy.
+`run_sync` in `sync.py`). The CanyonOS API writes each into the container's workspace
+volume with a job container (`write_group_files` and `put_workflow` in
+`workspace_jobs.py`); see [Global Controller](CONTROLLER.md#global-controller). The
+container reads only that copy, so a host-side edit reaches it only through
+`canyonos sync`, `canyonos config` or the next deploy.
 
 On Kubernetes, `canyonos deploy` uploads the workflow to the cluster instead. The
 in-cluster build renders the config folder as a ConfigMap, plus a CanyonProject and one
@@ -56,8 +59,8 @@ allows `${VAR}` only in string fields: a `replicas` of `"3"` would start one rep
 never raises. It runs in two places:
 
 - the in-container deploy, before anything is built (`_validate_or_exit` in `cli.py`);
-- a reload, before anything changes (`reload` in `canyonos_api_interface/docker.py`, then
-  `reload_config`).
+- a reload, before anything changes (`check` in `controller_status.py`, which the
+  CanyonOS API runs in the container, then `reload_config`).
 
 `check_workflow` checks one workflow's files the same way. `canyonos validate` (Core
 `validate.py`) runs it and adds the checks the schema cannot make. The in-cluster build
@@ -134,9 +137,10 @@ On Docker, `canyonos sync` and `canyonos config` apply a change to the running w
 (`run_sync_and_reload` in `sync.py`):
 
 1. Copy the workflows named and `workflow_group.yaml` into the container, as a deploy does.
-2. The container's server (`canyonos_api_interface/api_interface.py`) sees that only config changed. It checks the
-   config against the schema and reports every violation in `last_apply`, changing
-   nothing, if it finds one. Otherwise it sends `SIGHUP` to the Global Controller.
+2. The CanyonOS API (`reload` in `workflow-groups.apply.ts`) sees that only config
+   changed. It checks the config against the schema and reports every violation in
+   `last_apply`, changing nothing, if it finds one. Otherwise it sends `SIGHUP` to the
+   container, whose `run-deploy` passes it on to the Global Controller.
 3. `reload_config` checks the config again and parses every config file before writing
    anything. It then republishes the config as at startup, deletes the desired count
    of any agent that was removed and wakes the Reconciler, without restarting the

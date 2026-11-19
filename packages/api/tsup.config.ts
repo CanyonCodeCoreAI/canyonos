@@ -17,6 +17,7 @@ export default defineConfig((options) => ({
     prompts: 'src/sdk/prompts.ts',
     scaling: 'src/sdk/scaling.ts',
     governance: 'src/sdk/governance.ts',
+    'workflow-groups': 'src/sdk/workflow-groups.ts',
   },
   format: ['esm'],
   dts: true,

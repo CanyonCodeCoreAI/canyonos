@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { forgeApi } from '@api/app';
 import { requireApiKey } from '@api/modules/auth/auth.middleware';
+import { CONTROL_PATH_PREFIX } from '@api/modules/auth/control-key';
 import { load_prompts } from '@api/modules/prompts/prompts.service';
 import type { ScalingPolicy } from '@api/modules/scaling/scaling.types';
 import { config } from '@core/env';
@@ -233,6 +234,35 @@ describe('the dashboard API checks the API key', () => {
         route: `${method} ${path}`,
         checked: handlers.some(({ fn }) => fn === requireApiKey),
       }).toEqual({ route: `${method} ${path}`, checked: true });
+    }
+  });
+
+  test('every route under /v1/workflow-groups needs the control key, not the API key, before it reads the request', async () => {
+    const guarded = forgeApi.routes.filter(({ path }) => path.startsWith(CONTROL_PATH_PREFIX));
+    expect(guarded.length).toBeGreaterThanOrEqual(12);
+
+    for (const { method, path } of guarded) {
+      // Params that fail validation and a body that is not JSON: the key is checked first.
+      const url = `http://localhost${path.replace(/:[^/]+/g, 'not-an-id')}?tail=lots`;
+      const send = (headers: Record<string, string>) =>
+        forgeApi.handle(
+          new Request(url, {
+            method,
+            headers: { 'content-type': 'application/json', ...headers },
+            ...(method === 'GET' ? {} : { body: '{' }),
+          })
+        );
+      for (const [headers, error] of [
+        [{}, 'auth.missing_key'],
+        [bearer(TEST_API_KEY), 'auth.invalid_key'],
+      ] as const) {
+        const response = await send(headers);
+        expect({ route: `${method} ${path}`, status: response.status }).toEqual({
+          route: `${method} ${path}`,
+          status: 401,
+        });
+        expect(((await response.json()) as { error: string }).error).toBe(error);
+      }
     }
   });
 });

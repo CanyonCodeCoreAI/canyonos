@@ -15,8 +15,8 @@ import os
 from pathlib import Path
 
 from canyonos import selection, ui
+from canyonos.api import ApiError, is_running, start_api_for, workflow_group_status
 from canyonos.constants import deployment_config_path
-from canyonos.gc import deploy_status
 
 CONTEXT_FILE = Path.home() / ".canyonos" / "context.json"
 PICK_AGAIN = (
@@ -71,10 +71,15 @@ def enter_selected_folder(selected):
 
 
 def _describe(recorded, selected_name):
-    """One line of `canyonos list`: its name, ID, whether its deploy runs, and marks
-    for a deploy with no API key and for the selected workflow group."""
-    running = (deploy_status(recorded.state) or {}).get("running", False)
-    marks = ["running" if running else "not running"]
+    """One line of `canyonos list`: its name, ID, whether its deploy runs, unknown when
+    the CanyonOS API can't say, and marks for a deploy with no API key and for the
+    selected workflow group."""
+    try:
+        start_api_for(recorded.state)
+        running = is_running(workflow_group_status(recorded.state))
+        marks = ["running" if running else "not running"]
+    except ApiError:
+        marks = ["unknown (API down)"]
     if recorded.state.get("auth_disabled"):
         marks.append("(unauthenticated)")
     if recorded.name == selected_name:

@@ -70,6 +70,7 @@ Without a key, the deploy warns and anyone who reaches the endpoint can use it. 
 | Endpoint  | `8080` | The next free port                                               |
 | Redis     | `6379` | The next free port, on `127.0.0.1` only                          |
 | Dashboard | `8081` | The next free port                                               |
+| Its API   | `3000` | The next free one; the CLI runs every workflow group through it  |
 | Agents    | none   | The Global Controller reaches them over a private Docker network |
 
 A port you set in `workflow_group.yaml` is never moved: if it's taken, the deploy stops,

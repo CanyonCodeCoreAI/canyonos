@@ -3,10 +3,16 @@
 
 """This machine's API key: one string the user picks with `--api-key`, kept in
 `~/.canyonos/api_key`, that opens every endpoint deployed here and the dashboard API.
-The containers get only its SHA-256 hash. Without a key nothing is checked."""
+The containers get only its SHA-256 hash. Without a key nothing is checked.
+
+Also this machine's control key, which the CLI makes itself and keeps in
+`~/.canyonos/control_key`: the CanyonOS API's `/v1` routes, which run and stop each
+workflow group's Global Controller, answer only a call that sends it, whatever the
+API key. The API gets only its hash."""
 
 import hashlib
 import os
+import secrets
 from pathlib import Path
 
 from canyonos import ui
@@ -16,6 +22,8 @@ from canyonos.os_support import make_private_dir, write_private_file
 # canyonos_core, and both sides must agree on it.
 API_KEY_HASH_ENV = "CANYONOS_API_KEY_HASH"
 API_KEY_ENV = "CANYONOS_API_KEY"
+# What the dashboard's `.env` hands the API the control key's hash in.
+CONTROL_KEY_HASH_ENV = "CANYONOS_CONTROL_KEY_HASH"
 
 # The header every printed `curl` sends; the key itself is never printed.
 BEARER_PLACEHOLDER = '-H "Authorization: Bearer <your api key>"'
@@ -127,3 +135,52 @@ def gc_env(key: str | None) -> list[str]:
     """The `docker run` options that hand the Global Controller the hash of `key`; an
     empty hash when there is no key, so nothing is checked."""
     return ["-e", f"{API_KEY_HASH_ENV}={hash_api_key(key)}"]
+
+
+def control_key_path() -> Path:
+    """Where this machine keeps its control key: `~/.canyonos/control_key`."""
+    return Path.home() / ".canyonos" / "control_key"
+
+
+def _new_control_key(path: Path) -> None:
+    """Write a new random control key to `path` unless one is there already: written
+    beside it and linked into place, so two commands making one at the same moment
+    end up with the same key."""
+    make_private_dir(path.parent)
+    draft = path.with_name(f".{path.name}.{os.getpid()}")
+    try:
+        write_private_file(draft, secrets.token_hex(32) + "\n")
+        try:
+            os.link(draft, path)
+        except FileExistsError:
+            pass
+    finally:
+        draft.unlink(missing_ok=True)
+
+
+def control_key() -> str:
+    """This machine's control key, made the first time it is needed; raise RuntimeError
+    when `~/.canyonos/control_key` can't be read or written."""
+    path = control_key_path()
+    try:
+        if not path.is_file():
+            _new_control_key(path)
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise RuntimeError(
+            f"Could not read or write {path}: {error.strerror or error}"
+        ) from error
+    if not key:
+        raise RuntimeError(f"{path} is empty: delete it and run the command again.")
+    return key
+
+
+def control_key_hash() -> str:
+    """The SHA-256 of this machine's control key in lowercase hex, as the CanyonOS API
+    holds it."""
+    return hash_api_key(control_key())
+
+
+def control_header() -> dict[str, str]:
+    """The header that sends this machine's control key to the CanyonOS API."""
+    return {"Authorization": f"Bearer {control_key()}"}

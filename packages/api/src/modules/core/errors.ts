@@ -14,21 +14,31 @@ export const ApiErrorSchema = z.object({
   details: z
     .array(z.object({ path: z.string(), summary: z.string(), message: z.string() }))
     .optional(),
+  findings: z.array(z.string()).optional(),
+  warnings: z.array(z.string()).optional(),
 });
 
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
-type AppErrorCode = 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500 | 502;
+type AppErrorCode = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500 | 502 | 503 | 504;
+
+/** What an error answer carries besides its code and message, such as the findings of a check. */
+export interface AppErrorExtra {
+  findings?: string[];
+  warnings?: string[];
+}
 
 export interface AppErrorOptions {
   cause?: unknown;
   retryable?: boolean;
   meta?: Record<string, unknown>;
+  extra?: AppErrorExtra;
 }
 
 export class AppError extends Error {
   readonly retryable: boolean;
   readonly meta?: Record<string, unknown>;
+  readonly extra?: AppErrorExtra;
   constructor(
     readonly status: AppErrorCode,
     readonly code: string,
@@ -39,9 +49,10 @@ export class AppError extends Error {
     this.name = 'AppError';
     this.retryable = options?.retryable ?? true;
     this.meta = options?.meta;
+    this.extra = options?.extra;
   }
   toResponse() {
-    return { error: this.code, message: this.message };
+    return { error: this.code, message: this.message, ...this.extra };
   }
 }
 
@@ -55,6 +66,8 @@ export const notFound = (code: string, message: string, opts?: AppErrorOptions) 
   new AppError(404, code, message, opts);
 export const conflict = (code: string, message: string, opts?: AppErrorOptions) =>
   new AppError(409, code, message, opts);
+export const payloadTooLarge = (code: string, message: string, opts?: AppErrorOptions) =>
+  new AppError(413, code, message, opts);
 export const unprocessable = (code: string, message: string, opts?: AppErrorOptions) =>
   new AppError(422, code, message, opts);
 export const tooManyRequests = (code: string, message: string, opts?: AppErrorOptions) =>
@@ -63,6 +76,18 @@ export const internalError = (code: string, message: string, opts?: AppErrorOpti
   new AppError(500, code, message, opts);
 export const badGateway = (code: string, message: string, opts?: AppErrorOptions) =>
   new AppError(502, code, message, opts);
+export const serviceUnavailable = (code: string, message: string, opts?: AppErrorOptions) =>
+  new AppError(503, code, message, opts);
+export const gatewayTimeout = (code: string, message: string, opts?: AppErrorOptions) =>
+  new AppError(504, code, message, opts);
+
+/** The answer to a request a request hook refuses with `error`. Elysia answers an error thrown
+ * in `onRequest` with its `toResponse()` and status 200, past the error handler, so the hook
+ * returns this instead. */
+export function early_refusal(set: { status?: number | string }, error: AppError) {
+  set.status = error.status;
+  return { ...error.toResponse(), request_id: getRequestContext()?.request_id };
+}
 
 export const wrapError = (
   error: unknown,
@@ -85,10 +110,13 @@ export const errorPlugin = new Elysia({ name: 'plugin.error' })
       403: ApiErrorSchema,
       404: ApiErrorSchema,
       409: ApiErrorSchema,
+      413: ApiErrorSchema,
       422: ApiErrorSchema,
       429: ApiErrorSchema,
       500: ApiErrorSchema,
       502: ApiErrorSchema,
+      503: ApiErrorSchema,
+      504: ApiErrorSchema,
     },
   })
   .onError(({ code, error, status }) => {

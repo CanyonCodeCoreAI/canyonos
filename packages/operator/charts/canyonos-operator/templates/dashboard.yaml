@@ -198,6 +198,8 @@ spec:
             - name: CANYONOS_API_KEY_HASH
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: api-key-hash, optional: true}}
             - {name: LOG_LEVEL, value: info}
+            # No Docker here: the workflow-group routes answer that Docker is disabled.
+            - {name: DOCKER_SOCKET, value: ""}
             - {name: CANYONOS_PROJECTS_FILE, value: /etc/canyonos/projects/projects.json}
             - {name: METRICS_RAW_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRawRetentionDays | quote }}}
             - {name: METRICS_ROLLUP_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRollupRetentionDays | quote }}}

@@ -24,6 +24,8 @@ export const LOG_DOMAINS = {
   QUEUE: '[Queue]',
   WORKER: '[Worker]',
   TELEMETRY: '[Telemetry]',
+  DOCKER: '[Docker]',
+  WORKFLOW_GROUPS: '[WorkflowGroups]',
   ERROR: '[Error]',
 } as const;
 

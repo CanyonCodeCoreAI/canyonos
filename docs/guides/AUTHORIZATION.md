@@ -7,6 +7,9 @@ the dashboard. CanyonOS checks one API key per machine, as vLLM does:
   `Authorization: Bearer <your api key>` with that exact string.
 - One key opens everything on the machine: every workflow group's endpoint and the
   dashboard API. There are no scopes and no users.
+- The CLI's own `/v1/workflow-groups` routes on the dashboard API take a control key
+  instead, which the CLI makes in `~/.canyonos/control_key`; see
+  [Global Controller](../architecture/CONTROLLER.md#global-controller).
 - With no key set, nothing is checked and everyone who reaches the endpoint or the
   dashboard can use it. `deploy` and `serve` warn about it.
 - One key per workflow group is planned, not there yet.

@@ -3,11 +3,19 @@
 ## Process layout
 
 ```
+CanyonOS API (packages/api), on Docker, through the Docker Engine API:
+  start and signal the container, read progress.json and its log, exec
+  check / runtime-status / health / agent-logs / dashboard-credentials,
+  run put-workflow / remove-workflows / write-group-files in a one-off
+  container of the core image that mounts only the workspace volume
+                                   │
+                                   ▼
 ┌──────────────────────────── GC container ────────────────────────────┐
 │                                                                      │
-│  api_interface.py (:8000) ◀── PUT, DELETE /v1/workflow-groups/<id>   │
-│       │ spawns,             and its /workflows/<name>, GET them and  │
-│       │ reads its output    /logs /health, GET /v1/workflow-groups   │
+│  cli.py run-deploy (deploy_runner.py, main process)                  │
+│       │ spawns, copies     ──▶ /var/lib/canyonos/progress.json       │
+│       │ its output to the      (phase, steps, error, last reload)    │
+│       │ log, forwards SIGTERM / SIGINT / SIGHUP                      │
 │       ▼                                                              │
 │  cli.py deploy ──▶ GlobalController                                  │
 │                      │  ProcessSupervisor                            │

@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """`canyonos list`, `canyonos select-context` and the commands that act on the selected
-workflow group, through the installed command, each case in its own HOME. The workflow groups
-are records `canyonos deploy` would write, whose Global Controller port answers
-nothing, so no Docker is needed and none is running. `canyonos dashboard` finds the
-dashboard through a stand-in `docker` that reports its web container's port, and
-prints the link it would open."""
+workflow group, through the installed command, each case in its own HOME. The workflow
+groups are records `canyonos deploy` would write, whose Global Controller container is
+on no Docker engine, and the CanyonOS API that would say whether they run is on a port
+that answers nothing, so no Docker is needed and none is started. `canyonos dashboard`
+finds the dashboard through a stand-in `docker` that reports its web container's port,
+and prints the link it would open."""
 
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from urllib.parse import quote, urlsplit
 
 from .harness import CliCase
 
+API_DOWN = "Could not reach the CanyonOS API"
 FIRST_ID = "8a3f6c1e-2b4d-4e5f-9a7b-1c2d3e4f5a6b"
 SECOND_ID = "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
 PICK_AGAIN = "`canyonos select-context <workflow group>`"
@@ -44,11 +46,22 @@ def _closed_port() -> int:
         return probe.getsockname()[1]
 
 
+def _api_down(case: CliCase) -> str:
+    """Put the CanyonOS API of `case` on a port nothing answers on, as the CLI finds
+    it when no API runs, and return its URL."""
+    ports = case.home / ".canyonos" / "dashboard" / "ports.json"
+    if not ports.exists():
+        ports.parent.mkdir(parents=True, exist_ok=True)
+        ports.write_text(json.dumps({"api": _closed_port()}))
+    return f"http://127.0.0.1:{json.loads(ports.read_text())['api']}"
+
+
 def _record(
     case: CliCase, folder: str, deployment_id: str, auth_disabled: bool = False
 ) -> str:
     """Write the workflow group folder `folder` and the record a deploy from it leaves,
-    and return the workflow group's name."""
+    with no CanyonOS API running, and return the workflow group's name."""
+    _api_down(case)
     directory = case.cwd / folder
     directory.mkdir()
     (directory / "workflow_group.yaml").write_text(
@@ -61,7 +74,6 @@ def _record(
         json.dumps(
             {
                 "container_id": f"{folder}-controller",
-                "port": _closed_port(),
                 "workflow_group_id": deployment_id,
                 "workflow_group_dir": str(directory),
                 "auth_disabled": auth_disabled,
@@ -108,7 +120,7 @@ def test_list_shows_each_deployment_and_marks_one_deployed_without_an_api_key(
     lines = {line.split()[1]: line for line in result.stdout.splitlines()}
     assert set(lines) == {first, second}, result.stdout
     assert FIRST_ID in lines[first] and SECOND_ID in lines[second], result.stdout
-    assert "not running" in lines[first], result.stdout
+    assert "unknown (API down)" in lines[first], result.stdout
     assert "(unauthenticated)" in lines[second], result.stdout
     assert "(unauthenticated)" not in lines[first], result.stdout
     assert "(selected)" not in result.stdout, result.stdout
@@ -152,9 +164,21 @@ def test_a_command_outside_a_deployment_folder_runs_from_the_selected_one(
 
     result = cli_case.run_cli(["status"], cwd=_outside(cli_case))
 
-    assert result.returncode == 3, _said(result)
+    assert result.returncode == 1, _said(result)
     assert f"Acting on {name}" in result.stderr, _said(result)
-    assert "No workflow group is currently running" in result.stderr, _said(result)
+    assert API_DOWN in result.stderr, _said(result)
+
+
+def test_status_without_the_canyonos_api_fails_and_names_it(cli_case: CliCase):
+    _record(cli_case, "app-abcz", FIRST_ID)
+    api_url = _api_down(cli_case)
+
+    result = cli_case.run_cli(["status"], cwd=cli_case.cwd / "app-abcz")
+
+    assert result.returncode == 1, _said(result)
+    assert f"{API_DOWN} at {api_url}" in _said(result)
+    assert "canyonos serve" in _said(result)
+    assert "Traceback" not in result.stderr, result.stderr
 
 
 def test_curl_outside_a_workflow_group_folder_calls_the_selected_one(
@@ -167,7 +191,7 @@ def test_curl_outside_a_workflow_group_folder_calls_the_selected_one(
 
     assert result.returncode == 1, _said(result)
     assert f"Acting on {name}" in result.stderr, _said(result)
-    assert "No workflow group is running" in result.stderr, _said(result)
+    assert API_DOWN in result.stderr, _said(result)
     assert "No workflow group is selected" not in _said(result)
 
 

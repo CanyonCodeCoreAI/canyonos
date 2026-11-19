@@ -29,10 +29,11 @@ path = [
   # Recorded telemetry, gzipped: no room for a header.
   "packages/api/src/db/*.fixture.json.gz",
   "packages/web/src/routeTree.gen.ts",
-  # Generated from openapi.json, and the empty marker that says the package is typed.
-  "packages/api-interface/src/schema.ts",
-  "packages/api-interface/canyonos_api_interface/models.py",
-  "packages/api-interface/canyonos_api_interface/py.typed",
+  # Build output (gitignored), which `bun run check` may build while `reuse lint` runs.
+  "packages/*/dist/**",
+  # Generated from packages/api/openapi.json by `bun run sdk:generate`.
+  "packages/sdk/src/schema.ts",
+  "packages/cli/canyonos/sdk/models.py",
   # Kubernetes YAML that controller-gen regenerates, and Go module files.
   "packages/operator/charts/*/crds/**",
   "packages/operator/charts/*/files/**",

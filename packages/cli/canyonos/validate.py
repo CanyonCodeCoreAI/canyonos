@@ -30,8 +30,8 @@ from canyonos.constants import (
     workflow_config_path,
     workflow_root,
 )
-from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker
-from canyonos.init import docker_is_local, docker_running
+from canyonos.docker_cmd import DOCKER_PULL_TIMEOUT, cleanup_docker, docker_is_local
+from canyonos.init import docker_running
 
 # Distinct from 1 (findings) the way grep and diff use it: trouble, not a result.
 UNCHECKED = 2

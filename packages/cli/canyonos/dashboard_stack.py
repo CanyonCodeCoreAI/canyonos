@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Manage the local CanyonOS dashboard stack."""
+"""Manage the local CanyonOS stack: its database, the CanyonOS API, which every
+command that runs or reads a deploy here calls, and the dashboard's web app."""
 
 from __future__ import annotations
 
@@ -22,13 +23,13 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from canyonos import deployment, env, ports
-from canyonos.auth import API_KEY_HASH_ENV
+from canyonos.auth import API_KEY_HASH_ENV, CONTROL_KEY_HASH_ENV, control_key_hash
 from canyonos.constants import (
     DEFAULT_DASHBOARD_API_PORT,
     DEFAULT_DASHBOARD_PORT,
     public_ip,
 )
-from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT
+from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT, mounted_docker_socket
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import (
     DEFAULT_MAX_PORT_ATTEMPTS,
@@ -53,6 +54,9 @@ SERVICE_PORTS = {
 }
 # The services a workflow group's containers reach by container name on its network.
 NETWORK_SERVICES = ("api", "db")
+# What a deploy needs running: the API runs and stops its Global Controller.
+API_SERVICES = ("db", "api")
+STACK_SERVICES = (*API_SERVICES, "web")
 
 
 @dataclass(frozen=True)
@@ -228,11 +232,37 @@ def _join_deployment_networks() -> None:
         join_deployment_network(network)
 
 
-def _existing_dashboard_port() -> int | None:
+def running_web_port() -> int | None:
     """The host port an already-running dashboard `web` container owns, if any
     -- so re-running `canyonos serve` reconnects to the same stack instead of
     picking a new port out from under it."""
     return _published_port("web", SERVICE_PORTS["web"][0])
+
+
+def running_api_port() -> int | None:
+    """The host port an already-running CanyonOS API container owns, if any."""
+    return _published_port("api", SERVICE_PORTS["api"][0])
+
+
+def running_api_image() -> str | None:
+    """The ID of the image the CanyonOS API container runs from, or None when there is
+    no such container."""
+    try:
+        result = _run(
+            [
+                "docker",
+                "container",
+                "inspect",
+                "--format",
+                "{{.Image}}",
+                _container_name("api"),
+            ]
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def _published_port(service: str, container_port: int) -> int | None:
@@ -303,23 +333,27 @@ def service_ports(dashboard_port: int | None = None) -> dict[str, int]:
 
 
 def pick_service_ports(
-    claims: dict[int, str] | None = None, dashboard_port: int | None = None
+    claims: dict[int, str] | None = None,
+    dashboard_port: int | None = None,
+    services: tuple[str, ...] = tuple(SERVICE_PORTS),
 ) -> dict[str, int]:
-    """Pick and save the host ports the dashboard's services start on, under
+    """Pick and save the host ports the dashboard's `services` start on, under
     `ports.held()`: a running dashboard's, else `dashboard_port` for `web` as it is
     (`_validate` refuses it when taken), else the defaults when they are free and not
     in `claims` (by default, what the rest of CanyonOS here claims), else the next
-    port that is."""
+    port that is. A service not among `services` keeps the port it has, or the one it
+    starts on next, without a pick, so bringing up the API alone never moves the web
+    app's port."""
     claims = dict(ports.claimed(picking_dashboard=True) if claims is None else claims)
     saved = _saved_service_ports()
     pinned = _pinned(dashboard_port)
     picked = {}
     for service, (container_port, default, what) in SERVICE_PORTS.items():
-        port = (
-            _published_port(service, container_port)
-            or pinned.get(service)
-            or ports.pick(default, what, claims)
-        )
+        port = _published_port(service, container_port) or pinned.get(service)
+        if port is None and service in services:
+            port = ports.pick(default, what, claims)
+        if port is None:
+            port = saved.get(service, default)
         claims[port] = ports.DASHBOARD
         picked[service] = port
     if picked != saved:
@@ -327,11 +361,13 @@ def pick_service_ports(
     return picked
 
 
-def _validate(configured_port: int | None, api_key_hash: str) -> DashboardStack:
+def _validate(
+    configured_port: int | None, api_key_hash: str, services: tuple[str, ...]
+) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a
     DashboardStack on the running dashboard's ports, else on the ones
     `pick_service_ports` picks, with `configured_port` for the web (failing when it
-    is taken)."""
+    is taken and the web app is among `services`)."""
     if shutil.which("docker") is None:
         raise PhaseFailure("validate", "docker is not on PATH")
 
@@ -359,7 +395,8 @@ def _validate(configured_port: int | None, api_key_hash: str) -> DashboardStack:
         claims = ports.claimed(picking_dashboard=True)
         if (
             configured_port
-            and _existing_dashboard_port() is None
+            and "web" in services
+            and running_web_port() is None
             and (configured_port in claims or not is_port_free(configured_port))
         ):
             raise PhaseFailure(
@@ -368,7 +405,7 @@ def _validate(configured_port: int | None, api_key_hash: str) -> DashboardStack:
                 "it so CanyonOS picks a free port.",
             )
         try:
-            picked = pick_service_ports(claims, configured_port)
+            picked = pick_service_ports(claims, configured_port, services)
         except RuntimeError as e:
             raise PhaseFailure("validate", str(e)) from e
 
@@ -406,6 +443,12 @@ def dashboard_api_key_hash() -> str | None:
     return _read_existing_secret(env_path, API_KEY_HASH_ENV) or ""
 
 
+def dashboard_control_key_hash() -> str | None:
+    """The hash of the control key the CanyonOS API was last started with, or None when
+    it was never started with one here."""
+    return _read_existing_secret(_state_dir() / ".env", CONTROL_KEY_HASH_ENV)
+
+
 def _stack_secrets(env_path: Path) -> dict[str, str]:
     """Each of the stack's secrets: the one its `.env` already holds, or a new random one."""
     return {
@@ -432,6 +475,11 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
                 for service, port in stack.host_ports.items()
             },
             API_KEY_HASH_ENV: stack.api_key_hash,
+            # The CanyonOS API's `/v1` routes answer only the control key.
+            CONTROL_KEY_HASH_ENV: control_key_hash(),
+            # The API runs each workflow group's Global Controller through the same
+            # engine the CLI created that container on.
+            "CANYONOS_DOCKER_SOCKET": mounted_docker_socket(),
         }
         write_private_file(
             stack.env_path,
@@ -448,7 +496,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
             + "\n",
             encoding="utf-8",
         )
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         raise PhaseFailure("prepare", "could not prepare the dashboard state directory")
 
     return managed_env, "dashboard state prepared"
@@ -485,10 +533,17 @@ def _compose_env(managed_env: dict[str, str]) -> dict[str, str]:
     return {**os.environ, **managed_env}
 
 
-def _pull(stack: DashboardStack, manifest: Path, managed_env: dict[str, str]) -> str:
+def _pull(
+    stack: DashboardStack,
+    manifest: Path,
+    managed_env: dict[str, str],
+    services: tuple[str, ...],
+) -> str:
+    """Pull the images of `services` the machine lacks, so starting the API alone needs
+    no web app image."""
     try:
         result = _run(
-            [*_compose_argv(stack, manifest), "pull", "--policy", "missing"],
+            [*_compose_argv(stack, manifest), "pull", "--policy", "missing", *services],
             env=_compose_env(managed_env),
         )
     except OSError:
@@ -537,9 +592,11 @@ def _start(
     stack: DashboardStack,
     manifest: Path,
     managed_env: dict[str, str],
+    services: tuple[str, ...],
     movable: bool,
 ) -> tuple[DashboardStack, dict[str, str]]:
-    """Run `docker compose up` and return the stack and env it started with. A port
+    """Run `docker compose up` for `services`, with what they depend on, and return the
+    stack and env it started with. A port
     Docker refuses moves to the next one the rest of CanyonOS here doesn't claim, the
     web port only when `movable` (no `dashboard_port`), so only a port Docker holds
     is chosen."""
@@ -554,6 +611,7 @@ def _start(
                     "--wait",
                     "--wait-timeout",
                     "180",
+                    *services,
                 ],
                 env=_compose_env(managed_env),
             )
@@ -608,15 +666,23 @@ def dashboard_url(port: int) -> str:
     return f"http://{public_ip() or '127.0.0.1'}:{port}"
 
 
-def _verify(port: int) -> str:
-    local_url = f"http://127.0.0.1:{port}"
+def _health_urls(host_ports: dict[str, int], services: tuple[str, ...]) -> list[str]:
+    """What answers 200 once `services` are up: the API on its own port, and the web
+    app with the API behind its proxy when the web app is among them."""
+    urls = [f"http://127.0.0.1:{host_ports['api']}/healthz"]
+    if "web" in services:
+        web_url = f"http://127.0.0.1:{host_ports['web']}"
+        urls += [f"{web_url}/healthz", f"{web_url}/api/healthz"]
+    return urls
+
+
+def _verify(host_ports: dict[str, int], services: tuple[str, ...]) -> None:
+    urls = _health_urls(host_ports, services)
     deadline = time.monotonic() + 30
-    endpoints = (f"{local_url}/healthz", f"{local_url}/api/healthz")
     while time.monotonic() < deadline:
-        if all(_endpoint_healthy(endpoint) for endpoint in endpoints):
-            return dashboard_url(port)
-        if time.monotonic() < deadline:
-            time.sleep(1)
+        if all(_endpoint_healthy(url) for url in urls):
+            return
+        time.sleep(1)
     raise PhaseFailure(
         "verify", "dashboard health checks did not return 200 within 30 seconds"
     )
@@ -624,7 +690,9 @@ def _verify(port: int) -> str:
 
 def _secret_values(managed_env: dict[str, str]) -> list[str]:
     return [
-        managed_env[key] for key in (*SECRET_KEYS, API_KEY_HASH_ENV) if managed_env[key]
+        managed_env[key]
+        for key in (*SECRET_KEYS, API_KEY_HASH_ENV, CONTROL_KEY_HASH_ENV)
+        if managed_env[key]
     ]
 
 
@@ -707,12 +775,15 @@ def run_dashboard(
     configured_port: int | None,
     api_key_hash: str,
     renewed: tuple[str, ...] = (),
+    services: tuple[str, ...] = STACK_SERVICES,
 ) -> ServeResult:
-    """Start the local dashboard for `canyonos serve` and `canyonos deploy`, reporting
-    each step; on failure, save the logs and remove what this run started. Its API
-    checks the API key whose hash is `api_key_hash`, or nothing when it is "".
-    The `renewed` services start in new containers even when they run, as the api
-    does for `canyonos serve` and for a deploy that changes the key.
+    """Start `services` of the local stack, with what they depend on, for `canyonos
+    serve` and `canyonos deploy`, reporting each step; on failure, save the logs and
+    remove what this run started. Its API checks the API key whose hash is
+    `api_key_hash`, or nothing when it is "", and its `/v1` routes this machine's
+    control key. The `renewed` services start in new containers even when they run,
+    as the api does for `canyonos serve` and for a deploy that changes a key or the
+    API's image. The result's URL is the dashboard's when `services` hold the web app.
 
     The whole run holds the dashboard lock, so a concurrent serve, stop, or clean
     from another workflow folder waits for it rather than racing it.
@@ -735,7 +806,7 @@ def run_dashboard(
                     lambda: report(ServeResult(True, "validate", LOCK_WAIT_MESSAGE))
                 )
             )
-            stack = _validate(configured_port, api_key_hash)
+            stack = _validate(configured_port, api_key_hash, services)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 
             managed_env, prepare_message = _prepare(stack)
@@ -749,17 +820,20 @@ def run_dashboard(
             )
             had_containers = _project_has_running_containers(stack, manifest)
 
-            report(ServeResult(True, "pull", _pull(stack, manifest, managed_env)))
+            report(
+                ServeResult(True, "pull", _pull(stack, manifest, managed_env, services))
+            )
 
             _leave_deployment_networks()
             _remove(stack, manifest, managed_env, renewed)
             stack, managed_env = _start(
-                stack, manifest, managed_env, movable=not configured_port
+                stack, manifest, managed_env, services, movable=not configured_port
             )
             _join_deployment_networks()
             report(ServeResult(True, "start", "dashboard stack started"))
 
-            url = _verify(stack.host_ports["web"])
+            _verify(stack.host_ports, services)
+            url = dashboard_url(stack.host_ports["web"]) if "web" in services else None
             report(ServeResult(True, "verify", "dashboard health checks passed", url))
             return ServeResult(True, "verify", "dashboard health checks passed", url)
         except PhaseFailure as failure:

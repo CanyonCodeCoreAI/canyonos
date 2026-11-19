@@ -30,9 +30,9 @@ from rich.text import Text
 from canyonos import ui
 from canyonos.auth import auth_header
 from canyonos.deploy import is_workflow_id
-from canyonos.gc import GCError, _error_body, deployed_endpoint, existing_deploy
+from canyonos.api import ApiError, deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal, write_private_file
-from canyonos.test import _parse_answer, _query_route, _Run
+from canyonos.test import _error_body, _parse_answer, _query_route, _Run
 from canyonos.theme import GREEN, WHITE
 from utils import tui
 
@@ -311,7 +311,7 @@ def run_chat():
     try:
         if deployed := _deployed_workflows():
             _remember(workflows, deployed)
-    except GCError as e:
+    except ApiError as e:
         error = f"Could not read the workflows of the workflow group running here: {e}"
     workflow = workflows[0] if workflows else None
     _open(workflow)

@@ -18,7 +18,7 @@ from canyonos import ui
 from canyonos.constants import DEFAULT_API_PORT, deployment_config_path, read_config
 from canyonos.deployment import deployment_name
 from canyonos.forwards import DASHBOARD, close_forward, open_forward
-from canyonos.gc import delete_workflow_group
+from canyonos.api import delete_workflow_group
 
 # The project's endpoint inside its namespace (builders.EndpointName and its API port).
 ENDPOINT_SERVICE = "svc/canyonos-endpoint"
@@ -99,9 +99,10 @@ def _exec_plugin_token(plugin):
 
 
 def kubernetes_state():
-    """This folder's workflow group as gc.py takes it on Kubernetes: the local port of a
-    forward to the cluster's CanyonOS API, its workflow_group_id, and the user's kubectl
-    login, a token or one from its login plugin, in the headers every request sends."""
+    """This folder's workflow group as `canyonos.api` takes it on Kubernetes: the local
+    URL of a forward to the cluster's CanyonOS API, its workflow_group_id, and the
+    user's kubectl login, a token or one from its login plugin, in the headers every
+    request sends."""
     user = json.loads(
         kubectl(["config", "view", "--raw", "--minify", "-o", "json"]).stdout
     )["users"][0]["user"]
@@ -123,11 +124,11 @@ def kubernetes_state():
         context=current_context(),
     )
     return {
-        "port": port,
+        "api_url": f"http://127.0.0.1:{port}",
         "workflow_group_id": read_config(deployment_config_path()).get(
             "workflow_group_id"
         ),
-        "headers": {"Authorization": f"Bearer {token}"},
+        "api_headers": {"Authorization": f"Bearer {token}"},
     }
 
 

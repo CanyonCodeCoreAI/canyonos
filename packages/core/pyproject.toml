@@ -32,7 +32,7 @@ dependencies = [
 # Import-only: the core runtime ships no console script. The user-facing `canyonos`
 # executable lives in the separate `packages/cli` distribution. In-container entrypoints
 # are invoked as `python -m canyonos_core.cli` / `.llm_gateway` /
-# `.canyonos_api_interface.api_interface`.
+# `.canyonos_api_interface.api_interface` (the Kubernetes server).
 
 [build-system]
 requires = ["setuptools>=84.1.0"]

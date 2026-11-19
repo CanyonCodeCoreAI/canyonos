@@ -108,7 +108,7 @@ On Kubernetes the operator sets `CANYONOS_ENDPOINT_URL` to the Route, Ingress or
 
 Three components read this hash:
 
-- The Global Controller's server, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`. The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
+- The CanyonOS API, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`, which it reads with `runtime-status` in the Global Controller's container on Docker. The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
 - The dashboard API, at `GET /workflows/:workflow_id/monitoring/endpoint`.
 - The Reconciler, which reads `api_port` before it launches the endpoint.
 

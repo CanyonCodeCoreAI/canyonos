@@ -24,6 +24,11 @@ services:
     container_name: canyonos-dashboard-api
     # Bun as PID 1 ignores SIGTERM, so without an init `docker compose stop` waits 10s to kill it.
     init: true
+    # The API runs and stops each workflow group's Global Controller container through
+    # the host's Docker engine, whose socket only root may use.
+    user: root
+    volumes:
+      - ${CANYONOS_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     healthcheck:
       start_period: 30s
       start_interval: 500ms
@@ -42,6 +47,11 @@ services:
       # The SHA-256 of this machine's API key (`--api-key`); empty, the API checks
       # nothing. Read once when the API starts.
       CANYONOS_API_KEY_HASH: ${CANYONOS_API_KEY_HASH}
+      # The SHA-256 of this machine's control key (`~/.canyonos/control_key`), which
+      # the `/v1` routes that run each Global Controller require; unset, they refuse
+      # every call.
+      CANYONOS_CONTROL_KEY_HASH: ${CANYONOS_CONTROL_KEY_HASH}
+      DOCKER_SOCKET: /var/run/docker.sock
       LOG_LEVEL: info
       # Taken from the shell `canyonos deploy` or `canyonos serve` runs in, since the
       # CLI has no setting for how long the API keeps metrics; unset, the API defaults.

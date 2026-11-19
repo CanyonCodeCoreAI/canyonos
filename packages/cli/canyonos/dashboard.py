@@ -16,19 +16,14 @@ from urllib.parse import quote
 
 from canyonos import ui
 from canyonos.auth import machine_api_key
-from canyonos.dashboard_stack import (
-    SERVICE_PORTS,
-    _existing_dashboard_port,
-    _published_port,
-    dashboard_url,
-)
+from canyonos.dashboard_stack import dashboard_url, running_api_port, running_web_port
 from canyonos.os_support import is_terminal
 
 
 def _requires_key():
     """False when the dashboard's API answers that it checks no API key; True
     otherwise, also when it can't say."""
-    port = _published_port("api", SERVICE_PORTS["api"][0])
+    port = running_api_port()
     if port is None:
         return True
     try:
@@ -57,7 +52,7 @@ def run_open_dashboard():
     """Run `canyonos dashboard`: open the dashboard on this machine signed in with
     this machine's API key, or show its URL and how to sign in when there is no key
     here. Returns False when no dashboard runs."""
-    port = _existing_dashboard_port()
+    port = running_web_port()
     if port is None:
         ui.fail(
             "The dashboard is not running. Start it with `canyonos serve`, or deploy "

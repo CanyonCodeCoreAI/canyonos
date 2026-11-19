@@ -42,6 +42,8 @@ DOCKER_PROJECT_ENV = "CANYONOS_DOCKER_PROJECT"
 PROJECT_LABEL = "com.docker.compose.project"
 ROLE_LABEL = "canyonos.role"
 GC_ROLE = "global-controller"
+# The CanyonOS API finds a workflow group's Global Controller container by it.
+WORKFLOW_GROUP_LABEL = "canyonos.workflow_group_id"
 NETWORK_ROLE = "deployment-network"
 
 # Keep in sync with canyonos_core/schema/manifest.py.
@@ -195,9 +197,16 @@ def deployment_label_args():
 
 
 def gc_role_label_args():
-    """Return the `docker run` flags that mark a container as a Global Controller, so
-    `canyonos stop` can tell whether another workflow group still needs the dashboard."""
+    """Return the `docker create` flags that mark a container as a Global Controller,
+    so `canyonos stop` can tell whether another workflow group still needs the
+    dashboard."""
     return ["--label", f"{ROLE_LABEL}={GC_ROLE}"]
+
+
+def workflow_group_label_args(workflow_group_id):
+    """Return the `docker create` flags that name the workflow group a Global
+    Controller container runs, by which the CanyonOS API finds it."""
+    return ["--label", f"{WORKFLOW_GROUP_LABEL}={workflow_group_id}"]
 
 
 def network_label_args():
@@ -247,25 +256,31 @@ def state_dir(name=None):
 
 
 def state_path(name=None):
-    """Return the file that records the Global Controller container and port of
+    """Return the file that records the Global Controller container and the ports of
     workflow group `name`, by default this folder's."""
     return os.path.join(state_dir(name), "state.json")
 
 
 def other_global_controllers_running(own_container_id, env=None):
     """Return True when a Global Controller other than `own_container_id` (any, when
-    None) is running on this Docker engine, from any workflow group. Also True when Docker
-    can't answer, so the shared dashboard is never taken down from under another
-    workflow group."""
+    None) is running on this Docker engine, from any workflow group, or created by a
+    deploy that has yet to have the CanyonOS API start it. Also True when Docker can't
+    answer, so the shared dashboard is never taken down from under another workflow
+    group."""
     try:
         result = run_docker(
             [
                 "docker",
                 "ps",
+                "-a",
                 "-q",
                 "--no-trunc",
                 "--filter",
                 f"label={ROLE_LABEL}={GC_ROLE}",
+                "--filter",
+                "status=running",
+                "--filter",
+                "status=created",
             ],
             timeout=DOCKER_QUICK_TIMEOUT,
             action="Listing running Global Controllers",

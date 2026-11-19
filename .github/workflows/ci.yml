@@ -64,8 +64,12 @@ jobs:
       - name: Check that every manifest carries the same version
         run: bun run version:check
 
-      - name: Check that packages/api-interface matches core's API (bun run api-interface:generate)
-        run: bun run api-interface:generate && git diff --exit-code -- packages/api-interface
+      # Untracked files count too: a new generated file must be committed.
+      - name: Check that the API spec and the SDKs match the API (bun run sdk:generate)
+        run: |
+          bun run sdk:generate
+          git add --intent-to-add -- packages/api/openapi.json packages/sdk packages/cli/canyonos/sdk
+          git diff --exit-code -- packages/api/openapi.json packages/sdk packages/cli/canyonos/sdk
 
   # The CLI runs on people's own machines, so its startup and bundled workflows are
   # checked on macOS and Windows. Core and the other packages are Linux-only.

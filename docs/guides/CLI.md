@@ -95,8 +95,8 @@ those commands act on; see [Pick a workflow group](#pick-a-deployment).
 - `curl --print` prints the equivalent `curl` command instead of sending it, with
   `<your api key>` in place of the key.
 - `status --json` prints one JSON object: the workflow group, its target, the deploy's
-  `phase` (`starting`, `up`, `failed` or `stopped`, on Docker), the Global Controller's
-  address (`controller_url`, on Docker) and each agent's replica counts.
+  `phase` (`starting`, `up`, `failed` or `stopped`, on Docker), the address of the
+  CanyonOS API it read them from (`controller_url`) and each agent's replica counts.
 - `logs <agent>` prints that agent's logs instead of the Global Controller's, the agent
   named `<workflow>.<agent>` on Docker. A replica ID prints one replica:
   `my-workflow.MyAgent-1a2b3c4d` on Docker, `MyAgent-0` on Kubernetes. An agent's logs

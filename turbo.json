@@ -87,7 +87,12 @@
     "canyonos#test:e2e": {
       "cache": false,
       "dependsOn": ["//#starters:bundle"],
-      "passThroughEnv": ["PYTEST_ADDOPTS", "CANYONOS_ENV", "CANYONOS_CORE_IMAGE"],
+      "passThroughEnv": [
+        "PYTEST_ADDOPTS",
+        "CANYONOS_ENV",
+        "CANYONOS_CORE_IMAGE",
+        "CANYONOS_API_IMAGE"
+      ],
       "command": [
         "uv",
         "run",

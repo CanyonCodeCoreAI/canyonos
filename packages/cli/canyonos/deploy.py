@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos deploy`: upload the workflow group to the container's /workspace
-volume (via `canyonos sync`), which has the Global Controller container build and
-deploy it. The container's `canyonos deploy` handles both the build (stubs,
-protos, Docker images) and the launch -- the CLI just ships files and shows what
-the container's status says it is doing.
+Logic for `canyonos deploy`: bring up the CanyonOS API, create the Global Controller
+container, and upload the workflow group to its /workspace volume through the API (via
+`canyonos sync`), which then starts the container to build and deploy it. The
+container's `canyonos deploy` handles both the build (stubs, protos, Docker images)
+and the launch -- the CLI just ships files and shows what the API's status says it is
+doing.
 
 By default only the deploy's finished steps and current step are shown; `-v`
 streams its whole log, and a failure prints the last of it and the root cause.
@@ -47,14 +48,15 @@ from canyonos.constants import (
     workflow_folder,
     write_config,
 )
+from canyonos.api import ApiError, controller_log, deploy_status
 from canyonos.dashboard_stack import (
     _dashboard_lock,
-    _existing_dashboard_port,
-    dashboard_api_key_hash,
     dashboard_url,
+    join_deployment_network,
     run_dashboard,
+    running_web_port,
+    stop_dashboard,
 )
-from canyonos.gc import GCError, controller_log, deploy_status
 from canyonos.kubernetes_target import _open_dashboard, keep_endpoint_forwarded
 from canyonos.theme import GREEN, WHITE
 from canyonos.init import (
@@ -69,6 +71,7 @@ from canyonos.resources import configure_resources
 from canyonos.serve import (
     _register_running_workflows,
     _warn_if_dashboard_port_ignored,
+    ensure_api,
     serve_dashboard,
 )
 from canyonos.sync import run_sync
@@ -175,7 +178,15 @@ def run_deploy(
 
     # On Kubernetes, load_state forwards to the cluster's CanyonOS API instead.
     if not kubernetes:
-        run_init(banner=banner, auth_env=gc_env(key), auth_disabled=key is None)
+        # First: replacing an old Global Controller and running the new one both go
+        # through it.
+        started_api = ensure_api(hash_api_key(key))
+        try:
+            run_init(banner=banner, auth_env=gc_env(key), auth_disabled=key is None)
+        except (Exception, KeyboardInterrupt):
+            _stop_the_stack_it_started(started_api)
+            raise
+        _join_the_dashboard()
 
     # Upload the workflow group into the container before building/deploying.
     if not run_sync(workflows, api_key_hash=hash_api_key(key)):
@@ -190,7 +201,7 @@ def run_deploy(
         )
         return state
 
-    if serve and not kubernetes and _existing_dashboard_port() is None:
+    if serve and not kubernetes and running_web_port() is None:
         # A toy deploy doesn't wait for a dashboard that isn't up; `canyonos serve` starts it.
         if str(read_config(config_path).get("deploy_mode")).casefold() == "toy":
             ui.say(
@@ -207,6 +218,22 @@ def run_deploy(
             ).start()
     _watch_deploy(state, serve=serve, verbose=verbose, key=key)
     return state
+
+
+def _stop_the_stack_it_started(started_api):
+    """Stop the local stack after a deploy that never created its Global Controller,
+    when `started_api`, this deploy started it, and no other workflow group needs it."""
+    if started_api and not deployment.other_global_controllers_running(None):
+        stop_dashboard()
+
+
+def _join_the_dashboard():
+    """Connect the dashboard's API and database to the workflow group's network, where
+    the API reaches its Redis to register it and its telemetry reaches them; one that
+    can't join only warns, since the deploy runs without it."""
+    joined = join_deployment_network(deployment.deployment_group())
+    if joined is not None:
+        ui.warn(f"The dashboard won't show this workflow group: {joined}")
 
 
 def _curl_example(url, body, keyed):
@@ -294,21 +321,19 @@ def _print_deploy_summary(dashboard_url, endpoint, keyed):
 
 def _start_dashboard(key):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy.
-    One that is not running yet, or runs with another API key than `key`, starts with
-    its API checking `key`; a running one on the same key is left as it is."""
-    api_key_hash = hash_api_key(key)
+    Its web app starts unless it runs already, in front of the API that checks `key`,
+    which the deploy brought up; the workflow group is registered with it either way."""
     try:
         if deployment.configured_target() == "kubernetes":
             return f"http://127.0.0.1:{_open_dashboard()}"
         # Waits out a background start, so a half-started dashboard is not registered.
         with ui.status("Starting the dashboard..."), _dashboard_lock():
-            port = _existing_dashboard_port()
-            same_key = dashboard_api_key_hash() == api_key_hash
-        if port is not None and same_key:
+            port = running_web_port()
+        if port is not None:
             _warn_if_dashboard_port_ignored()
             _register_running_workflows()
             return dashboard_url(port)
-        result = serve_dashboard(api_key_hash=api_key_hash, renewed=("api",))
+        result = serve_dashboard(api_key_hash=hash_api_key(key))
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
@@ -320,7 +345,7 @@ def _deploy_summary(state, endpoint, serve, key):
     if serve:
         dashboard = _start_dashboard(key)
     else:
-        port = _existing_dashboard_port()
+        port = running_web_port()
         dashboard = dashboard_url(port) if port else None
     if endpoint is None:
         ui.warn(
@@ -357,10 +382,10 @@ def _interrupted():
 
 
 def wait_for_verdict(state, show=lambda status: None):
-    """Poll the Global Controller's status about once a second, handing each answer
-    to `show`, until the deploy is up or its process has exited, so a failed deploy's
-    log and root cause are complete, and return that answer. None when the container
-    stops answering."""
+    """Poll the CanyonOS API's status of the deploy about once a second, handing each
+    answer to `show`, until the deploy is up or its process has exited, so a failed
+    deploy's log and root cause are complete, and return that answer. None when the
+    API stops answering."""
     misses = 0
     while misses < 2:
         status = deploy_status(state)
@@ -424,12 +449,12 @@ def _report_failure(state, status, verbose):
         if verbose
         else "Run `canyonos deploy -v` for the full log."
     )
-    raise GCError(f"{status['error']} {log}", error_code=status["error_code"])
+    raise ApiError(f"{status['error']} {log}", code=status["error_code"])
 
 
 def _watch_deploy(state, serve, verbose, key):
     """Show the deploy's progress, or with `verbose` stream its whole log, until the
-    Global Controller says it is up, then start the dashboard (unless `serve=False`)
+    CanyonOS API says it is up, then start the dashboard (unless `serve=False`)
     with its API checking the API key `key`, and print where everything lives; raise
     when it fails. Ctrl-C stops only this."""
     stop_log = threading.Event()

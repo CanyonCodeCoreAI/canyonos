@@ -19,7 +19,7 @@ from canyonos import ui
 from canyonos.auth import auth_header, machine_api_key
 from canyonos.constants import deployment_config_path
 from canyonos.deploy import _curl_example
-from canyonos.gc import deployed_endpoint, existing_deploy
+from canyonos.api import deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal
 from utils import tui
 

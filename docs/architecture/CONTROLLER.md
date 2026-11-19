@@ -18,10 +18,13 @@ Neither one starts or removes replicas. That is the orchestrator's job: the
 
 ```text
 canyonos CLI
-  │ HTTP :8000
+  │ HTTP /v1/workflow-groups, on the API's port (3000)
+  ▼
+CanyonOS API (canyonos-dashboard-api)
+  │ Docker Engine API, through the host's socket
   ▼
 ┌─ Global Controller container ──────────────────┐
-│ canyonos_api_interface.api_interface           │
+│ python -m canyonos_core.cli run-deploy         │
 │  └─ python -m canyonos_core.cli deploy         │
 │      └─ GlobalController                       │
 │          ├─ Reconciler (Docker and EC2)        │
@@ -84,19 +87,54 @@ signed by a CA the workflow group has to itself:
 A container reads its certificate in `controller/utils/internal_tls.py` (flat as
 `canyonos_internal_tls.py` in agent images), which writes it to files and sets
 `CANYONOS_REDIS_TLS`, `CANYONOS_REDIS_CA_FILE`, `CANYONOS_REDIS_CERT_FILE` and
-`CANYONOS_REDIS_KEY_FILE` before agent code loads. The endpoint's public port, the
-Global Controller's `:8000` on 127.0.0.1 and the dashboard stay as they are.
+`CANYONOS_REDIS_KEY_FILE` before agent code loads. The endpoint's public port and the
+dashboard, its API included, stay as they are.
 
 ## Global Controller
 
-The CLI talks to the container's HTTP server on `8000`. The routes are in [CLI](CLI.md).
+On Docker, the CLI never talks to the Global Controller's container. It creates the
+container with `docker create`, publishing no port, and talks to the CanyonOS API: the
+dashboard's Bun API (`packages/api`), which runs in `canyonos-dashboard-api` with the
+host's Docker socket. `deploy`, `sync`, `stop` and `clean` start the API first, with the
+dashboard's database, when it is down or runs another key or image (`ensure_api` in
+`packages/cli/canyonos/serve.py`); a command that only reads starts it only when it is
+down (`start_api_if_down`). The CLI uploads the workflow group to
+`/v1/workflow-groups/<workflow_group_id>` (`src/modules/workflow-groups/`), and the API
+starts, restarts, reloads or stops the container to match, through the Docker Engine
+API. Every route and its shapes are on the API's `/docs` page, and its OpenAPI spec at
+`/docs/json`.
 
-On Docker, the server answers only requests that send `Authorization: Bearer <secret>`.
-The CLI makes a random secret each time it starts the container, hands it over in
-`CANYONOS_CONTROLLER_SECRET` and saves the header in the workflow group's `state.json`
-(`headers`). Any other request gets `401` with code `unauthenticated`, so agent replicas
-on the workflow group's network can't call it. On Kubernetes the server checks the caller's
-kubeconfig token instead. A request body over 512 MiB gets `413`.
+The API keeps each upload's record and the outcome of its last apply in its Postgres
+table `workflow_groups`; the files themselves are in the container's `/workspace`
+volume. It finds a workflow group's container by its `canyonos.workflow_group_id` label.
+
+The container's main process is `python -m canyonos_core.cli run-deploy`
+(`deploy_runner.py`). It runs `deploy` as a child, copies its output to the container's
+log, and passes SIGTERM and SIGINT (stop) and SIGHUP (reload) on to it. It keeps the
+deploy's phase, steps, error and last reload in `/var/lib/canyonos/progress.json`, which
+the API reads with Docker's archive API for the status. The controller log the API
+serves is the container's log.
+
+Everything else the API needs from Core is a `canyonos_core.cli` command that prints one
+JSON object:
+
+| Commands                                                                   | Where they run                                                                                       | What they do                                                                                                                                                              |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write-group-files`, `put-workflow`, `remove-workflows`                    | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it, remove workflows (`workspace_jobs.py`)                                  |
+| `check`, `runtime-status`, `health`, `agent-logs`, `dashboard-credentials` | `docker exec` in the running container                                                               | The config check before a reload, each agent's replicas, the health checks, a replica's logs, the Redis credentials the dashboard registers with (`controller_status.py`) |
+
+Every `/v1/workflow-groups` request needs this machine's control key as
+`Authorization: Bearer <key>`. The CLI makes it once, in `~/.canyonos/control_key`,
+readable only by you, and hands its SHA-256 to the API in `CANYONOS_CONTROL_KEY_HASH`.
+Without that hash the API refuses every `/v1` request, and a missing or wrong key gets
+`401`. The [API key](../guides/AUTHORIZATION.md) does not open these routes, they send
+no CORS headers, and the dashboard's web port answers them `404`, so only a holder of the
+control key can drive Docker through them. An upload over 512 MiB gets `413`.
+
+On Kubernetes, the CLI reaches the same routes through a `kubectl port-forward` to the
+chart's `canyonos-api` pod. That pod still runs the Flask server in
+`canyonos_api_interface/api_interface.py`, which checks the caller's kubeconfig token
+instead of the control key.
 
 Startup on Docker and EC2:
 
@@ -306,7 +344,9 @@ The keys another component or a contributor needs. The Reconciler's are in
 
 ## Config reload
 
-A `PUT` that changes only config makes the server send SIGHUP to the Global Controller. On Kubernetes, a change to the
+On Docker, an upload that changes only config makes the CanyonOS API run `check` in the
+container, then send it SIGHUP, which `run-deploy` passes on to the Global Controller;
+the API reads the outcome from the progress file. On Kubernetes, a change to the
 mounted ConfigMap does the same.
 
 It does two things:
@@ -332,8 +372,10 @@ All paths are under `packages/core/canyonos_core/`.
 
 | Path                                      | What it holds                                                            |
 | ----------------------------------------- | ------------------------------------------------------------------------ |
-| `canyonos_api_interface/`                 | The Global Controller container's HTTP server                            |
-| `cli.py`                                  | `deploy`: the build, then `GlobalController`                             |
+| `cli.py`                                  | `deploy`: the build, then `GlobalController`; the commands the API runs  |
+| `deploy_runner.py`, `deploy_progress.py`  | `run-deploy`, the container's main process, and its progress file        |
+| `workspace_jobs.py`, `controller_status.py` | The commands the CanyonOS API runs in a job container or by `docker exec` |
+| `canyonos_api_interface/`                 | The Flask server the chart's `canyonos-api` pod runs on Kubernetes       |
 | `controller/global_controller.py`         | `GlobalController`: config publishing, poll loop, cleanup, teardown      |
 | `controller/orchestrator.py`              | `CanyonOrchestrator`, and `orchestrator_for`                             |
 | `kubernetes/orchestrator.py`, `run_gc.py` | `KubernetesOrchestrator`, and the Global Controller as a pod             |

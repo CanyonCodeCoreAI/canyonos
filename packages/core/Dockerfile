@@ -60,6 +60,11 @@ RUN python -m grpc_tools.protoc \
     --grpc_python_out=/usr/local/lib/python3.11/site-packages \
     /src/canyonos_core/controller/proto/local_controller.proto
 
-EXPOSE 8000
+# The CLI mounts the workflow group's volume here and the CanyonOS API uploads into it;
+# every command below runs against it, the deploy too.
+WORKDIR /workspace
 
-ENTRYPOINT ["python", "-m", "canyonos_core.canyonos_api_interface.api_interface"]
+# The Global Controller container runs the deploy; the CanyonOS API runs the other
+# `canyonos_core.cli` commands in it, or in a one-off container of this image.
+ENTRYPOINT ["python", "-m", "canyonos_core.cli"]
+CMD ["run-deploy"]

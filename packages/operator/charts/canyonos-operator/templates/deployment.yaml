@@ -124,6 +124,8 @@ spec:
       containers:
         - name: api
           image: {{ .Values.controllerImage | default (include "canyonos.releaseImage" (list . "core")) }}
+          # The core image's own command runs a Docker deploy.
+          command: [python, -m, canyonos_core.canyonos_api_interface.api_interface]
           env:
             - {name: CANYONOS_TARGET, value: kubernetes}
           ports:

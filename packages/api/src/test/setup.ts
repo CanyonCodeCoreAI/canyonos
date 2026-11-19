@@ -3,7 +3,7 @@
 
 import postgres from 'postgres';
 
-import { hashApiKey, TEST_API_KEY } from './api-key-test.utils';
+import { hashApiKey, TEST_API_KEY, TEST_CONTROL_KEY } from './api-key-test.utils';
 
 const isSafeIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 
@@ -42,6 +42,7 @@ async function resetPostgresTestDatabase(): Promise<void> {
  */
 function requireTestApiKey(): void {
   process.env.CANYONOS_API_KEY_HASH ??= hashApiKey(TEST_API_KEY);
+  process.env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
 }
 
 await resetPostgresTestDatabase();

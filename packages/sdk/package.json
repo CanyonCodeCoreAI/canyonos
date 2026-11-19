@@ -1,5 +1,5 @@
 {
-  "name": "@canyoncode/canyonos-api-interface",
+  "name": "@canyoncode/canyonos-sdk",
   "version": "1.0.0",
   "description": "Typed client for the CanyonOS REST API",
   "license": "AGPL-3.0-only",
@@ -17,7 +17,7 @@
     "access": "public"
   },
   "scripts": {
-    "generate": "uv run --frozen python scripts/export_openapi.py && openapi-typescript openapi.json -o src/schema.ts && uv run --frozen datamodel-codegen && uv run --frozen ruff format canyonos_api_interface/models.py && prettier --write openapi.json src/schema.ts",
+    "generate": "openapi-typescript ../api/openapi.json -o src/schema.ts && uv run --frozen python scripts/python_models.py && prettier --write ../api/openapi.json src/schema.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",

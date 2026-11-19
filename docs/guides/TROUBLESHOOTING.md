@@ -214,8 +214,8 @@ anyway, without the dashboard.
 `Port 8080 is taken, so the endpoint is on 8081.`
 
 **Cause:** another workflow group or program is using a default port, so CanyonOS picks the
-next free one: Redis 6379 → 6380, controller 8000 → 8001, endpoint 8080 → 8081,
-dashboard 8081 → 8082, dashboard API 3000 → 3001. This is expected.
+next free one: Redis 6379 → 6380, endpoint 8080 → 8081, dashboard 8081 → 8082,
+dashboard API 3000 → 3001. This is expected.
 
 **Solution:** nothing to fix. Use the URLs that `deploy` prints, or run
 `canyonos status`.

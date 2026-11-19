@@ -10,12 +10,12 @@ A Bun + Turborepo workspace (TypeScript) and a uv workspace (Python) in one repo
 | ------------------------ | ---------------------------------------------------------------------- | ------------------------ |
 | `packages/core`          | Runtime: controllers, LLM gateway, policy, telemetry (`canyonos_core`) | Python                   |
 | `packages/cli`           | The `canyonos` command line                                            | Python                   |
-| `packages/api`           | Dashboard API                                                          | TypeScript (Bun)         |
+| `packages/api`           | Dashboard API, and the API the CLI runs Docker workflow groups through | TypeScript (Bun)         |
 | `packages/web`           | Dashboard frontend                                                     | TypeScript (React, Vite) |
 | `packages/ui`            | Shared React components for `web`                                      | TypeScript (React)       |
 | `packages/operator`      | Kubernetes operator that runs workflow groups in a cluster             | Go                       |
 | `packages/cli-usage-api` | Receives CLI usage reports and `canyonos feedback`                     | TypeScript (Bun)         |
-| `packages/api-interface` | Typed TypeScript and Python clients for the CanyonOS REST API          | TypeScript, Python       |
+| `packages/sdk`           | Typed TypeScript client for the `/v1` API, generated from its OpenAPI  | TypeScript               |
 | `examples/`              | Sample workflows to deploy with `canyonos deploy`                      | Python                   |
 | `tests/`                 | Cross-package E2E tests                                                | Python                   |
 
