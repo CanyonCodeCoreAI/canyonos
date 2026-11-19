@@ -58,7 +58,7 @@ jobs:
       - name: Sync the Python workspace
         run: uv sync --locked
 
-      - name: Run lint, type check, and format check
+      - name: Run lint, type check, format check, and the port rules check
         run: bun run check
 
       - name: Check that every manifest carries the same version

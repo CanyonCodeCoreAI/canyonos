@@ -67,12 +67,12 @@ async function checkApiKey(apiUrl: string): Promise<void> {
   equal(await check.json(), { ok: true }, 'the key check answers ok');
 }
 
-// /readyz, not /healthz: the API answers /healthz before its database is migrated and the
-// configured controller's workflows are registered, and the smoke reads both next.
+/** The API listens before it migrates and registers the controller: `/readyz` answers 200 once
+ * both are done, and says what it checked. */
 const waitForReady = () =>
   waitFor('/readyz', 120_000, async () => {
-    const { status } = await getJson('/readyz');
-    return status === 200 ? true : null;
+    const { status, body } = await getJson('/readyz');
+    return status === 200 ? body : null;
   });
 
 const getProxiedJson = async (
@@ -153,7 +153,9 @@ async function main() {
 
   log('starting the api');
   await compose('up', '-d', 'api');
-  await waitForReady();
+  const readiness = await waitForReady();
+  // The compose file gives it no Docker socket: it runs no workflow group.
+  equal(readiness.checks, { database: 'ok', docker: 'disabled' }, 'the API is ready');
 
   log('checking the API key');
   await checkApiKey(BASE_URL);

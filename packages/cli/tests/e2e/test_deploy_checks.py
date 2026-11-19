@@ -19,8 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from .harness import CliCase
-from .test_quickstart import _runtime_environment, needs_a_runtime
+from .harness import CliCase, needs_a_runtime, runtime_environment
 
 NO_DOCKER = {"DOCKER_HOST": "unix:///nonexistent.sock"}
 ECHO = "echo-[0-9a-f]{8}"
@@ -38,7 +37,7 @@ def _stop_what_the_deploy_started(cli_case: CliCase) -> Iterator[None]:
     stop it and what it runs, so the next case finds no API but its own."""
     yield
     if (cli_case.home / ".canyonos" / "dashboard" / ".env").exists():
-        cli_case.run_cli(["stop", "--all"], timeout=300, env=_runtime_environment())
+        cli_case.run_cli(["stop", "--all"], timeout=300, env=runtime_environment())
 
 
 def _said(result: subprocess.CompletedProcess[str]) -> str:
@@ -66,7 +65,7 @@ def _deploy(case: CliCase, *args: str, docker: bool = True):
     return case.run_cli(
         ["deploy", *args],
         timeout=300,
-        env=_runtime_environment() if docker else NO_DOCKER,
+        env=runtime_environment() if docker else NO_DOCKER,
     )
 
 

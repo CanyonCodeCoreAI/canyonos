@@ -20,7 +20,9 @@ prunes to the last three runs. CI sets that directory with `--basetemp` and
 uploads `artifacts/` when the job fails.
 
 This isolation does not cover workflow group's fixed Docker names, ports, networks,
-volumes, or the shared daemon. This foundation does not start, stop, or reuse an
-existing workflow. Full deploy tests need a dedicated runtime owner. Correctness
-tests should keep query concurrency low; load tests belong in the separate
+volumes, or the shared daemon. The runtime cases (`test_quickstart.py`,
+`test_api_lifecycle.py`, `test_deploy_checks.py`) deploy for real with the images in
+`CANYONOS_CORE_IMAGE` and `CANYONOS_API_IMAGE`, through the helpers in `harness.py`,
+and skip without a Docker engine and a Core image; each stops what it started.
+Correctness tests should keep query concurrency low; load tests belong in the separate
 performance suite.

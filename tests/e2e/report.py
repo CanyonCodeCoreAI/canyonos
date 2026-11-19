@@ -5,9 +5,11 @@
 collected (collected.json) and the traces its failing cases wrote. A case counts
 as passed only when junit.xml has it with no failure, error or skip; a collected
 case junit.xml lacks, as a run cut short leaves it, counts as not run, and so does
-every case of an expected workflow with no junit.xml. Standard library only, so the
-report job can run it before anything else is installed, and the same inputs
-always give the same text.
+every case of an expected workflow with no junit.xml. A failed case whose failure
+shows Bedrock refusing a call over its quota counts as throttled, in a section of its
+own, since a rerun is what it needs, not a fix; the job fails all the same. Standard
+library only, so the report job can run it before anything else is installed, and
+the same inputs always give the same text.
 
 Usage: report.py <artifacts-dir> <out.md> --title "<heading>" [--expect NAME...]
 """
@@ -26,6 +28,17 @@ LONGREPR_LINES = 40
 OUTPUT_CHARACTERS = 4000
 INPUT_CHARACTERS = 2000
 COLLECTED_FILE = "collected.json"
+THROTTLE_CHARACTERS = 300
+# How Bedrock refuses a call over its quota, as botocore raises it in an agent and the
+# LLM gateway passes it on: the error code, the message Bedrock sends with it, or its
+# HTTP status next to its host. The gateway's own refusals are never 429.
+THROTTLED = re.compile(
+    r"ThrottlingException"
+    r"|Too many (?:requests|tokens)"
+    r"|bedrock-runtime\S*.{0,200}\b429\b"
+    r"|\b429\b.{0,200}bedrock-runtime",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -100,6 +113,10 @@ def _details(summary: str, body: str) -> str:
 
 def _tail(text: str, limit: int) -> str:
     return text if len(text) <= limit else "..." + text[-limit:]
+
+
+def _head(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _last_call_lines(calls_path: Path) -> list[str]:
@@ -187,50 +204,93 @@ def _trace_for(workflow_dir: Path, case: Case) -> Path | None:
     return path if path.is_dir() else None
 
 
+def _throttle(case: Case, trace: Path | None) -> str | None:
+    """The first line of the case's failure message or of its trace's failure that
+    shows Bedrock throttling, shortened; None when no line does."""
+    text = case.message
+    if trace is not None and (trace / "longrepr.txt").is_file():
+        text += "\n" + _read(trace / "longrepr.txt")
+    for line in text.splitlines():
+        if THROTTLED.search(line):
+            # Backticks would end the code span the line is shown in.
+            return _head(line.strip().replace("`", "'"), THROTTLE_CHARACTERS)
+    return None
+
+
+def _throttled_lines(
+    workflow: str, case: Case, trace: Path | None, line: str
+) -> list[str]:
+    """One case's entry under Throttled: its name, the line that shows it, its trace."""
+    lines = [f"- {workflow} › {case.module}::{case.name}", f"  - `{line}`"]
+    if trace is not None:
+        lines.append(f"  - Trace: artifact `e2e-{workflow}`, `traces/{trace.name}/`")
+    return lines
+
+
 def _not_run_section(workflow: str, names: list[str], reason: str) -> list[str]:
     lines = [f"### {workflow} › not run", "", f"- {reason}"]
     return lines + [f"  - {name}" for name in names] + [""]
 
 
-def _workflow(workflow_dir: Path) -> tuple[tuple, list[str]]:
-    """The table row and the failure sections for one workflow's artifacts."""
+def _workflow(workflow_dir: Path) -> tuple[tuple, list[str], list[str]]:
+    """The table row, the failure sections and the throttled cases' lines for one
+    workflow's artifacts."""
     workflow = workflow_dir.name
     collected = _collected(workflow_dir)
     junit = workflow_dir / "junit.xml"
     if not junit.is_file():
         reason = "the job ended before pytest wrote junit.xml"
         if collected is None:
-            return (workflow, 0, 0, "all", 0), [
-                f"### {workflow} › no results",
-                "",
-                f"- {reason}",
-                "",
-            ]
+            return (
+                (workflow, 0, 0, 0, "all", 0),
+                [
+                    f"### {workflow} › no results",
+                    "",
+                    f"- {reason}",
+                    "",
+                ],
+                [],
+            )
         names = [
             f"{classname.rsplit('.', 1)[-1]}::{name}" for classname, name in collected
         ]
-        return (workflow, 0, 0, len(names), 0), _not_run_section(
-            workflow, names, reason
+        return (
+            (workflow, 0, 0, 0, len(names), 0),
+            _not_run_section(workflow, names, reason),
+            [],
         )
     try:
         cases, nameless = _cases(junit)
     except ET.ParseError as error:
-        return (workflow, 0, 0, "all", 0), [
-            f"### {workflow} › unreadable results",
-            "",
-            f"- `junit.xml` could not be parsed: {error}",
-            "",
-        ]
-    failed = [case for case in cases if case.failed]
+        return (
+            (workflow, 0, 0, 0, "all", 0),
+            [
+                f"### {workflow} › unreadable results",
+                "",
+                f"- `junit.xml` could not be parsed: {error}",
+                "",
+            ],
+            [],
+        )
     skipped = [case for case in cases if case.skipped]
-    passed = len(cases) - len(failed) - len(skipped)
+    failed, throttled = [], []
+    for case in cases:
+        if not case.failed:
+            continue
+        trace = _trace_for(workflow_dir, case)
+        line = _throttle(case, trace)
+        if line is None:
+            failed.append((case, trace))
+        else:
+            throttled += _throttled_lines(workflow, case, trace, line)
+    throttled_count = sum(case.failed for case in cases) - len(failed)
+    passed = len(cases) - len(failed) - throttled_count - len(skipped)
     seen = {(case.classname, case.name) for case in cases}
     missing = [key for key in (collected or []) if key not in seen]
     not_run = len(missing) if collected is not None else nameless
     sections: list[str] = []
     setup_cases: dict[Path, list[Case]] = {}
-    for case in failed:
-        trace = _trace_for(workflow_dir, case)
+    for case, trace in failed:
         if trace is not None and trace.name.startswith("setup__"):
             setup_cases.setdefault(trace, []).append(case)
             continue
@@ -254,17 +314,18 @@ def _workflow(workflow_dir: Path) -> tuple[tuple, list[str]]:
         )
     if failed:
         sections += _container_logs(workflow_dir)
-    return (workflow, passed, len(failed), not_run, len(skipped)), sections
+    row = (workflow, passed, len(failed), throttled_count, not_run, len(skipped))
+    return row, sections, throttled
 
 
 def render(artifacts: Path, title: str, expected: Sequence[str] = ()) -> str:
     """The Markdown report for every workflow directory under `artifacts` and every
     `expected` workflow, which fails when it has no directory at all."""
     present = sorted(p.name for p in artifacts.iterdir() if p.is_dir())
-    rows, failures = [], []
+    rows, failures, throttled = [], [], []
     for workflow in sorted({*present, *expected}):
         if workflow not in present:
-            rows.append((workflow, 0, 0, "all", 0))
+            rows.append((workflow, 0, 0, 0, "all", 0))
             failures += [
                 f"### {workflow} › no results",
                 "",
@@ -272,23 +333,33 @@ def render(artifacts: Path, title: str, expected: Sequence[str] = ()) -> str:
                 "",
             ]
             continue
-        row, sections = _workflow(artifacts / workflow)
+        row, sections, throttled_lines = _workflow(artifacts / workflow)
         rows.append(row)
         failures += sections
+        throttled += throttled_lines
     lines = [
         f"# {title}",
         "",
-        "| Workflow | Passed | Failed | Not run | Skipped |",
-        "|---|---|---|---|---|",
+        "| Workflow | Passed | Failed | Throttled | Not run | Skipped |",
+        "|---|---|---|---|---|---|",
     ]
     lines += ["| " + " | ".join(str(value) for value in row) + " |" for row in rows]
     lines.append("")
     if failures:
         lines += ["## Failures", "", *failures]
     elif rows:
-        lines.append("No failures.")
+        lines += ["No failures.", ""]
     else:
         lines.append("No results were found.")
+    if throttled:
+        lines += [
+            "## Throttled",
+            "",
+            "Bedrock refused a call over its quota in these cases. Rerun the job; "
+            "they still fail it.",
+            "",
+            *throttled,
+        ]
     return "\n".join(lines).rstrip() + "\n"
 
 

@@ -6,7 +6,12 @@ import type { APIRequestContext, Page, Route } from '@playwright/test';
 
 import type { GovernanceAgent, GovernanceResponse } from '@canyonos/api/governance';
 import type { Prompt, PromptListItem, SystemPrompt } from '@canyonos/api/prompts';
-import type { ScalingPolicy, ScalingResponse, ScalingStatus } from '@canyonos/api/scaling';
+import type {
+  ScalingAgentsResponse,
+  ScalingPolicy,
+  ScalingResponse,
+  ScalingStatus,
+} from '@canyonos/api/scaling';
 import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { authenticate, TEST_API_KEY } from './helpers/auth';
@@ -70,14 +75,14 @@ test('the API key saves a scaling policy through the API and sees it stored', as
     GET: (): ScalingResponse => ({ workflows: { app: stored } }),
   });
   const writes = await answerPastAuth(page, `/workflows/${workflow.id}/scaling`, {
-    PUT: (route) => {
+    PUT: (route): ScalingPolicy => {
       const policy = route.request().postDataJSON() as ScalingPolicy;
       stored = { status: 'applied', policy };
       return policy;
     },
   });
   await answerPastAuth(page, `/workflows/${workflow.id}/scaling/agents`, {
-    GET: () => ({ agents: [] }),
+    GET: (): ScalingAgentsResponse => ({ agents: [] }),
   });
   await authenticate(page);
 
@@ -124,7 +129,7 @@ test('the API key reads governance and stops an agent through the API', async ({
     page,
     `/workflows/${workflow.id}/governance/agents/PriceAgent/stopped`,
     {
-      PUT: (route) => {
+      PUT: (route): GovernanceResponse => {
         status = (route.request().postDataJSON() as { stopped: boolean }).stopped
           ? 'stopped'
           : 'up';
@@ -170,13 +175,13 @@ test('the API key reads the prompts and makes an older version live through the 
   const calls = [
     await answerPastAuth(page, `/workflows/${workflow.id}/prompts`, { GET: listing }),
     await answerPastAuth(page, `/workflows/${workflow.id}/prompts/summarize`, {
-      GET: () => prompt,
+      GET: (): Prompt => prompt,
     }),
     await answerPastAuth(page, `/workflows/${workflow.id}/prompts/summarize/live`, {
-      PUT: (route) => {
+      PUT: (route): PromptListItem => {
         const { version } = route.request().postDataJSON() as { version: string };
         prompt = { ...prompt, live: prompt.versions.find((stored) => stored.version === version)! };
-        return listing()[0];
+        return listing()[0]!;
       },
     }),
   ];

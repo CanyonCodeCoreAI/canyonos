@@ -6,8 +6,10 @@ import type { Page } from '@playwright/test';
 
 import type {
   MonitoringLlmCall,
+  MonitoringLlmCallsResponse,
   MonitoringSeriesResponse,
   MonitoringTrace,
+  MonitoringTracesResponse,
 } from '@canyonos/api/monitoring';
 import type { RequestTrace } from '@canyonos/api/requests';
 
@@ -171,8 +173,16 @@ async function openMonitoring(
   await stubFleetSpend(page);
   const answers: Record<string, unknown> = {
     [`${API_BASE}/series`]: EMPTY_SERIES,
-    [`${API_BASE}/traces`]: { workflow_id: WORKFLOW.id, ...RANGE, traces },
-    [`${API_BASE}/llm`]: { workflow_id: WORKFLOW.id, ...RANGE, calls: [LLM_CALL] },
+    [`${API_BASE}/traces`]: {
+      workflow_id: WORKFLOW.id,
+      ...RANGE,
+      traces,
+    } satisfies MonitoringTracesResponse,
+    [`${API_BASE}/llm`]: {
+      workflow_id: WORKFLOW.id,
+      ...RANGE,
+      calls: [LLM_CALL],
+    } satisfies MonitoringLlmCallsResponse,
     [`/workflows/${WORKFLOW.id}/requests/${LLM_TRACE.trace_id}`]: LLM_REQUEST,
   };
   await page.route(
@@ -238,7 +248,7 @@ test('the details drawer stays open through a failed refresh and hands focus bac
             workflow_id: WORKFLOW.id,
             ...RANGE,
             traces: [PLAIN_TRACE, LLM_TRACE],
-          })
+          } satisfies MonitoringTracesResponse)
   );
   const refetch = () => page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')));
 

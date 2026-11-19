@@ -43,9 +43,12 @@ The starter scenario's open deploy runs without that variable and with
 
 With `--artifacts-dir`, the run writes `collected.json`, `junit.xml`, `calls.jsonl`
 and `traces/` there. `python3 tests/e2e/report.py <dir> report.md --title <title>
---expect <workflow>...` counts each workflow's cases as passed, failed, not run or
-skipped. A collected case missing from `junit.xml`, as a run cut short leaves it,
-is not run, and an expected workflow with no results fails.
+--expect <workflow>...` counts each workflow's cases as passed, failed, throttled,
+not run or skipped. A failed case whose failure shows Bedrock refusing a call over
+its quota (`ThrottlingException`, `Too many requests`, a 429 from `bedrock-runtime`)
+is throttled and listed apart from the failures; it still fails the job. A collected
+case missing from `junit.xml`, as a run cut short leaves it, is not run, and an
+expected workflow with no results fails.
 
 In CI, `.github/workflows/e2e.yml` runs every workflow not marked `release_only`,
 plus the scenarios, on each pull request. Before a release, run that workflow by
@@ -86,5 +89,6 @@ stops the run with a usage error:
 | `logs` | keeps `logs:` on in its `workflow_group.yaml`, so its replicas' logs reach the dashboard |
 | `prompts` | has a `prompts.yaml` |
 | `context-propagation` | returns the request context each caller saw |
+| `lifecycle` | runs the CLI lifecycle cases: status, logs, doctor, sync and teardown; one workflow, helloworld, is enough |
 
 Read the workflow before you list a trait for it.

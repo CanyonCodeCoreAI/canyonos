@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Request } from '@playwright/test';
 
-import type { ScalingResponse } from '@canyonos/api/scaling';
+import type { ScalingAgentsResponse, ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
 
 import { readStoredApiKey, setApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
 import {
@@ -15,10 +15,12 @@ import {
   WORKFLOW,
 } from './helpers/session';
 import { apiBaseUrl, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WRONG_KEY = 'not-the-api-key';
-const INVALID_KEY = 'This API key is not the one this API was started with';
+const INVALID_KEY =
+  'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`';
 const SCALING = `/workflows/${WORKFLOW.id}/scaling`;
 const NO_POLICY = { workflows: { app: { status: 'none' } } } satisfies ScalingResponse;
 
@@ -166,7 +168,11 @@ test('a 401 in a session signs out and comes back to the page after a new sign-i
     (url) => url.origin === apiOrigin && url.pathname === '/workflows',
     (route) =>
       refuse
-        ? fulfillJson(route, { error: 'auth.invalid_key', message: INVALID_KEY }, 401)
+        ? fulfillJson(
+            route,
+            { error: 'auth.invalid_key', message: INVALID_KEY } satisfies ApiErrorBody,
+            401
+          )
         : fulfillJson(route, [WORKFLOW])
   );
   await setApiKey(page, TEST_API_KEY);
@@ -194,12 +200,14 @@ test('every API call carries the API key, reads and writes alike', async ({ page
     (route) =>
       fulfillJson(
         route,
-        route.request().method() === 'PUT' ? route.request().postDataJSON() : NO_POLICY
+        route.request().method() === 'PUT'
+          ? (route.request().postDataJSON() as ScalingPolicy)
+          : NO_POLICY
       )
   );
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname === `${SCALING}/agents`,
-    (route) => fulfillJson(route, { agents: [] })
+    (route) => fulfillJson(route, { agents: [] } satisfies ScalingAgentsResponse)
   );
   await page.goto('/login');
   await keyField(page).fill(TEST_API_KEY);
@@ -249,7 +257,14 @@ test('an API that cannot answer the key check keeps the key and offers a retry',
     (url) => url.origin === apiOrigin && url.pathname === '/auth/check',
     (route) =>
       down
-        ? fulfillJson(route, { error: 'service.unavailable', message: 'Restarting' }, 503)
+        ? fulfillJson(
+            route,
+            {
+              error: 'database.unavailable',
+              message: "The dashboard's database is not ready yet; try again shortly.",
+            } satisfies ApiErrorBody,
+            503
+          )
         : route.continue()
   );
   await setApiKey(page, TEST_API_KEY);

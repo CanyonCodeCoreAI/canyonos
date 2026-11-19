@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from .harness import CliCase
+from canyonos.quickstart import _fetch
+
+from .harness import CLEAN_TIMEOUT, STARTER, CliCase, runtime_environment
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -46,3 +48,25 @@ def cli_case(
     case = CliCase.create(tmp_path, artifact_run_dir / name)
     request.addfinalizer(case.close)
     return case
+
+
+@pytest.fixture
+def deployed_workflow(cli_case: CliCase) -> Iterator[tuple[CliCase, Path]]:
+    """The bundled workflow group folder on disk, as the quickstart copies it,
+    torn down after the test either way.
+
+    The teardown is checked rather than attempted: containers and images this
+    case leaves behind carry the fixed Docker names, so they would reach every
+    run after it.
+    """
+    folder = Path(_fetch(STARTER, into=cli_case.cwd))
+    try:
+        yield cli_case, folder
+    finally:
+        removed = cli_case.run_cli(
+            ["clean", "--yes"],
+            timeout=CLEAN_TIMEOUT,
+            env=runtime_environment(),
+            cwd=folder,
+        )
+        assert removed.returncode == 0, removed.stdout + removed.stderr

@@ -27,7 +27,8 @@
 #   - the dashboard lists the project's workflow by its own id, never the workflow
 #     group's, reads its Redis and receives its telemetry; its API takes the key whose
 #     hash is in the chart's Secret (api-key-hash), refuses a request with no key or
-#     another one, and reads and changes with it;
+#     another one, and reads and changes with it; its /readyz reports the database ok
+#     and Docker disabled;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
 #     leaves the namespace;
@@ -314,6 +315,10 @@ EOF
     || fail "/workflows with another key answered ${code}: $(cat /tmp/api.json)"
   code="$(api_call GET /auth/check "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "/auth/check with the key answered ${code}: $(cat /tmp/api.json)"
+  # The chart runs the API without Docker: ready means its database is, and Docker is off.
+  code="$(api_call GET /readyz "")"
+  [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json"))["checks"] != {"database": "ok", "docker": "disabled"})' \
+    || fail "/readyz answered ${code}: $(cat /tmp/api.json)"
   get() { curl -s -m 10 -H "Authorization: Bearer ${dashboard_key}" "${api}$1"; }
   until_found() {  # path, text, what
     for _ in $(seq 40); do get "$1" | grep -q "$2" && return 0; sleep 5; done

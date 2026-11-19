@@ -12,6 +12,8 @@ import json
 import re
 import shlex
 
+import pytest
+
 from ..harness import (
     canyonos,
     cli_value,
@@ -28,6 +30,8 @@ from ..harness import (
     qualified,
     run,
 )
+
+pytestmark = pytest.mark.trait("lifecycle")
 
 DASHBOARD = [
     "canyonos-dashboard-api",

@@ -13,7 +13,8 @@ import {
   WORKFLOW,
 } from './helpers/session';
 
-const INVALID_KEY = 'This API key is not the one this API was started with';
+const INVALID_KEY =
+  'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`';
 
 /** The link `canyonos dashboard` opens: the key rides percent-encoded in the fragment. */
 const signInLink = (apiKey: string, path = '/login') => `${path}#key=${encodeURIComponent(apiKey)}`;

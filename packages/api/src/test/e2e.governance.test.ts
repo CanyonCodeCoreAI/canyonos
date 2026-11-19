@@ -438,7 +438,9 @@ describe('workflow governance', () => {
     await publish_spend_once();
 
     expect(await read_governance_spend()).toEqual({ ReviewAgent: 7 });
-  });
+    // The round waits on every registered Redis, and one that never answers takes the 5 s
+    // connection timeout.
+  }, 15_000);
 
   test('publishing clears a stale governance:spend for a workflow without spend rules', async () => {
     const { workflow_id } = await governed_workflow();
@@ -448,7 +450,9 @@ describe('workflow governance', () => {
     await publish_spend_once();
 
     expect(await read_governance_spend()).toEqual({});
-  });
+    // The round waits on every registered Redis, and one that never answers takes the 5 s
+    // connection timeout.
+  }, 15_000);
 
   test("on Kubernetes spend goes to the Redis the operator lists for the workflow's group, not to the stored port", async () => {
     const { workflow_id } = await governed_workflow();

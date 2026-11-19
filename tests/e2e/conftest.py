@@ -18,15 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-import yaml
 from dotenv import dotenv_values
 
 from .harness import (
-    API_URL,
     Api,
     CallFailed,
     Endpoint,
     Recorder,
+    api_url,
     build_images,
     canyonos,
     case_slug,
@@ -42,6 +41,7 @@ from .harness import (
     result_of,
     stage,
     stop_workflow_group,
+    workflow_group_id,
     workflow_name,
 )
 from .workflows import Workflow, list_workflows, load_check, load_workflow
@@ -239,16 +239,15 @@ def deployed(
     workflow, recorder, workspace, images, artifacts_dir
 ) -> Iterator[Deployed]:
     """Deploy the staged workflow with `canyonos deploy` and the session's API key, and
-    hand cases the endpoint and the dashboard API, both called with that key.
-    `canyonos serve` runs first: the dashboard API reads the key's hash only when it
-    starts, and a deploy leaves a running dashboard as it is. Afterwards, and also when any of that fails, save
-    the container logs and remove the deploy with `canyonos stop`. A failing stop
-    fails the run, unless the deploy had already failed: that failure is the one
-    reported."""
+    hand cases the endpoint and the dashboard API, both called with that key. The
+    deploy starts the dashboard, or replaces its API when it runs on another key,
+    since the API reads the key's hash only when it starts. Afterwards, and also when
+    any of that fails, save the container logs and remove the deploy and its agents'
+    images with `canyonos clean`. A failing clean fails the run, unless the deploy had
+    already failed: that failure is the one reported."""
     succeeded = False
     folder = workflow_dir(workspace)
     try:
-        canyonos(recorder, ["serve"], cwd=workspace)
         # From the workflow folder, naming the workflow group's folder, as a user would.
         deploy = canyonos(
             recorder,
@@ -259,7 +258,7 @@ def deployed(
         assert (
             f"Registered {workflow_name(folder)} with the dashboard" in deploy.output
         ), deploy.output[-3000:]
-        api = Api(recorder, API_URL, dashboard_key(recorder))
+        api = Api(recorder, api_url(recorder), dashboard_key(recorder))
         yield Deployed(
             workflow=workflow,
             dir=workspace,
@@ -267,9 +266,7 @@ def deployed(
             group=deployment_group(recorder, workspace),
             endpoint=deployed_endpoint(recorder, workspace),
             api=api,
-            workflow_group_id=yaml.safe_load(
-                (workspace / "workflow_group.yaml").read_text()
-            )["workflow_group_id"],
+            workflow_group_id=workflow_group_id(workspace),
             workflow_id=deployed_workflow_id(api, workspace),
             agents=[
                 qualified(folder, agent["name"])
@@ -284,13 +281,15 @@ def deployed(
 
 
 def _tear_down(recorder, workspace: Path, artifacts_dir: Path, *, raise_on_failure):
-    """Save every container's log under containers/, then run `canyonos stop`; with
-    `raise_on_failure`, a failed stop raises CallFailed."""
+    """Save every container's log under containers/, then run `canyonos clean`, so a
+    workflow the `lifecycle` cases do not stop and clean leaves no agent images
+    either; nothing is left to clean after they ran. With `raise_on_failure`, a failed
+    clean raises CallFailed."""
     try:
         collect_container_logs(recorder, artifacts_dir / "containers")
     except Exception:
         (artifacts_dir / "containers_error.txt").write_text(traceback.format_exc())
-    stop = stop_workflow_group(recorder, workspace)
+    stop = stop_workflow_group(recorder, workspace, clean=True)
     if raise_on_failure and stop is not None and stop.code != 0:
         raise CallFailed(stop)
 

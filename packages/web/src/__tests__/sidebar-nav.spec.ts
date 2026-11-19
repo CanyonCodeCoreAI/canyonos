@@ -3,6 +3,8 @@
 
 import { expect, test } from '@playwright/test';
 
+import type { WorkflowSummary } from '@canyonos/api/workflows';
+
 import { authenticate } from './helpers/auth';
 import {
   expectPath,
@@ -46,7 +48,7 @@ test('workflow navigation distinguishes loading, error, retry, and empty states'
         await workflowsGate;
         return failJson(route);
       }
-      return fulfillJson(route, []);
+      return fulfillJson(route, [] satisfies WorkflowSummary[]);
     }
   );
 

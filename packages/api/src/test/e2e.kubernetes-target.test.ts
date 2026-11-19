@@ -9,7 +9,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
 
 import { TEST_CONTROL_KEY } from './api-key-test.utils';
+import { spawn_api } from './process-test.utils';
 import { bearer } from './workflow-test.utils';
+import type { SpawnedApi } from './process-test.utils';
 
 // /v1/workflow-groups on the Kubernetes target, without a cluster: a second API process started
 // with CANYONOS_TARGET=kubernetes, its own database, and CANYONOS_K8S_API pointing at a stand-in
@@ -30,7 +32,6 @@ const DEPLOYED = {
 };
 const LEFTOVER_BUILD = 'hello-20260101-000000-abcd';
 const GC_POD = 'canyonos-gc-5f7d9';
-const STARTUP_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 30_000;
 
 // Who may do what to CanyonProjects, by user, namespace and verb.
@@ -148,16 +149,7 @@ async function kubernetes(request: Request): Promise<Response> {
 
 const stub = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: kubernetes });
 const workspace = mkdtempSync(join(tmpdir(), 'canyonos-k8s-workspace-'));
-let child: ReturnType<typeof Bun.spawn> | null = null;
-let api_url = '';
-let child_output = '';
-
-function free_port(): number {
-  const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
-  const { port } = server;
-  server.stop(true);
-  return port;
-}
+let kubernetes_api: SpawnedApi | null = null;
 
 /** A database of its own, emptied, so the second API's restore touches none of the suite's rows. */
 async function kubernetes_database(): Promise<string> {
@@ -179,61 +171,27 @@ async function kubernetes_database(): Promise<string> {
   return url.toString();
 }
 
-async function collect(stream: ReadableStream<Uint8Array>): Promise<void> {
-  const decoder = new TextDecoder();
-  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
-    child_output += decoder.decode(chunk);
-  }
-}
-
 beforeAll(async () => {
-  const port = free_port();
-  api_url = `http://127.0.0.1:${port}`;
   await Bun.write(join(workspace, '.canyonos', 'core-version'), '9.9.9');
-  child = Bun.spawn(['bun', 'run', 'src/server.ts'], {
-    cwd: new URL('../..', import.meta.url).pathname,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      APP_ENV: 'test',
-      LOG_LEVEL: 'warn',
-      PORT: String(port),
-      HOST: '127.0.0.1',
-      DATABASE_URL: await kubernetes_database(),
-      CANYONOS_TARGET: 'kubernetes',
-      CANYONOS_K8S_API: `http://127.0.0.1:${stub.port}`,
-      CANYONOS_WORKSPACE_DIR: workspace,
-      DOCKER_SOCKET: '',
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
+  // Ready, not only listening: the /v1 routes answer 503 until its database is migrated.
+  kubernetes_api = await spawn_api({
+    APP_ENV: 'test',
+    LOG_LEVEL: 'warn',
+    DATABASE_URL: await kubernetes_database(),
+    CANYONOS_TARGET: 'kubernetes',
+    CANYONOS_K8S_API: `http://127.0.0.1:${stub.port}`,
+    CANYONOS_WORKSPACE_DIR: workspace,
   });
-  void collect(child.stdout as ReadableStream<Uint8Array>);
-  void collect(child.stderr as ReadableStream<Uint8Array>);
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
-  for (;;) {
-    // Ready, not only listening: the /v1 routes answer 503 until its database is migrated.
-    const up = await fetch(`${api_url}/readyz`).then(
-      (response) => response.ok,
-      () => false
-    );
-    if (up) break;
-    if (Date.now() > deadline || child.exitCode !== null) {
-      throw new Error(`The Kubernetes API did not start:\n${child_output}`);
-    }
-    await Bun.sleep(200);
-  }
-}, STARTUP_TIMEOUT_MS + 5_000);
+}, 35_000);
 
 afterAll(async () => {
-  child?.kill();
-  await child?.exited;
+  await kubernetes_api?.stop();
   await stub.stop(true);
   rmSync(workspace, { recursive: true, force: true });
 });
 
 function v1(path: string, token: string | null, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${api_url}/v1/workflow-groups${path}`, {
+  return fetch(`${kubernetes_api!.url}/v1/workflow-groups${path}`, {
     ...init,
     headers: {
       ...(token ? bearer(token) : {}),

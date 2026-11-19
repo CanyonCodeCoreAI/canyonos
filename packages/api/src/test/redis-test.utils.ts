@@ -105,6 +105,21 @@ export async function seed_workflows(workflows: Record<string, string>): Promise
   );
 }
 
+/** Publishes a controller's identity as given, `workflow_group_id` unchecked and left out when
+ * null, with no other controller state, as a Global Controller nothing registered does. */
+export async function seed_controller_identity(
+  workflow_group_id: string | null,
+  workflows: Record<string, string>
+): Promise<void> {
+  await reset_controller();
+  await with_test_redis(async (redis) => {
+    if (workflow_group_id !== null) {
+      await redis.hset(CONTROLLER_IDENTITY_KEY, 'workflow_group_id', workflow_group_id);
+    }
+    await redis.hset(CONTROLLER_IDENTITY_KEY, 'workflows', JSON.stringify(workflows));
+  });
+}
+
 /** Publishes raw as the running controller's `workflows`, to stand in for one that wrote junk. */
 export async function seed_workflows_raw(raw: string): Promise<void> {
   await with_test_redis((redis) => redis.hset(CONTROLLER_IDENTITY_KEY, 'workflows', raw));

@@ -26,9 +26,10 @@ every file.
 
 ## End-to-end tests
 
-Apart from the operator's Go suites and a few CLI unit tests, the tests are end to end. Add or update the E2E
-test at the boundary a change touches. The API and dashboard suites need the local env
-files first:
+Apart from the operator's Go suites, the tests are end to end. Add or update the E2E
+test at the boundary a change touches. The API suite needs no env file: its setup sets
+test defaults for anything unset. The dashboard suite and `bun run docker:up` need the
+local env files first:
 
 ```bash
 cp .docker/.env.example .docker/.env
@@ -43,11 +44,11 @@ cp packages/web/.env.example packages/web/.env
 | Dashboard end-to-end | `bun run ui:test:e2e`                                              | Chromium (`bunx playwright install chromium`); starts Postgres, the API and Vite, or reuses running ones                                                                                             |
 | CLI end-to-end       | `bun run cli:test:e2e`                                             | Linux or macOS, and a Core image for the deploy case; see `packages/cli/tests/e2e/README.md`                                                                                                         |
 | Deploy               | `uv run pytest tests/e2e/cases --workflow=helloworld`              | Docker; builds the images from this checkout, deploys the workflow and runs the E2E cases against it                                                                                                  |
-| Deploy scenarios     | `uv run pytest tests/e2e/scenarios`                                | Docker; checks `canyonos validate`, the `new-app` starter, two workflows in a workflow group and on a dashboard, questions to a person, `stop` and `clean`, and the governance rules, which need AWS keys |
+| Deploy scenarios     | `uv run pytest tests/e2e/scenarios`                                | Docker; checks `canyonos validate`, the `new-app` starter, two workflows in a workflow group and on a dashboard, a stopped dashboard database, a rotated API key, questions to a person, `stop` and `clean`, and the governance rules, which need AWS keys |
 | EC2 pool             | `tests/e2e/ec2_pool.sh`                                            | AWS access to run machines; manual, no workflow runs it                                                                                                                                              |
 | Dashboard images     | `bun run canyonos:smoke`                                           | The images in `CANYONOS_API_IMAGE` and `CANYONOS_WEB_IMAGE` (default `canyonos-api:smoke`, `canyonos-web:smoke`)                                                                                     |
 | CLI usage API        | `bun run cli:usage:test:e2e`, `bun run cli:usage:test:cli-e2e`     | Docker; each starts its own moto server                                                                                                                                                              |
-| CLI unit             | `uv run pytest packages/cli/tests --ignore=packages/cli/tests/e2e` | Nothing else; no CI workflow runs them                                                                                                                                                               |
+| Port rules           | `bun run port-rules:check`                                         | Nothing; `bun run check` runs it: the CLI's and Core's `port_utils.py` must stay the same file                                                                                                     |
 | Kubernetes           | `scripts/kind/e2e.sh`                                              | The kind cluster; see [Kubernetes](#kubernetes)                                                                                                                                                      |
 | Operator             | `make manifests generate fmt vet test lint`                        | Go 1.26 or later, or the `golang:1.27.0` container; see [Operator](#operator)                                                                                                                        |
 

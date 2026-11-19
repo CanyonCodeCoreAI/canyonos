@@ -34,7 +34,7 @@ import requests
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-API_URL = "http://127.0.0.1:3000"
+DASHBOARD_API = "canyonos-dashboard-api"
 DASHBOARD_WEB = "canyonos-dashboard-web"
 OUTPUT_LIMIT = 20_000
 KILL_GRACE = 10
@@ -485,11 +485,17 @@ def traces(api: Api, workflow_id: str) -> list[dict]:
     return api.get(path).json()["traces"]
 
 
+def api_url(recorder: Recorder) -> str:
+    """Where the running dashboard API answers on this machine, from the host port its
+    container publishes: 3000 is only the default, so it is read again on each call."""
+    return f"http://127.0.0.1:{_published_port(recorder, DASHBOARD_API, '3000/tcp')}"
+
+
 def dashboard_key(recorder: Recorder) -> str | None:
     """The session's API key when the dashboard API reports it needs one
     (`/auth/status`); None when it needs none, since every route then answers
     without one."""
-    status = http(recorder, "GET", f"{API_URL}/auth/status").json()
+    status = http(recorder, "GET", f"{api_url(recorder)}/auth/status").json()
     return recorder.api_key if status["api_key_required"] else None
 
 
@@ -706,10 +712,11 @@ def deployment_group(recorder: Recorder, workspace: Path) -> str:
 
 
 def stop_workflow_group(
-    recorder: Recorder, workspace: Path, *, timeout: int = 600
+    recorder: Recorder, workspace: Path, *, timeout: int = 600, clean: bool = False
 ) -> Call | None:
-    """`canyonos stop <name>` for the workflow group in `workspace`, named so the
-    stop never has to ask which workflow group when others run too. None when the
+    """`canyonos stop <name>` for the workflow group in `workspace`, or with `clean`
+    `canyonos clean <name>`, which also removes its agents' images; named so the
+    command never has to ask which workflow group when others run too. None when the
     folder has no deploy record, so there is nothing to stop."""
     name = cli_value(
         recorder,
@@ -719,8 +726,9 @@ def stop_workflow_group(
     )
     if name is None:
         return None
+    command = "clean" if clean else "stop"
     return canyonos(
-        recorder, ["stop", name], cwd=workspace, timeout=timeout, check=False
+        recorder, [command, name], cwd=workspace, timeout=timeout, check=False
     )
 
 
@@ -823,18 +831,25 @@ def workflow_group_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
     )
 
 
+def workflow_group_id(workspace: Path) -> str:
+    """The `workflow_group_id` `canyonos deploy` saved in the workflow group folder
+    `workspace`, which the CanyonOS API keys the workflow group by."""
+    config = yaml.safe_load((workspace / "workflow_group.yaml").read_text())
+    return config["workflow_group_id"]
+
+
 def deployed_endpoint(
     recorder: Recorder, workspace: Path, *, keyed: bool = True
 ) -> Endpoint:
-    """Ask the CanyonOS API for the running workflow group's endpoint, from the
-    workflow group folder, called with the session's API key unless `keyed` is
-    False."""
-    endpoint = cli_value(
-        recorder,
-        workspace,
-        "deployed_endpoint(load_state())",
-        "from canyonos.api import deployed_endpoint; from canyonos.init import load_state",
-    )
+    """The endpoint the running workflow group in the folder `workspace` published, as
+    the CanyonOS API's status of it gives it, asked with this machine's control key;
+    called with the session's API key unless `keyed` is False. Fail when the deploy
+    has no endpoint yet."""
+    path = f"/v1/workflow-groups/{workflow_group_id(workspace)}"
+    headers = controller_headers(recorder, workspace)
+    status = http(recorder, "GET", f"{api_url(recorder)}{path}", headers=headers).json()
+    endpoint = status.get("endpoint")
+    assert endpoint is not None, f"the running deploy has no endpoint yet: {status}"
     route = endpoint["routes"][0]
     return Endpoint(
         url=f"http://127.0.0.1:{endpoint['api_port']}",
@@ -941,7 +956,12 @@ def dashboard_containers(recorder: Recorder, *, every=False) -> list[str]:
     return sorted(docker(recorder, [*args, "--format", "{{.Names}}"]).output.split())
 
 
+def _published_port(recorder: Recorder, container: str, container_port: str) -> int:
+    """The host port the running `container` publishes `container_port` on."""
+    published = docker(recorder, ["port", container, container_port]).output
+    return int(published.split()[0].rsplit(":", 1)[1])
+
+
 def dashboard_port(recorder: Recorder) -> int:
     """The host port the running dashboard's web container is published on."""
-    published = docker(recorder, ["port", DASHBOARD_WEB, "8080/tcp"]).output
-    return int(published.split()[0].rsplit(":", 1)[1])
+    return _published_port(recorder, DASHBOARD_WEB, "8080/tcp")

@@ -27,8 +27,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from ..harness import (
-    API_URL,
     bearer,
+    api_url,
     canyonos,
     canyonos_in_terminal,
     cli_value,
@@ -267,7 +267,10 @@ def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_with_the_key(
     assert link.path == "/login" and not link.query, call.stdout
     assert parse_qs(link.fragment) == {"key": [recorder.api_key]}, call.stdout
     checked = http(
-        recorder, "GET", f"{API_URL}/auth/check", headers=bearer(recorder.api_key)
+        recorder,
+        "GET",
+        f"{api_url(recorder)}/auth/check",
+        headers=bearer(recorder.api_key),
     )
     assert checked.json() == {"ok": True}, checked.output
 

@@ -4,7 +4,12 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import type { RequestListItem, RequestTrace } from '@canyonos/api/requests';
+import type { MetricsKpis } from '@canyonos/api/metrics';
+import type {
+  MonitoringLogSourcesResponse,
+  MonitoringLogsResponse,
+} from '@canyonos/api/monitoring';
+import type { RequestList, RequestListItem, RequestTrace } from '@canyonos/api/requests';
 
 import { authenticate } from './helpers/auth';
 import { stubWorkflowDashboard, stubWorkflowsList, WORKFLOW } from './helpers/session';
@@ -30,9 +35,17 @@ test.describe('the range control on the logs page', () => {
         const url = new URL(route.request().url());
         const range = { from: url.searchParams.get('from')!, to: url.searchParams.get('to')! };
         if (url.pathname.endsWith('/sources'))
-          return fulfillJson(route, { workflow_id: WORKFLOW.id, ...range, sources: [] });
+          return fulfillJson(route, {
+            workflow_id: WORKFLOW.id,
+            ...range,
+            sources: [],
+          } satisfies MonitoringLogSourcesResponse);
         ranges.push(range);
-        return fulfillJson(route, { workflow_id: WORKFLOW.id, ...range, logs: [] });
+        return fulfillJson(route, {
+          workflow_id: WORKFLOW.id,
+          ...range,
+          logs: [],
+        } satisfies MonitoringLogsResponse);
       }
     );
     return ranges;
@@ -233,11 +246,11 @@ test.describe('the range control on the workflow overview', () => {
       (route) => {
         const url = new URL(route.request().url());
         return fulfillJson(route, {
-          from: url.searchParams.get('from'),
-          to: url.searchParams.get('to'),
+          from: url.searchParams.get('from')!,
+          to: url.searchParams.get('to')!,
           total: 1,
           items: [REQUEST],
-        });
+        } satisfies RequestList);
       }
     );
     await page.route(
@@ -325,8 +338,8 @@ test.describe('the range control on the workflow overview', () => {
         return fulfillJson(route, {
           workflow_id: WORKFLOW.id,
           generated_at: NOW.toISOString(),
-          from: url.searchParams.get('from'),
-          to: url.searchParams.get('to'),
+          from: url.searchParams.get('from')!,
+          to: url.searchParams.get('to')!,
           request_count: 3,
           block_count: 3,
           failed_block_count: 0,
@@ -343,7 +356,7 @@ test.describe('the range control on the workflow overview', () => {
           per_costed_request_cost: '0.1100000000',
           run_rate: '0.3300000000',
           run_rate_per: 'hour',
-        });
+        } satisfies MetricsKpis);
       }
     );
     await page.goto(`${OVERVIEW_PATH}?range=15m`);

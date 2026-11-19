@@ -44,7 +44,11 @@ export function requireApiKey({ request, set }: Guarded) {
     return refuse(set, 'auth.missing_key', 'Send the API key as `Authorization: Bearer <key>`');
   }
   if (!timingSafeEqual(hashOf(key), expectedHash)) {
-    return refuse(set, 'auth.invalid_key', 'This API key is not the one this API was started with');
+    return refuse(
+      set,
+      'auth.invalid_key',
+      'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`'
+    );
   }
 }
 

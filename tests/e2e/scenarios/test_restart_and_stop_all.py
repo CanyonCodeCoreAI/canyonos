@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 
 from ..harness import (
-    API_URL,
     Api,
+    api_url,
     canyonos,
     dashboard_containers,
     dashboard_key,
@@ -98,7 +98,7 @@ def test_two_workflow_groups_deploy_one_after_the_other_and_answer(recorder, fle
         _deploy(recorder, fleet.dirs[copy])
         fleet.groups[copy] = deployment_group(recorder, fleet.dirs[copy])
         greets(recorder, fleet.dirs[copy], copy)
-    api = Api(recorder, API_URL, dashboard_key(recorder))
+    api = Api(recorder, api_url(recorder), dashboard_key(recorder))
     for copy in COPIES:
         workflow_id = deployed_workflow_id(api, fleet.dirs[copy])
         fleet.ids[copy] = workflow_id
@@ -133,7 +133,7 @@ def test_after_docker_stops_everything_serve_lists_both_with_their_history(
 
     canyonos(recorder, ["serve"], cwd=fleet.dirs["kept"])
 
-    api = Api(recorder, API_URL, dashboard_key(recorder))
+    api = Api(recorder, api_url(recorder), dashboard_key(recorder))
     listed = {workflow["id"] for workflow in api.get("/workflows").json()}
     assert set(fleet.ids.values()) <= listed, listed
     for copy in COPIES:

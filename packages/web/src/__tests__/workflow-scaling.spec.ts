@@ -6,6 +6,8 @@ import type { Locator, Page, Route } from '@playwright/test';
 
 import type {
   ScalingAgent,
+  ScalingAgentsResponse,
+  ScalingDeleteResponse,
   ScalingPolicy,
   ScalingResponse,
   ScalingStatus,
@@ -20,6 +22,7 @@ import {
   WORKFLOW,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const SCALING_PATH = `/workflows/${WORKFLOW.id}/scaling`;
@@ -126,7 +129,7 @@ async function stubScaling(
       if (route.request().method() !== 'GET') return route.continue();
       stub.agent_reads += 1;
       if (stub.agents_failure) return stub.agents_failure(route);
-      return fulfillJson(route, { agents: stub.agents });
+      return fulfillJson(route, { agents: stub.agents } satisfies ScalingAgentsResponse);
     }
   );
   await page.route(
@@ -150,7 +153,7 @@ async function stubScaling(
       if (stub.write_failure) return stub.write_failure(route);
       if (request.method() === 'DELETE') {
         stub.workflows[APP] = NONE;
-        return fulfillJson(route, NONE);
+        return fulfillJson(route, { status: 'none' } satisfies ScalingDeleteResponse);
       }
       const policy = request.postDataJSON() as ScalingPolicy;
       stub.workflows[APP] = { status: 'applied', policy };
@@ -299,7 +302,11 @@ test.describe('screen states', () => {
       await openSession(page);
       const stub = await stubScaling(page, NONE);
       stub.read_failure = (route) =>
-        fulfillJson(route, { error: failure.code, message: failure.message }, failure.status);
+        fulfillJson(
+          route,
+          { error: failure.code, message: failure.message } satisfies ApiErrorBody,
+          failure.status
+        );
       await page.goto(SCALING_PATH);
 
       await expect(page.getByTestId('scaling-error')).toContainText(failure.message);
@@ -539,7 +546,7 @@ test.describe('adding a policy', () => {
       fulfillJson(
         route,
         {
-          error: 'validation.failed',
+          error: 'validation_error',
           message: 'Validation failed',
           details: [
             {
@@ -548,7 +555,7 @@ test.describe('adding a policy', () => {
               path: 'scale_down_below',
             },
           ],
-        },
+        } satisfies ApiErrorBody,
         422
       );
     await noneCard(page).getByTestId('policy-add').click();
@@ -648,7 +655,10 @@ test.describe('editing the applied policy', () => {
     stub.write_failure = (route) =>
       fulfillJson(
         route,
-        { error: 'scaling.policy_not_found', message: 'No scaling policy is stored' },
+        {
+          error: 'scaling.policy_not_found',
+          message: 'No scaling policy is stored',
+        } satisfies ApiErrorBody,
         404
       );
     const card = appliedCard(page);

@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
-import { app } from '@api/app';
 import { reconcile_live_prompts } from '@api/modules/prompts/prompts.service';
 import { with_redis } from '@api/modules/registry/registry.redis';
 import type { ScalingPolicy } from '@api/modules/scaling/scaling.types';
@@ -11,9 +10,13 @@ import { config } from '@core/env';
 
 import { hashApiKey, TEST_CONTROL_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
+import { refused_start, spawn_api } from './process-test.utils';
 import { seed_active_agents, seed_running_workflow, TEST_WORKFLOW } from './redis-test.utils';
-import { until_ready } from './test.utils';
+import { OPEN_ROUTES, sweep_answer, sweep_routes } from './route-sweep.utils';
+import { createApi } from './test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
+import type { SpawnedApi } from './process-test.utils';
+import type { RouteKind, SweepAnswer, SweptRoute } from './route-sweep.utils';
 
 setupE2ETests();
 
@@ -40,6 +43,7 @@ const PROMPTS = {
 };
 
 const WRONG_KEY = 'not-the-api-key';
+const UNKNOWN_WORKFLOW_ID = '00000000-0000-4000-8000-000000000000';
 
 type Res = { error: { status: unknown; value: unknown } | null };
 
@@ -60,6 +64,48 @@ async function running_workflow(name: string): Promise<string> {
 }
 
 const fetch_api = (path: string, init?: RequestInit) => fetch(`${config.app.apiUrl}${path}`, init);
+
+type Client = typeof api;
+
+/** Every GET under `workflow_id`, and the fleet overview, through `client` with `headers`. The
+ * check is wired per routes module, so reaching each proves every composed module serves the
+ * caller. */
+function read_every_sub_resource(
+  client: Client,
+  workflow_id: string,
+  headers: Record<string, string> = {}
+) {
+  const read = { $headers: headers };
+  const workflow = client.workflows[workflow_id]!;
+  return Promise.all([
+    workflow.get(read),
+    workflow.stats.get(read),
+    workflow.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
+    workflow.metrics.kpis.get({ ...read, $query: RANGE }),
+    workflow.monitoring.series.get({ ...read, $query: RANGE }),
+    workflow.monitoring.logs.get({
+      ...read,
+      $query: { ...RANGE, limit: 200, errors_only: false },
+    }),
+    workflow.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
+    workflow.monitoring.resources.get({ ...read, $query: RANGE }),
+    workflow.monitoring.replicas.get(read),
+    workflow.monitoring.endpoint.get(read),
+    workflow.prompts.get(read),
+    workflow.prompts['app.greet']!.get(read),
+    workflow.scaling.get(read),
+    workflow.scaling.agents.get(read),
+    workflow.governance.get(read),
+    client.resources.overview.get({ ...read, $query: RANGE }),
+  ]);
+}
+
+/** The ids `client` lists with `headers`. */
+async function listed_ids(client: Client, headers: Record<string, string> = {}) {
+  const listed = await client.workflows.get({ $headers: headers });
+  expect(listed.error).toBeNull();
+  return listed.data!.map(({ id }) => id);
+}
 
 describe('the dashboard API checks the API key', () => {
   test('no Authorization header, or a Basic one, is 401 auth.missing_key', async () => {
@@ -95,34 +141,40 @@ describe('the dashboard API checks the API key', () => {
     expect(res.error).toBeNull();
   });
 
-  test('the API key gets 200 from every GET under a workflow', async () => {
+  test('the API key reaches the workflow and gets 200 from every GET under it', async () => {
     const workflow_id = await running_workflow('Key Reads Everything');
-    const read = { $headers: bearer(TEST_API_KEY) };
-    const workflow = api.workflows[workflow_id]!;
+    const headers = bearer(TEST_API_KEY);
 
-    const responses = await Promise.all([
-      workflow.get(read),
-      workflow.stats.get(read),
-      workflow.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
-      workflow.metrics.kpis.get({ ...read, $query: RANGE }),
-      workflow.monitoring.series.get({ ...read, $query: RANGE }),
-      workflow.monitoring.logs.get({
-        ...read,
-        $query: { ...RANGE, limit: 200, errors_only: false },
-      }),
-      workflow.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
-      workflow.monitoring.resources.get({ ...read, $query: RANGE }),
-      workflow.monitoring.replicas.get(read),
-      workflow.monitoring.endpoint.get(read),
-      workflow.prompts.get(read),
-      workflow.prompts['app.greet']!.get(read),
-      workflow.scaling.get(read),
-      workflow.scaling.agents.get(read),
-      workflow.governance.get(read),
-    ]);
+    const responses = await read_every_sub_resource(api, workflow_id, headers);
 
     for (const res of responses) expect(res.error).toBeNull();
-    expect((await api.resources.overview.get({ ...read, $query: RANGE })).error).toBeNull();
+    expect(responses[0].data?.id).toBe(workflow_id);
+    expect(await listed_ids(api, headers)).toContain(workflow_id);
+  });
+
+  test('a workflow id that does not exist is 404 workflows.not_found once the key is checked', async () => {
+    const res = await api.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get({
+      $headers: bearer(TEST_API_KEY),
+    });
+
+    expect(refusal(res)).toMatchObject({ status: 404, error: 'workflows.not_found' });
+  });
+
+  test('a caller with no API key is refused before any workflow is resolved', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'No Key' });
+    const workflow = api.workflows[workflow_id]!;
+
+    const refused = await Promise.all([
+      workflow.get(),
+      workflow.prompts.get(),
+      workflow.scaling.get(),
+      api.workflows.get(),
+      api.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get(),
+    ]);
+
+    for (const res of refused) {
+      expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.missing_key' });
+    }
   });
 
   test('the API key changes a workflow, and a wrong key changes nothing', async () => {
@@ -172,6 +224,16 @@ describe('the dashboard API checks the API key', () => {
   test('/auth/status and /healthz answer with no key', async () => {
     expect((await api.auth.status.get()).data).toEqual({ api_key_required: true });
     expect((await api.healthz.get()).error).toBeNull();
+  });
+
+  test('POST /v1/traces takes an empty OTLP export with no key', async () => {
+    const response = await fetch_api('/v1/traces', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-protobuf' },
+      body: new Uint8Array(),
+    });
+
+    expect(response.status).toBe(200);
   });
 
   test('tokens and password sign-in are gone: /auth/token, register, login and profile are 404', async () => {
@@ -232,66 +294,68 @@ describe('the dashboard API checks the API key', () => {
   });
 });
 
-// Written here, not read from the guards, so a route mounted outside them shows up: every route
-// is one of these, or needs a key.
-const OPEN_ROUTES = [
-  'OPTIONS /',
-  'OPTIONS /*',
-  'GET /docs',
-  'GET /docs/json',
-  'GET /healthz',
-  'GET /readyz',
-  'GET /auth/status',
-  // The OTLP receivers: an agent process holds no API key.
-  'POST /v1/traces',
-  'POST /v1/metrics',
-  'POST /v1/logs',
-];
-const CONTROL_KEY_PATH = /^\/v1\/workflow-groups(?:\/|$)/;
+const routes_of = (kind: RouteKind) => sweep_routes().filter((swept) => swept.kind === kind);
+
+/** What each of `routes` answers the API at `url`, sent with `headers`, one after the other. */
+async function sweep(
+  url: string,
+  routes: readonly SweptRoute[],
+  headers: Record<string, string>
+): Promise<SweepAnswer[]> {
+  const answers: SweepAnswer[] = [];
+  for (const swept of routes) answers.push(await sweep_answer(url, swept, headers));
+  return answers;
+}
+
+/** The answers of `routes` that each refuse with 401 `error`. */
+const refused_with = (routes: readonly SweptRoute[], error: string) =>
+  routes.map(({ route }) => ({ route, status: 401, error }));
 
 describe('every route', () => {
-  test('is open by name, or checks its key before it reads the request', async () => {
-    const routes = app.routes.map(({ method, path }) => ({
-      method,
-      path,
-      route: `${method} ${path}`,
-    }));
-    expect(OPEN_ROUTES.filter((route) => !routes.some((r) => r.route === route))).toEqual([]);
-    const guarded = routes.filter(({ route }) => !OPEN_ROUTES.includes(route));
-    expect(guarded.length).toBeGreaterThan(40);
+  test('is open by name, or takes the API key or the control key', () => {
+    const routes = sweep_routes();
 
-    for (const { method, path, route } of guarded) {
-      // The control key on /v1/workflow-groups, never the API key; the API key everywhere else.
-      const [key, wrong_key] = CONTROL_KEY_PATH.test(path)
-        ? [TEST_CONTROL_KEY, TEST_API_KEY]
-        : [TEST_API_KEY, WRONG_KEY];
-      // Params, a query and a body that all fail validation: the key is checked first, so 401.
-      const url = `http://localhost${path.replace(/:[^/]+/g, 'not-an-id')}?from=never&limit=lots&tail=lots`;
-      const send = (headers: Record<string, string>) =>
-        app.handle(
-          new Request(url, {
-            method,
-            headers: { 'content-type': 'application/json', ...headers },
-            ...(method === 'GET' ? {} : { body: '{' }),
-          })
-        );
-      for (const [headers, error] of [
-        [{}, 'auth.missing_key'],
-        [bearer(wrong_key), 'auth.invalid_key'],
-      ] as const) {
-        const response = await send(headers);
-        const body = (await response.json()) as { error: string };
-        expect({ route, status: response.status, error: body.error }).toEqual({
-          route,
-          status: 401,
-          error,
-        });
-      }
-      // And the right key gets past the guard.
-      expect({ route, status: (await send(bearer(key))).status }).not.toEqual({
-        route,
-        status: 401,
-      });
+    expect(OPEN_ROUTES.filter((route) => !routes.some((swept) => swept.route === route))).toEqual(
+      []
+    );
+    expect(routes.filter(({ kind }) => kind === 'unguarded').map(({ route }) => route)).toEqual([]);
+    expect(routes_of('api_key').length).toBeGreaterThan(30);
+    expect(routes_of('control_key').length).toBeGreaterThan(10);
+  });
+
+  // Params, a query and a body that all fail validation: the key is checked first, so 401.
+  test('that takes the API key refuses no key or another before it reads the request, and the key gets past', async () => {
+    const routes = routes_of('api_key');
+    const url = config.app.apiUrl;
+
+    expect(await sweep(url, routes, {})).toEqual(refused_with(routes, 'auth.missing_key'));
+    expect(await sweep(url, routes, bearer(WRONG_KEY))).toEqual(
+      refused_with(routes, 'auth.invalid_key')
+    );
+    expect(await sweep(url, routes, bearer(TEST_CONTROL_KEY))).toEqual(
+      refused_with(routes, 'auth.invalid_key')
+    );
+    for (const answer of await sweep(url, routes, bearer(TEST_API_KEY))) {
+      expect(answer).not.toMatchObject({ status: 401 });
+    }
+  });
+
+  test('that takes the control key refuses no key or the API key before it reads the request, and the control key gets past', async () => {
+    const routes = routes_of('control_key');
+    const url = config.app.apiUrl;
+
+    expect(await sweep(url, routes, {})).toEqual(refused_with(routes, 'auth.missing_key'));
+    expect(await sweep(url, routes, bearer(TEST_API_KEY))).toEqual(
+      refused_with(routes, 'auth.invalid_key')
+    );
+    for (const answer of await sweep(url, routes, bearer(TEST_CONTROL_KEY))) {
+      expect(answer).not.toMatchObject({ status: 401 });
+    }
+  });
+
+  test('that is open answers with no key', async () => {
+    for (const answer of await sweep(config.app.apiUrl, routes_of('open'), {})) {
+      expect(answer).not.toMatchObject({ status: 401 });
     }
   });
 });
@@ -351,62 +415,22 @@ describe('a path with a dot segment', () => {
   });
 });
 
-const SERVER = new URL('../server.ts', import.meta.url).pathname;
-const STARTUP_TIMEOUT_MS = 10_000;
-
-let next_port = config.app.port + 100;
-
-/** Starts `src/server.ts` on its own port with `env` over this run's environment. */
-function spawn_api(env: Record<string, string>) {
-  const port = next_port++;
-  const child = Bun.spawn(['bun', '--no-env-file', SERVER], {
-    env: { ...process.env, PORT: String(port), API_URL: `http://localhost:${port}`, ...env },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  return { child, url: `http://localhost:${port}` };
-}
-
-/** The exit code and stderr of a server that must refuse to start. */
-async function refused_start(env: Record<string, string>) {
-  const { child } = spawn_api(env);
-  const timeout = setTimeout(() => child.kill(), STARTUP_TIMEOUT_MS);
-  const code = await child.exited;
-  clearTimeout(timeout);
-  return { code, stderr: await new Response(child.stderr).text() };
-}
-
-async function with_api(env: Record<string, string>, check: (url: string) => Promise<void>) {
-  const { child, url } = spawn_api(env);
-  try {
-    await until_ready(url);
-    await check(url);
-  } finally {
-    child.kill();
-    await child.exited;
-  }
-}
-
 describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
   test('the hash of another key lets only that key in', async () => {
     const other_key = 'another machine key';
-
-    await with_api({ CANYONOS_API_KEY_HASH: hashApiKey(other_key) }, async (url) => {
-      const status = await fetch(`${url}/auth/status`);
+    const other = await spawn_api({ CANYONOS_API_KEY_HASH: hashApiKey(other_key) });
+    try {
+      const status = await fetch(`${other.url}/auth/status`);
       expect(await status.json()).toEqual({ api_key_required: true });
-      expect((await fetch(`${url}/workflows`, { headers: bearer(other_key) })).status).toBe(200);
-      expect((await fetch(`${url}/workflows`, { headers: bearer(TEST_API_KEY) })).status).toBe(401);
-    });
-  }, 40_000);
-
-  test('an empty hash starts open: no key needed, and any bearer is ignored', async () => {
-    await with_api({ CANYONOS_API_KEY_HASH: '' }, async (url) => {
-      const status = await fetch(`${url}/auth/status`);
-      expect(await status.json()).toEqual({ api_key_required: false });
-      expect((await fetch(`${url}/workflows`)).status).toBe(200);
-      expect((await fetch(`${url}/workflows`, { headers: bearer(WRONG_KEY) })).status).toBe(200);
-      expect((await fetch(`${url}/auth/check`)).status).toBe(200);
-    });
+      expect((await fetch(`${other.url}/workflows`, { headers: bearer(other_key) })).status).toBe(
+        200
+      );
+      expect(
+        (await fetch(`${other.url}/workflows`, { headers: bearer(TEST_API_KEY) })).status
+      ).toBe(401);
+    } finally {
+      await other.stop();
+    }
   }, 40_000);
 
   const malformed: [string, string][] = [
@@ -418,10 +442,81 @@ describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
 
   for (const [label, value] of malformed) {
     test(`${label} refuses to start, naming the variable`, async () => {
-      const { code, stderr } = await refused_start({ CANYONOS_API_KEY_HASH: value });
+      const { exit_code, output } = await refused_start({ CANYONOS_API_KEY_HASH: value });
 
-      expect(code).not.toBe(0);
-      expect(stderr).toContain('CANYONOS_API_KEY_HASH must be the sha256 of the API key');
+      expect(exit_code).not.toBe(0);
+      expect(output).toContain('CANYONOS_API_KEY_HASH must be the sha256 of the API key');
     }, 15_000);
   }
+});
+
+const STALE_BEARER = bearer('a key from before the API ran open');
+
+describe('an API started with an empty CANYONOS_API_KEY_HASH', () => {
+  let open: SpawnedApi;
+  let client: Client;
+
+  beforeAll(async () => {
+    open = await spawn_api({ CANYONOS_API_KEY_HASH: '' });
+    client = createApi(open.url);
+  }, 40_000);
+
+  afterAll(async () => {
+    await open.stop();
+  });
+
+  test('/auth/status reports that no key is needed', async () => {
+    expect((await client.auth.status.get()).data).toEqual({ api_key_required: false });
+  });
+
+  test('/auth/check answers ok with no key', async () => {
+    expect((await client.auth.check.get()).data).toEqual({ ok: true });
+  });
+
+  test('a caller with no key lists workflows and changes scaling', async () => {
+    const workflow_id = await running_workflow('Keyless Writes');
+
+    expect(await listed_ids(client)).toContain(workflow_id);
+    expect((await client.workflows[workflow_id]!.scaling.put(POLICY)).error).toBeNull();
+  });
+
+  // A key left in a browser from before the API ran open must not turn into a 401.
+  test('a stale bearer is ignored', async () => {
+    const workflow_id = await running_workflow('Stale Bearer');
+
+    expect(await listed_ids(client, STALE_BEARER)).toContain(workflow_id);
+    const saved = await client.workflows[workflow_id]!.scaling.put(POLICY, {
+      headers: STALE_BEARER,
+    });
+    expect(saved.error).toBeNull();
+  });
+
+  test('a caller with no headers lists the workflows and reaches every sub-resource', async () => {
+    const workflow_id = await running_workflow('Open Workflow');
+
+    for (const res of await read_every_sub_resource(client, workflow_id)) {
+      expect(res.error).toBeNull();
+    }
+    expect(await listed_ids(client)).toContain(workflow_id);
+  });
+
+  test('a workflow id that does not exist is 404 workflows.not_found', async () => {
+    const res = await client.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get();
+
+    expect(refusal(res)).toMatchObject({ status: 404, error: 'workflows.not_found' });
+  });
+
+  test('no route that takes the API key, or none, is 401 with no key or a stale bearer; /v1 still takes the control key', async () => {
+    const routes = [...routes_of('api_key'), ...routes_of('open')];
+    for (const headers of [{}, STALE_BEARER]) {
+      for (const answer of await sweep(open.url, routes, headers)) {
+        expect(answer).not.toMatchObject({ status: 401 });
+      }
+    }
+
+    const control = routes_of('control_key');
+    expect(await sweep(open.url, control, STALE_BEARER)).toEqual(
+      refused_with(control, 'auth.invalid_key')
+    );
+  });
 });

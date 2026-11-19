@@ -29,7 +29,11 @@ from canyonos.constants import (
     DEFAULT_DASHBOARD_PORT,
     public_ip,
 )
-from canyonos.docker_cmd import DOCKER_CLEANUP_TIMEOUT, mounted_docker_socket
+from canyonos.docker_cmd import (
+    DOCKER_CLEANUP_TIMEOUT,
+    DOCKER_QUICK_TIMEOUT,
+    mounted_docker_socket,
+)
 from canyonos.os_support import file_lock, make_private_dir, write_private_file
 from canyonos.port_utils import (
     DEFAULT_MAX_PORT_ATTEMPTS,
@@ -41,6 +45,11 @@ from canyonos.port_utils import (
 COMPOSE_PROJECT = "canyonos-dashboard"
 API_IMAGE = env.api_image
 WEB_IMAGE = env.web_image
+# The services whose image the CLI picks, each with it and the variable that sets it.
+SERVICE_IMAGES = {
+    "api": (API_IMAGE, env.API_IMAGE_VAR),
+    "web": (WEB_IMAGE, env.WEB_IMAGE_VAR),
+}
 LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the dashboard"
 # Made once per machine and kept in the stack's `.env`: the API encrypts each workflow's
 # Redis password in its database with it.
@@ -564,11 +573,53 @@ def _pull(
     except OSError:
         raise PhaseFailure("pull", "could not run docker compose pull")
     if result.returncode != 0:
-        raise PhaseFailure(
-            "pull",
-            _command_failure_message("docker compose pull failed", result, managed_env),
+        failure = _command_failure_message(
+            "docker compose pull failed", result, managed_env
         )
+        missing = _missing_images(services)
+        raise PhaseFailure("pull", _missing_message(missing, failure) or failure)
     return "dashboard images pulled"
+
+
+def _image_here(image: str) -> bool:
+    """Whether the Docker engine has `image`; True when it can't say, so a pull that
+    failed for another reason is not blamed on it."""
+    try:
+        inspected = _run(
+            ["docker", "image", "inspect", image], timeout=DOCKER_QUICK_TIMEOUT
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return inspected.returncode == 0
+
+
+def _missing_images(services: tuple[str, ...]) -> list[tuple[str, str]]:
+    """The images the CLI picks for `services` that this machine does not have, each
+    with the variable that sets it."""
+    return [
+        SERVICE_IMAGES[service]
+        for service in services
+        if service in SERVICE_IMAGES and not _image_here(SERVICE_IMAGES[service][0])
+    ]
+
+
+def _missing_message(missing: list[tuple[str, str]], failure: str) -> str:
+    """Say which of the stack's images a failed pull (`failure`) left missing and how
+    to get one, for `canyonos serve` and every command that starts the API; "" when
+    none is missing."""
+    if not missing:
+        return ""
+    images = " and ".join(image for image, _variable in missing)
+    if env.is_production:
+        fix = "Check that this machine can pull it."
+    else:
+        variables = " and ".join(variable for _image, variable in missing)
+        fix = (
+            f"Point {variables} at an image this machine has, or build this "
+            "checkout's with `bun run canyonos:dev`."
+        )
+    verb = "are" if len(missing) > 1 else "is"
+    return f"{images} {verb} not on this machine and could not be pulled ({failure}). {fix}"
 
 
 def _remove(

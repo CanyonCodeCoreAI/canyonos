@@ -4,7 +4,17 @@
 import { expect } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 
-import type { MetricsKpi } from '@canyonos/api/metrics';
+import type {
+  DistributionMetric,
+  MetricsBlocks,
+  MetricsDistribution,
+  MetricsKpi,
+  MetricsKpis,
+  MetricsTimeseries,
+  RunRatePer,
+} from '@canyonos/api/metrics';
+import type { RequestList } from '@canyonos/api/requests';
+import type { FleetOverview } from '@canyonos/api/resources';
 import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { apiBaseUrl, failJson, fulfillJson } from './workflows';
@@ -43,6 +53,18 @@ export async function stubWorkflowsList(
   await routePath(page, '/workflows', (route) => fulfillJson(route, workflows));
 }
 
+/** The range the dashboard asked for, as the API echoes it. */
+const requestedRange = (url: URL) => ({
+  from: url.searchParams.get('from') ?? '',
+  to: url.searchParams.get('to') ?? '',
+});
+
+/** As the API picks it: per hour for a range of a day or less, per day beyond. */
+function runRatePer(url: URL): RunRatePer {
+  const { from, to } = requestedRange(url);
+  return Date.parse(to) - Date.parse(from) <= 86_400_000 ? 'hour' : 'day';
+}
+
 /** The fleet rollup the overview rows read spend from, answered empty. */
 export async function stubFleetSpend(page: Page): Promise<void> {
   await routePath(page, '/resources/overview', (route, url) =>
@@ -50,9 +72,8 @@ export async function stubFleetSpend(page: Page): Promise<void> {
       kpis: [],
       resources: [],
       workflows: [],
-      from: url.searchParams.get('from'),
-      to: url.searchParams.get('to'),
-    })
+      ...requestedRange(url),
+    } satisfies FleetOverview)
   );
 }
 
@@ -72,11 +93,6 @@ const EMPTY_KPI: MetricsKpi = {
   costed_request_count: 0,
   per_costed_request_cost: null,
 };
-
-const requestedRange = (url: URL) => ({
-  from: url.searchParams.get('from'),
-  to: url.searchParams.get('to'),
-});
 
 export interface WorkflowDashboardOptions {
   /** Fail the KPI read, which is what the cost ribbon's error state is drawn from. */
@@ -100,7 +116,9 @@ export async function stubWorkflowDashboard(
           generated_at: '2026-07-29T12:00:00.000Z',
           ...requestedRange(url),
           ...EMPTY_KPI,
-        })
+          run_rate: '0.0000000000',
+          run_rate_per: runRatePer(url),
+        } satisfies MetricsKpis)
   );
   await routePath(page, `${base}/metrics/timeseries`, (route, url) =>
     fulfillJson(route, {
@@ -108,7 +126,7 @@ export async function stubWorkflowDashboard(
       ...requestedRange(url),
       bucket_seconds: 86_400,
       points: [],
-    })
+    } satisfies MetricsTimeseries)
   );
   await routePath(page, `${base}/metrics/blocks`, (route, url) =>
     fulfillJson(route, {
@@ -116,12 +134,12 @@ export async function stubWorkflowDashboard(
       ...requestedRange(url),
       total_cost: '0.000000',
       blocks: [],
-    })
+    } satisfies MetricsBlocks)
   );
   await routePath(page, `${base}/metrics/distribution`, (route, url) =>
     fulfillJson(route, {
       workflow_id: workflow.id,
-      metric: url.searchParams.get('metric') ?? 'cost_per_request',
+      metric: (url.searchParams.get('metric') as DistributionMetric | null) ?? 'cost_per_request',
       ...requestedRange(url),
       request_count: 0,
       mean: null,
@@ -132,9 +150,9 @@ export async function stubWorkflowDashboard(
       p95: null,
       p99: null,
       buckets: [],
-    })
+    } satisfies MetricsDistribution)
   );
   await routePath(page, `${base}/requests`, (route, url) =>
-    fulfillJson(route, { ...requestedRange(url), total: 0, items: [] })
+    fulfillJson(route, { ...requestedRange(url), total: 0, items: [] } satisfies RequestList)
   );
 }

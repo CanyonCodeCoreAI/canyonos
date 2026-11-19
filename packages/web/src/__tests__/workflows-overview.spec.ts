@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import type { FleetWorkflow } from '@canyonos/api/resources';
+import type { FleetOverview, FleetWorkflow } from '@canyonos/api/resources';
 import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { authenticate } from './helpers/auth';
@@ -34,9 +34,9 @@ async function mockFleetSpend(page: Page, workflows: FleetWorkflow[]): Promise<v
             kpis: [],
             resources: [],
             workflows,
-            from: new URL(route.request().url()).searchParams.get('from'),
-            to: new URL(route.request().url()).searchParams.get('to'),
-          })
+            from: new URL(route.request().url()).searchParams.get('from') ?? '',
+            to: new URL(route.request().url()).searchParams.get('to') ?? '',
+          } satisfies FleetOverview)
         : route.continue()
   );
 }

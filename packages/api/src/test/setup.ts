@@ -37,14 +37,23 @@ async function resetPostgresTestDatabase(): Promise<void> {
 }
 
 /**
- * Starts the API with the hash of `TEST_API_KEY` before `env.ts` reads it, unless the run set
- * `CANYONOS_API_KEY_HASH` itself: `test:open` sets it empty to run with no key.
+ * What the suite runs against unless the shell or `.env.test` says otherwise, set before `env.ts`
+ * reads them: the `canyonos_test` database beside the one `bun run docker:up` starts, a Redis on
+ * loopback, and the hashes of the keys the tests send. A value the run sets, empty included, is
+ * kept.
  */
-function requireTestApiKey(): void {
-  process.env.CANYONOS_API_KEY_HASH ??= hashApiKey(TEST_API_KEY);
-  process.env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
+function setTestDefaults(): void {
+  const env = process.env;
+  env.DATABASE_URL ??= 'postgres://canyonos:canyonos@localhost:5432/canyonos_test';
+  env.PORT ??= '3001';
+  env.API_URL ??= `http://localhost:${env.PORT}`;
+  env.LOG_LEVEL ??= 'warn';
+  env.CANYONOS_REDIS_HOST ??= '127.0.0.1';
+  env.CANYONOS_REDIS_PORT ??= '6379';
+  env.CANYONOS_API_KEY_HASH ??= hashApiKey(TEST_API_KEY);
+  env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
 }
 
+setTestDefaults();
 await resetPostgresTestDatabase();
-requireTestApiKey();
 export {};

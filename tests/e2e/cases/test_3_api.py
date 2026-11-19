@@ -20,7 +20,6 @@ import yaml
 
 from ..fleet import routed_replicas, store
 from ..harness import (
-    API_URL,
     CallFailed,
     bearer,
     dashboard_port,
@@ -395,9 +394,10 @@ def _refused(call, status, code):
 
 
 def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
-    status = http(recorder, "GET", f"{API_URL}/auth/status").json()
+    base_url = deployed.api.base_url
+    status = http(recorder, "GET", f"{base_url}/auth/status").json()
     assert status == {"api_key_required": True}, status
-    workflows = f"{API_URL}/workflows"
+    workflows = f"{base_url}/workflows"
     _refused(http(recorder, "GET", workflows, check=False), 401, "auth.missing_key")
     wrong = bearer(f"{recorder.api_key}x")
     refused = http(recorder, "GET", workflows, headers=wrong, check=False)
@@ -406,11 +406,11 @@ def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
     refused = http(recorder, "GET", workflows, headers=hashed, check=False)
     _refused(refused, 401, "auth.invalid_key")
     checked = http(
-        recorder, "GET", f"{API_URL}/auth/check", headers=deployed.api.headers
+        recorder, "GET", f"{base_url}/auth/check", headers=deployed.api.headers
     )
     assert checked.json() == {"ok": True}, checked.output
     _refused(
-        http(recorder, "GET", f"{API_URL}/auth/check", check=False),
+        http(recorder, "GET", f"{base_url}/auth/check", check=False),
         401,
         "auth.missing_key",
     )
@@ -420,7 +420,8 @@ def test_a_write_without_the_key_changes_nothing(recorder, deployed):
     workflows = deployed.api.get("/workflows").json()
     assert deployed.workflow_id in {workflow["id"] for workflow in workflows}, workflows
     scaling = _workflow_path(deployed, "/scaling")
-    refused = http(recorder, "DELETE", f"{API_URL}{scaling}", check=False)
+    url = f"{deployed.api.base_url}{scaling}"
+    refused = http(recorder, "DELETE", url, check=False)
     _refused(refused, 401, "auth.missing_key")
     after = deployed.api.get(scaling).json()
     _assert_shipped_scaling(deployed, _workflow_scaling(deployed, after))

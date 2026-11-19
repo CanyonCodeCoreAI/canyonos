@@ -9,9 +9,12 @@ stop removes them. What stop does to the shared dashboard is
 scenarios/test_shared_dashboard.py's.
 
 Each run stages the workflow under a new workflow group id, so its images get new names;
-the clean here is the run's final teardown and keeps them from piling up."""
+the clean here is the run's final teardown and keeps them from piling up. Only the
+`lifecycle` workflow runs these; another is cleaned when its `deployed` fixture ends."""
 
 from pathlib import Path
+
+import pytest
 
 from ..harness import (
     canyonos,
@@ -24,6 +27,9 @@ from ..harness import (
     qualified,
     stop_workflow_group,
 )
+
+
+pytestmark = pytest.mark.trait("lifecycle")
 
 
 def _volume_exists(recorder, volume):

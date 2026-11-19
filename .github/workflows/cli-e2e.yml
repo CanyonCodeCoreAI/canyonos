@@ -57,8 +57,9 @@ permissions:
 jobs:
   e2e:
     runs-on: blacksmith-4vcpu-ubuntu-2604
-    # The core and API image builds and a real deploy, on top of the rest of the suite.
-    timeout-minutes: 15
+    # The core and API image builds and a dozen real deploys, five of them the API
+    # lifecycle cases', on top of the rest of the suite.
+    timeout-minutes: 25
 
     steps:
       - uses: useblacksmith/checkout@v1 # v7.0.1

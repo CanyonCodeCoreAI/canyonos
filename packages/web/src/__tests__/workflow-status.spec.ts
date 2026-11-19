@@ -8,7 +8,9 @@ import type {
   MonitoringEndpointResponse,
   MonitoringErrorSummaryResponse,
   MonitoringReplica,
+  MonitoringReplicasResponse,
 } from '@canyonos/api/monitoring';
+import type { WorkflowDeleted } from '@canyonos/api/workflows';
 
 import { authenticate } from './helpers/auth';
 import {
@@ -19,6 +21,7 @@ import {
   WORKFLOW,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WORKFLOW_PATH = `/workflows/${WORKFLOW.id}`;
@@ -102,7 +105,11 @@ async function openStatus(page: Page, stub: StatusStub = {}): Promise<void> {
     [`${MONITORING_PATH}/endpoint`]: stub.endpoint ?? ((route) => fulfillJson(route, ENDPOINT)),
     [`${MONITORING_PATH}/replicas`]:
       stub.replicas ??
-      ((route) => fulfillJson(route, { workflow_id: WORKFLOW.id, replicas: REPLICAS })),
+      ((route) =>
+        fulfillJson(route, {
+          workflow_id: WORKFLOW.id,
+          replicas: REPLICAS,
+        } satisfies MonitoringReplicasResponse)),
     [`${MONITORING_PATH}/errors/summary`]: (route) => fulfillJson(route, ERROR_SUMMARY),
   };
   await page.route(
@@ -120,7 +127,10 @@ async function openStatus(page: Page, stub: StatusStub = {}): Promise<void> {
 const notRunning: Handler = (route) =>
   fulfillJson(
     route,
-    { error: 'registry.workflow_not_running', message: 'No running controller' },
+    {
+      error: 'registry.workflow_not_running',
+      message: 'No running controller',
+    } satisfies ApiErrorBody,
     404
   );
 
@@ -228,7 +238,11 @@ test('a failed replicas read shows the containers error, not the empty state', a
 
 test('no replicas up shows the empty containers state', async ({ page }) => {
   await openStatus(page, {
-    replicas: (route) => fulfillJson(route, { workflow_id: WORKFLOW.id, replicas: [] }),
+    replicas: (route) =>
+      fulfillJson(route, {
+        workflow_id: WORKFLOW.id,
+        replicas: [],
+      } satisfies MonitoringReplicasResponse),
   });
 
   await expect(page.getByTestId('metrics-containers-empty')).toContainText('No containers up.');
@@ -240,7 +254,7 @@ test('no replicas up shows the empty containers state', async ({ page }) => {
 test('a running workflow cannot be deleted; the dialog says to stop it first', async ({ page }) => {
   await openStatus(page);
   const deletes = await stubDelete(page, (route) =>
-    fulfillJson(route, { workflow_id: WORKFLOW.id })
+    fulfillJson(route, { workflow_id: WORKFLOW.id } satisfies WorkflowDeleted)
   );
   await expect(page.getByTestId('status-badge')).toHaveText('Running');
 
@@ -259,7 +273,7 @@ test('deleting a stopped workflow removes it and returns to the workflows list',
 }) => {
   await openStatus(page, { endpoint: notRunning });
   const deletes = await stubDelete(page, (route) =>
-    fulfillJson(route, { workflow_id: WORKFLOW.id })
+    fulfillJson(route, { workflow_id: WORKFLOW.id } satisfies WorkflowDeleted)
   );
   await expect(page.getByTestId('status-badge')).toHaveText('Not running');
 
@@ -275,7 +289,11 @@ test('deleting a stopped workflow removes it and returns to the workflows list',
 test('a delete the API refuses keeps the dialog open with the reason', async ({ page }) => {
   await openStatus(page, { endpoint: notRunning });
   await stubDelete(page, (route) =>
-    fulfillJson(route, { error: 'workflows.running', message: STILL_RUNNING }, 409)
+    fulfillJson(
+      route,
+      { error: 'workflows.running', message: STILL_RUNNING } satisfies ApiErrorBody,
+      409
+    )
   );
   await expect(page.getByTestId('status-badge')).toHaveText('Not running');
 

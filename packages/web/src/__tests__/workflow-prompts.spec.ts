@@ -20,6 +20,7 @@ import {
   WORKFLOW,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const PROMPTS_PATH = `/workflows/${WORKFLOW.id}/prompts`;
@@ -88,7 +89,10 @@ async function stubPrompts(
       if (stub.list_reads === 1 && first === 'not_running') {
         return fulfillJson(
           route,
-          { error: 'registry.workflow_not_running', message: 'No running controller' },
+          {
+            error: 'registry.workflow_not_running',
+            message: 'No running controller',
+          } satisfies ApiErrorBody,
           404
         );
       }
@@ -112,7 +116,11 @@ async function stubPrompts(
       const prompt = stub.prompts.find((stored) => stored.name === name);
       return prompt
         ? fulfillJson(route, prompt)
-        : fulfillJson(route, { error: 'prompts.prompt_not_found', message: 'No such prompt' }, 404);
+        : fulfillJson(
+            route,
+            { error: 'prompts.prompt_not_found', message: 'No such prompt' } satisfies ApiErrorBody,
+            404
+          );
     }
   );
   return stub;
@@ -157,7 +165,7 @@ async function stubPromptWrites(
       stub.prompts = stub.prompts.map((stored) =>
         stored === prompt ? { ...stored, live } : stored
       );
-      return fulfillJson(route, { name, live });
+      return fulfillJson(route, { name, live } satisfies PromptListItem);
     }
   );
   return requests;

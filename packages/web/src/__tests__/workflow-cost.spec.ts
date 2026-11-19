@@ -15,9 +15,11 @@ import type {
   MetricsTimeseries,
 } from '@canyonos/api/metrics';
 import type { RequestList, RequestTrace } from '@canyonos/api/requests';
+import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { authenticate } from './helpers/auth';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WORKFLOW_ID = '33333333-3333-4333-8333-333333333301';
@@ -617,7 +619,7 @@ const RUNNING_REQUESTS: RequestList = {
   items: [{ ...REQUESTS.items[0]!, status: 'running', finished_at: null, duration_ms: null }],
 };
 
-const WORKFLOW = {
+const WORKFLOW: WorkflowSummary = {
   id: WORKFLOW_ID,
   name: 'Request Router',
   file_count: 5,
@@ -677,28 +679,36 @@ const countCalls = (calls: readonly string[], path: string) =>
 async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise<string[]> {
   const calls: string[] = [];
   const routes: readonly [string, (url: URL) => unknown, boolean][] = [
-    [`/workflows/${WORKFLOW_ID}`, () => WORKFLOW, false],
+    [`/workflows/${WORKFLOW_ID}`, (): WorkflowSummary => WORKFLOW, false],
     [
       KPIS_PATH,
-      (url) => {
+      (url): MetricsKpis => {
         const kpis = options.kpis ?? { ...KPIS, ...KPI_RANGES[requestedFixtureRange(url)] };
         return { ...kpis, ...requestedRange(url), ...runRateFor(kpis, requestedRange(url)) };
       },
       options.kpisFails === true,
     ],
-    [BLOCKS_PATH, (url) => ({ ...(options.blocks ?? BLOCKS), ...requestedRange(url) }), false],
+    [
+      BLOCKS_PATH,
+      (url): MetricsBlocks => ({ ...(options.blocks ?? BLOCKS), ...requestedRange(url) }),
+      false,
+    ],
     [
       TIMESERIES_PATH,
-      (url) => ({
+      (url): MetricsTimeseries => ({
         ...(options.timeseries ?? timeseriesFor(requestedFixtureRange(url))),
         ...requestedRange(url),
       }),
       false,
     ],
-    [DISTRIBUTION_PATH, (url) => ({ ...DISTRIBUTION, ...requestedRange(url) }), false],
+    [
+      DISTRIBUTION_PATH,
+      (url): MetricsDistribution => ({ ...DISTRIBUTION, ...requestedRange(url) }),
+      false,
+    ],
     [
       `/workflows/${WORKFLOW_ID}/requests`,
-      (url) => ({ ...(options.requests ?? REQUESTS), ...requestedRange(url) }),
+      (url): RequestList => ({ ...(options.requests ?? REQUESTS), ...requestedRange(url) }),
       false,
     ],
   ];
@@ -732,7 +742,7 @@ async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise
             {
               error: 'requests.not_found',
               message: `Request "${REQUEST_TRACE.session_id}" was not found`,
-            },
+            } satisfies ApiErrorBody,
             404
           );
     }
@@ -757,7 +767,7 @@ async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise
             {
               error: 'metrics.agent_not_found',
               message: 'No execution for this agent in the last 30 days',
-            },
+            } satisfies ApiErrorBody,
             404
           );
     }
@@ -901,7 +911,7 @@ test.describe('workflow cost dashboard', () => {
         return fulfillJson(route, {
           ...timeseriesFor(requestedFixtureRange(url)),
           ...requestedRange(url),
-        });
+        } satisfies MetricsTimeseries);
       }
     );
 
@@ -933,7 +943,7 @@ test.describe('workflow cost dashboard', () => {
         return fulfillJson(route, {
           ...timeseriesFor(requestedFixtureRange(url)),
           ...requestedRange(url),
-        });
+        } satisfies MetricsTimeseries);
       }
     );
 
@@ -2569,7 +2579,7 @@ test.describe('queries day filter', () => {
         const to = params.get('to')!;
         const filtered = params.has('created_from');
         if (filtered && empty_day) {
-          return fulfillJson(route, { from, to, total: 0, items: [] });
+          return fulfillJson(route, { from, to, total: 0, items: [] } satisfies RequestList);
         }
         // Paged like the endpoint is, so the last page of a filtered day is short and the count
         // line under the table has a real range to print.
@@ -2584,7 +2594,7 @@ test.describe('queries day filter', () => {
             ...REQUESTS.items[0]!,
             session_id: `6215f346-e000-4000-8000-0000000000${String(offset + index).padStart(2, '0')}`,
           })),
-        });
+        } satisfies RequestList);
       }
     );
     return asked;

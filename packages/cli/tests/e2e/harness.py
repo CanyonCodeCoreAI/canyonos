@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Isolated subprocess, terminal, and service ownership for CLI end-to-end tests."""
+"""Isolated subprocess, terminal, and service ownership for CLI end-to-end tests, and
+what the cases that deploy for real share: the Docker engine and images they need,
+and the commands they run on the bundled Hello World."""
 
 from __future__ import annotations
 
 import contextlib
 import json
 import os
+import pwd
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -21,6 +25,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pexpect
+import pytest
+import yaml
 
 _INHERITED_ENVIRONMENT = (
     "LANG",
@@ -432,3 +438,163 @@ def process_exists(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+# The workflow the quickstart offers first, and the only one that reaches a trace
+# without a model provider's API key -- which is what makes it the one this suite
+# can deploy.
+STARTER = "helloworld"
+# Building both agent images and waiting for three replicas, in seconds. Generous
+# because it is a CI runner's cold Docker, not the 15s a warm machine takes.
+DEPLOY_TIMEOUT = 600
+CLEAN_TIMEOUT = 300
+# The dashboard's CanyonOS API, as `dashboard.compose.yml` names it.
+API_CONTAINER = "canyonos-dashboard-api"
+# What a deploy shows once the dashboard stored the workflow group.
+REGISTERED = re.compile(rf"Registered {STARTER}-[0-9a-f]{{8}} with the dashboard")
+# The endpoint address out of `canyonos deploy`'s own summary. The port is picked
+# at deploy time, so it is read back rather than assumed.
+ENDPOINT = re.compile(r"http://[\d.]+:\d+/[0-9a-f-]{36}")
+
+
+def _real_docker_config() -> tuple[str, str]:
+    """`(DOCKER_HOST, DOCKER_CONFIG)` as the account outside these tests has them.
+
+    The suite gives each case its own HOME, which on Docker Desktop hides both
+    the daemon's socket and the `compose` plugin. On Linux both are the
+    system's, so this changes nothing.
+    """
+    try:
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        return os.environ.get("DOCKER_HOST", ""), os.environ.get("DOCKER_CONFIG", "")
+
+    config = os.environ.get("DOCKER_CONFIG") or str(home / ".docker")
+    host = os.environ.get("DOCKER_HOST", "")
+    if not host:
+        try:
+            found = subprocess.run(
+                ["docker", "context", "inspect", "-f", "{{.Endpoints.docker.Host}}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={**os.environ, "HOME": str(home), "DOCKER_CONFIG": config},
+            )
+            host = found.stdout.strip() if found.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            host = ""
+    return host, config if Path(config).is_dir() else ""
+
+
+def _docker_is_usable(docker: Mapping[str, str]) -> bool:
+    """Whether this machine can run the deploy at all: a daemon to reach, and the
+    `compose` plugin the dashboard's teardown needs."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        reached = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            timeout=30,
+            env={**os.environ, **docker},
+        )
+        if reached.returncode != 0:
+            return False
+        return (
+            subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                timeout=30,
+                env={**os.environ, **docker},
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+# The core image the Global Controller runs from. Unset means there is nothing to
+# deploy against: a released CLI would pull its own version's image from ghcr, which
+# does not exist for an unreleased checkout.
+#
+# Set with `CANYONOS_ENV=development`, which the CLI requires before it accepts a
+# core image override at all.
+CORE_IMAGE = os.environ.get("CANYONOS_CORE_IMAGE", "").strip()
+# The CanyonOS API image every deploy brings up with its database; unset, the CLI pulls
+# its own version's image from ghcr, which does not exist for an unreleased checkout.
+API_IMAGE = os.environ.get("CANYONOS_API_IMAGE", "").strip()
+_HOST, _CONFIG = _real_docker_config()
+DOCKER = {
+    name: value
+    for name, value in (("DOCKER_HOST", _HOST), ("DOCKER_CONFIG", _CONFIG))
+    if value
+}
+
+needs_a_runtime = pytest.mark.skipif(
+    not CORE_IMAGE or not _docker_is_usable(DOCKER),
+    reason="needs Docker and CANYONOS_CORE_IMAGE pointing at a core image",
+)
+needs_docker = pytest.mark.skipif(
+    not _docker_is_usable(DOCKER), reason="needs a Docker engine with compose"
+)
+
+
+def runtime_environment() -> dict[str, str]:
+    """What the CLI needs to reach the core and API images and the daemon. The case's
+    environment blanks the CANYONOS_* variables, so the ones that matter are put
+    back here."""
+    return {
+        "CANYONOS_CORE_IMAGE": CORE_IMAGE,
+        "CANYONOS_API_IMAGE": API_IMAGE,
+        **DOCKER,
+    }
+
+
+def docker(*args: str) -> str:
+    """Run `docker` on the engine the CLI uses, fail the case unless it exits 0, and
+    return what it printed."""
+    done = subprocess.run(
+        ["docker", *args],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, **DOCKER},
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    return done.stdout.strip()
+
+
+def run_ok(case: CliCase, args: list[str], **options) -> str:
+    """Run `canyonos` with `args`, fail the case unless it exits 0, and return what
+    it showed."""
+    result = case.run_cli(args, **options)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    return output
+
+
+def deploy_starter(
+    case: CliCase, folder: Path, *args: str, env: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """Deploy the workflow from its workflow group folder `folder`, as the quickstart
+    types it, naming its workflow, without the dashboard, which is shared across every
+    workflow group on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
+    it belongs), with `env` or the runtime's environment; return the endpoint it
+    published and what it showed."""
+    output = run_ok(
+        case,
+        ["deploy", STARTER, "--serve", "false", *args],
+        timeout=DEPLOY_TIMEOUT,
+        env=env or runtime_environment(),
+        cwd=folder,
+    )
+    endpoint = ENDPOINT.search(output)
+    assert endpoint, f"the deploy published no endpoint: {output}"
+    return endpoint.group(), output
+
+
+def workflow_group_id(folder: Path) -> str:
+    """The `workflow_group_id` the deploy saved in the workflow group folder `folder`."""
+    return yaml.safe_load((folder / "workflow_group.yaml").read_text())[
+        "workflow_group_id"
+    ]

@@ -10,8 +10,10 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { workflows } from '@api/db/schema';
+import { registry_repo } from '@api/modules/registry/registry.repo';
 import {
   forget_synced_workflows,
+  save_controller_workflows,
   sync_listed_workflows,
 } from '@api/modules/registry/registry.service';
 import { config } from '@core/env';
@@ -38,6 +40,15 @@ async function read_workflow(workflow_id: string) {
   const [row] = await db.select().from(workflows).where(eq(workflows.id, workflow_id)).limit(1);
   return row;
 }
+
+const count_workflows = async (): Promise<number> =>
+  (await db.select({ id: workflows.id }).from(workflows)).length;
+
+const rejection = (promise: Promise<unknown>) =>
+  promise.then(
+    () => null,
+    (error: unknown) => error
+  );
 
 async function run_controller(workflow_name: string): Promise<string> {
   const workflow_id = crypto.randomUUID();
@@ -172,5 +183,81 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
       expect(read.error?.status as number).toBe(404);
       expect(error_code(read)).toBe('registry.workflow_not_running');
     });
+  });
+
+  test('a listed workflow group whose Redis cannot be read stores nothing, and never itself as a workflow', async () => {
+    const workflow_group_id = crypto.randomUUID();
+    const dir = mkdtempSync(join(tmpdir(), 'registry-'));
+    const path = join(dir, 'projects.json');
+    const entry = {
+      project_id: workflow_group_id,
+      name: 'helloworld',
+      redis: { host: '127.0.0.1', port: CLOSED_PORT, password: 'x' },
+    };
+    writeFileSync(path, JSON.stringify({ projects: [entry] }));
+    try {
+      const before = await count_workflows();
+      await sync_listed_workflows(path);
+      await sync_listed_workflows(path);
+
+      expect(await read_workflow(workflow_group_id)).toBeUndefined();
+      expect(await count_workflows()).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// e2e.bootstrap.test.ts registers a controller as an API starts; these are the rules each
+// registration of a controller's identity follows.
+describe("a controller's identity", () => {
+  const REDIS = {
+    redis_host: 'canyonos-billing-redis-localhost',
+    redis_port: 6380,
+    redis_password: 's3cret',
+    redis_tls: null,
+  };
+  const WORKFLOW_GROUP_ID = '44444444-4444-4444-8444-444444444444';
+
+  const save_group = (workflow_group_id: string | null, names: Record<string, string> = {}) =>
+    save_controller_workflows({ workflow_group_id, workflows: names }, REDIS);
+
+  test('with no usable workflow group id is 422 registry.identity_unusable and stores nothing', async () => {
+    const before = await count_workflows();
+
+    for (const identity of ['0', '', '   ', 'not-a-uuid', null]) {
+      expect(
+        await rejection(save_group(identity, { [crypto.randomUUID()]: 'workflow_1' }))
+      ).toMatchObject({
+        status: 422,
+        code: 'registry.identity_unusable',
+      });
+    }
+
+    expect(await count_workflows()).toBe(before);
+  });
+
+  test('gives an existing workflow the workflow group, the Redis and its password, encrypted: name and creation time stay', async () => {
+    const [seeded] = await db.insert(workflows).values({ name: 'kept-owner' }).returning();
+    const workflow_id = seeded!.id;
+    const before = await read_workflow(workflow_id);
+
+    expect(await save_group(WORKFLOW_GROUP_ID, { [workflow_id]: 'renamed' })).toEqual([
+      { workflow_id, name: 'kept-owner' },
+    ]);
+
+    const after = await read_workflow(workflow_id);
+    expect(after).toEqual({
+      ...before!,
+      workflow_group_id: WORKFLOW_GROUP_ID,
+      redis_host: REDIS.redis_host,
+      redis_port: REDIS.redis_port,
+      redis_password: expect.not.stringContaining(REDIS.redis_password),
+      updated_at: expect.any(String),
+    });
+    expect(Date.parse(after!.updated_at)).toBeGreaterThanOrEqual(Date.parse(before!.updated_at));
+    expect((await registry_repo.find_redis(workflow_id))?.redis_password).toBe(
+      REDIS.redis_password
+    );
   });
 });

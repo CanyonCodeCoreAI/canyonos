@@ -16,9 +16,9 @@ agent.
 The same deploy carries the endpoint's API key checks that need a real runtime: a
 query without the key or with another is refused, a new key refuses the old one,
 `--no-api-key` opens the deploy until a key is set again, a later deploy reuses the
-stored key, and a paused Redis is a quick 503 rather than a hang. It also carries the
-registration with the dashboard every deploy makes, and the commands that start a
-stopped CanyonOS API again. Each case has its own HOME, so its `~/.canyonos/api_key`
+stored key, and a paused Redis is a quick 503 rather than a hang. What a deploy does
+with the CanyonOS API, and what each command does when it is gone, is
+`test_api_lifecycle.py`'s. Each case has its own HOME, so its `~/.canyonos/api_key`
 touches nobody's.
 
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
@@ -29,164 +29,36 @@ from __future__ import annotations
 
 import json
 import os
-import pwd
 import re
-import shutil
-import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pexpect
-import pytest
-import yaml
 
-from canyonos.quickstart import _fetch
+from .harness import (
+    DOCKER,
+    CliCase,
+    deploy_starter,
+    docker,
+    needs_a_runtime,
+    needs_docker,
+    runtime_environment,
+    workflow_group_id,
+)
 
-from .harness import CliCase
-
-# The workflow the quickstart offers first, and the only one that reaches a trace
-# without a model provider's API key -- which is what makes it the one this suite
-# can deploy.
-STARTER = "helloworld"
-
-# Building both agent images and waiting for three replicas, in seconds. Generous
-# because it is a CI runner's cold Docker, not the 15s a warm machine takes.
-DEPLOY_TIMEOUT = 600
-CLEAN_TIMEOUT = 300
 REQUEST_TIMEOUT = 120
 POLL_INTERVAL = 2
 # How long a request may take to be refused while Redis does not answer.
 NOT_READY_WITHIN = 10
-# The dashboard's CanyonOS API, as `dashboard.compose.yml` names it.
-API_CONTAINER = "canyonos-dashboard-api"
-# What a deploy shows once the dashboard stored the workflow group.
-REGISTERED = re.compile(rf"Registered {STARTER}-[0-9a-f]{{8}} with the dashboard")
 API_KEY = "quickstart-e2e-key-7f3a"
 NEXT_API_KEY = "quickstart-e2e-key-9c1d"
 OPEN_WARNING = (
     "No API key is set: the endpoint and the dashboard answer anyone who reaches "
     "them. Set one with --api-key <key>."
 )
-
-# The endpoint address out of `canyonos deploy`'s own summary. The port is picked
-# at deploy time, so it is read back rather than assumed.
-ENDPOINT = re.compile(r"http://[\d.]+:\d+/[0-9a-f-]{36}")
-
-
-def _real_docker_config() -> tuple[str, str]:
-    """`(DOCKER_HOST, DOCKER_CONFIG)` as the account outside these tests has them.
-
-    The suite gives each case its own HOME, which on Docker Desktop hides both
-    the daemon's socket and the `compose` plugin. On Linux both are the
-    system's, so this changes nothing.
-    """
-    try:
-        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    except KeyError:
-        return os.environ.get("DOCKER_HOST", ""), os.environ.get("DOCKER_CONFIG", "")
-
-    config = os.environ.get("DOCKER_CONFIG") or str(home / ".docker")
-    host = os.environ.get("DOCKER_HOST", "")
-    if not host:
-        try:
-            found = subprocess.run(
-                ["docker", "context", "inspect", "-f", "{{.Endpoints.docker.Host}}"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env={**os.environ, "HOME": str(home), "DOCKER_CONFIG": config},
-            )
-            host = found.stdout.strip() if found.returncode == 0 else ""
-        except (OSError, subprocess.SubprocessError):
-            host = ""
-    return host, config if Path(config).is_dir() else ""
-
-
-def _docker_is_usable(docker: Mapping[str, str]) -> bool:
-    """Whether this machine can run the deploy at all: a daemon to reach, and the
-    `compose` plugin the dashboard's teardown needs."""
-    if shutil.which("docker") is None:
-        return False
-    try:
-        reached = subprocess.run(
-            ["docker", "compose", "version"],
-            capture_output=True,
-            timeout=30,
-            env={**os.environ, **docker},
-        )
-        if reached.returncode != 0:
-            return False
-        return (
-            subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                timeout=30,
-                env={**os.environ, **docker},
-            ).returncode
-            == 0
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-# The core image the Global Controller runs from. Unset means there is nothing to
-# deploy against: a released CLI would pull its own version's image from ghcr, which
-# does not exist for an unreleased checkout.
-#
-# Set with `CANYONOS_ENV=development`, which the CLI requires before it accepts a
-# core image override at all.
-CORE_IMAGE = os.environ.get("CANYONOS_CORE_IMAGE", "").strip()
-# The CanyonOS API image every deploy brings up with its database; unset, the CLI pulls
-# its own version's image from ghcr, which does not exist for an unreleased checkout.
-API_IMAGE = os.environ.get("CANYONOS_API_IMAGE", "").strip()
-_HOST, _CONFIG = _real_docker_config()
-DOCKER = {
-    name: value
-    for name, value in (("DOCKER_HOST", _HOST), ("DOCKER_CONFIG", _CONFIG))
-    if value
-}
-
-needs_a_runtime = pytest.mark.skipif(
-    not CORE_IMAGE or not _docker_is_usable(DOCKER),
-    reason="needs Docker and CANYONOS_CORE_IMAGE pointing at a core image",
-)
-
-
-@pytest.fixture
-def deployed_workflow(cli_case: CliCase) -> Iterator[tuple[CliCase, Path]]:
-    """The bundled workflow group folder on disk, as the quickstart copies it,
-    torn down after the test either way.
-
-    The teardown is checked rather than attempted: containers and images this
-    case leaves behind carry the fixed Docker names, so they would reach every
-    run after it.
-    """
-    folder = Path(_fetch(STARTER, into=cli_case.cwd))
-    try:
-        yield cli_case, folder
-    finally:
-        removed = cli_case.run_cli(
-            ["clean", "--yes"],
-            timeout=CLEAN_TIMEOUT,
-            env=_runtime_environment(),
-            cwd=folder,
-        )
-        assert removed.returncode == 0, removed.stdout + removed.stderr
-
-
-def _runtime_environment() -> dict[str, str]:
-    """What the CLI needs to reach the core and API images and the daemon. The case's
-    environment blanks the CANYONOS_* variables, so the ones that matter are put
-    back here."""
-    return {
-        "CANYONOS_CORE_IMAGE": CORE_IMAGE,
-        "CANYONOS_API_IMAGE": API_IMAGE,
-        **DOCKER,
-    }
 
 
 def _bearer(api_key: str | None) -> dict[str, str]:
@@ -230,42 +102,6 @@ def _answer(endpoint: str, query: str, api_key: str | None) -> dict:
     return {"status": "timeout"}
 
 
-def _run(case: CliCase, args: list[str], **options) -> str:
-    """Run `canyonos` with `args`, fail the case unless it exits 0, and return what
-    it showed."""
-    result = case.run_cli(args, **options)
-    output = result.stdout + result.stderr
-    assert result.returncode == 0, output
-    return output
-
-
-def _deploy(
-    case: CliCase, folder: Path, *args: str, env: Mapping[str, str] | None = None
-) -> tuple[str, str]:
-    """Deploy the workflow from its workflow group folder `folder`, as the quickstart
-    types it, naming its workflow, without the dashboard, which is shared across every
-    workflow group on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
-    it belongs), with `env` or the runtime's environment; return the endpoint it
-    published and what it showed."""
-    output = _run(
-        case,
-        ["deploy", STARTER, "--serve", "false", *args],
-        timeout=DEPLOY_TIMEOUT,
-        env=env or _runtime_environment(),
-        cwd=folder,
-    )
-    endpoint = ENDPOINT.search(output)
-    assert endpoint, f"the deploy published no endpoint: {output}"
-    return endpoint.group(), output
-
-
-def _deployment_id(folder: Path) -> str:
-    """The `workflow_group_id` the deploy saved in the workflow group folder `folder`."""
-    return yaml.safe_load((folder / "workflow_group.yaml").read_text())[
-        "workflow_group_id"
-    ]
-
-
 def _store_api_key(case: CliCase, api_key: str) -> Path:
     """Write `api_key` where a deploy with `--api-key` keeps it, as one would have."""
     stored = case.home / ".canyonos" / "api_key"
@@ -296,11 +132,11 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
         agent.write_text(f"#!/bin/sh\ntouch '{launched}'\n")
         agent.chmod(0o755)
     runtime = {
-        **_runtime_environment(),
+        **runtime_environment(),
         "PATH": f"{bin_dir}{os.pathsep}{case.env['PATH']}",
     }
 
-    endpoint, output = _deploy(case, folder, "--api-key", API_KEY, env=runtime)
+    endpoint, output = deploy_starter(case, folder, "--api-key", API_KEY, env=runtime)
     assert API_KEY not in output, output
 
     answered = _answer(endpoint, "CanyonOS", API_KEY)
@@ -321,10 +157,10 @@ def test_the_bundled_workflow_deploys_and_answers(deployed_workflow):
 @needs_a_runtime
 def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
     case, folder = deployed_workflow
-    endpoint, _ = _deploy(case, folder, "--api-key", API_KEY)
+    endpoint, _ = deploy_starter(case, folder, "--api-key", API_KEY)
     assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
-    endpoint, output = _deploy(case, folder, "--api-key", NEXT_API_KEY)
+    endpoint, output = deploy_starter(case, folder, "--api-key", NEXT_API_KEY)
 
     assert "other running workflow groups keep the old one" in " ".join(
         output.split()
@@ -339,86 +175,44 @@ def test_no_api_key_opens_the_deploy_until_a_key_is_set_again(deployed_workflow)
     case, folder = deployed_workflow
     _store_api_key(case, API_KEY)
 
-    endpoint, output = _deploy(case, folder, "--no-api-key")
+    endpoint, output = deploy_starter(case, folder, "--no-api-key")
     assert "Removed this machine's API key." in output, output
     assert OPEN_WARNING in " ".join(output.split()), output
     answered = _answer(endpoint, "CanyonOS", None)
     assert answered.get("status") == "done", answered
 
-    _deploy(case, folder, "--api-key", API_KEY)
-    endpoint, output = _deploy(case, folder)
+    deploy_starter(case, folder, "--api-key", API_KEY)
+    endpoint, output = deploy_starter(case, folder)
     assert OPEN_WARNING not in " ".join(output.split()), output
     _assert_refused(_post(endpoint, "CanyonOS", None), 401, "auth.missing_key")
     assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
 
-def _docker(*args: str) -> str:
-    done = subprocess.run(
-        ["docker", *args],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env={**os.environ, **DOCKER},
-    )
-    assert done.returncode == 0, done.stdout + done.stderr
-    return done.stdout.strip()
-
-
 @needs_a_runtime
 def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
     case, folder = deployed_workflow
-    endpoint, _ = _deploy(case, folder, "--api-key", API_KEY)
-    redis = _docker(
+    endpoint, _ = deploy_starter(case, folder, "--api-key", API_KEY)
+    redis = docker(
         "ps",
         "--filter",
-        f"name={_deployment_id(folder)[:8]}-redis-localhost",
+        f"name={workflow_group_id(folder)[:8]}-redis-localhost",
         "--format",
         "{{.Names}}",
     )
     assert redis, "no Redis container for the deploy"
 
-    _docker("pause", redis)
+    docker("pause", redis)
     try:
         started = time.monotonic()
         refused = _post(endpoint, "CanyonOS", API_KEY)
         took = time.monotonic() - started
     finally:
-        _docker("unpause", redis)
+        docker("unpause", redis)
 
     _assert_refused(refused, 503, "auth.not_ready")
     assert took < NOT_READY_WITHIN, took
     assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
 
-
-@needs_a_runtime
-def test_a_deploy_registers_first_and_commands_start_a_stopped_api(
-    deployed_workflow,
-):
-    """A deploy without the dashboard registers the workflow group with it before the
-    upload, and `canyonos status`, `logs` and `sync` each start the CanyonOS API again
-    after it was stopped, then answer from it."""
-    case, folder = deployed_workflow
-    _, output = _deploy(case, folder)
-    registered = REGISTERED.search(output)
-    assert registered, output
-    assert registered.start() < output.index("Sync complete."), output
-
-    for command in (["status"], ["logs", "--no-follow"], ["sync", STARTER]):
-        _docker("stop", API_CONTAINER)
-        shown = _run(
-            case,
-            command,
-            timeout=DEPLOY_TIMEOUT,
-            env=_runtime_environment(),
-            cwd=folder,
-        )
-        running = _docker("inspect", "--format", "{{.State.Running}}", API_CONTAINER)
-        assert running == "true", f"{command} left the API stopped: {shown}"
-
-
-needs_docker = pytest.mark.skipif(
-    not _docker_is_usable(DOCKER), reason="quickstart's first stage checks Docker"
-)
 
 # What stage 4 asks the user to type, by the phrase each command's prompt shows.
 # Only the part before the 80-column terminal wraps the line.

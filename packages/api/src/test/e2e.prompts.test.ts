@@ -353,7 +353,7 @@ describe('workflow prompts', () => {
         'other.x': other,
       },
     });
-  });
+  }, 15_000);
 
   test('the tick runs its first round as it starts, not an interval later', async () => {
     const { workflow_id } = await running_workflow();
@@ -389,7 +389,9 @@ describe('workflow prompts', () => {
     expect(await read_prompts_config()).toEqual({
       prompts: { 'app.intent.parse': INTENT_V3, 'app.summarize': SUMMARIZE_V1 },
     });
-  });
+    // The round waits on every registered Redis, and one that never answers takes the 5 s
+    // connection timeout.
+  }, 15_000);
 
   test('two versions created at once get distinct consecutive revisions', async () => {
     const { workflow_id } = await running_workflow();

@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 
 from canyonos import deployment, env
-from canyonos.auth import control_header
+from canyonos.auth import control_header, control_key_path
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -52,6 +52,15 @@ OLDER_CHART_ERRORS = {
     503: ("docker.disabled",),
     401: ("auth.control_key_unset",),
 }
+
+# What the API answers a /v1 call whose control key it was not started with, or when
+# it was started with none.
+CONTROL_KEY_REFUSALS = (
+    "auth.missing_key",
+    "auth.invalid_key",
+    "auth.control_key_unset",
+)
+DATABASE_UNAVAILABLE = "database.unavailable"
 
 # Where the CanyonOS API answers on this machine, found once per command: the
 # commands that start it (`serve.ensure_api`) forget it, since it may move.
@@ -119,12 +128,20 @@ def _connection(state):
 def error_detail(body, status):
     """The error object of an answer's `body`, raw bytes, as `{error, code, findings,
     warnings}`, `error` its message and `code` its code without the prefix, from the
-    CanyonOS API's `{error: code, message}`; the raw body as `error` when it is not
-    that."""
+    CanyonOS API's `{error: code, message}`; each check that is not ok as `error` for
+    `/readyz`'s answer, and the raw body as `error` when it is neither."""
     text = body.decode(errors="replace").strip()
     try:
         parsed = json.loads(text)
     except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("checks"), dict):
+        failing = [
+            f"{name} {state}"
+            for name, state in parsed["checks"].items()
+            if state not in ("ok", "disabled")
+        ]
+        text = ", ".join(failing) or "not ready"
         parsed = None
     if not isinstance(parsed, dict) or not parsed.get("error"):
         return {
@@ -141,9 +158,34 @@ def error_detail(body, status):
     }
 
 
+def _database_hint(state):
+    """What to do about the API's database being down: on this machine, `canyonos
+    serve` starts it again; "" on Kubernetes, where it is the cluster's."""
+    if _on_kubernetes(state):
+        return ""
+    return " If it stays down, run `canyonos serve`, which starts it again."
+
+
+def _next_step(state, code):
+    """What to do about the API refusing a call with `code`, as a sentence to add to
+    its message; "" when there is nothing to add."""
+    if _on_kubernetes(state):
+        return ""
+    if code in CONTROL_KEY_REFUSALS:
+        # deploy, sync and stop restart such an API themselves (`serve.ensure_api`).
+        return (
+            " Run `canyonos serve` to restart the CanyonOS API with this machine's "
+            f"control key, in {control_key_path()}."
+        )
+    if code == DATABASE_UNAVAILABLE:
+        return _database_hint(state)
+    return ""
+
+
 def _open(state, method, path, action, data=None, headers=None, timeout=None):
     """Send `method` to `path` of the API `state`'s workflow group is reached at and
-    return the open response; any failure is raised as `ApiError`."""
+    return the open response; any failure is raised as `ApiError`, with what to do
+    next when the API names a fix this machine has."""
     base_url, auth = _connection(state)
     request = urllib.request.Request(
         f"{base_url}{path}",
@@ -163,6 +205,9 @@ def _open(state, method, path, action, data=None, headers=None, timeout=None):
             from canyonos.kubernetes_target import UPGRADE_CHART
 
             message = f"{UPGRADE_CHART} (the cluster's API answered: {message})"
+        next_step = _next_step(state, detail["code"])
+        if next_step:
+            message = f"{message.rstrip('.')}.{next_step}"
         raise ApiError(
             f"{action} failed: {message}",
             status=e.code,
@@ -284,7 +329,7 @@ def _wait_until_ready(state=None):
     """Wait up to READY_TIMEOUT_SECONDS for the API to answer `/readyz`: it listens
     before its database is ready, and its `/v1` routes answer 503 until then. An older
     API without `/readyz` is not waited for. Raises ApiError with its last answer when
-    it is still not ready."""
+    it is still not ready: its database, the one thing `/readyz` waits on, is not."""
     deadline = time.monotonic() + READY_TIMEOUT_SECONDS
     while True:
         try:
@@ -300,9 +345,13 @@ def _wait_until_ready(state=None):
             if e.status == 404:
                 return
             if time.monotonic() >= deadline:
+                # A 503 is `/readyz` waiting on the database.
+                answer = str(e)
+                if e.status == 503:
+                    answer = f"{answer.rstrip('.')}.{_database_hint(state)}"
                 raise ApiError(
                     f"The CanyonOS API at {_connection(state)[0]} was not ready within "
-                    f"{READY_TIMEOUT_SECONDS}s. {e}",
+                    f"{READY_TIMEOUT_SECONDS}s. {answer}",
                     status=e.status,
                     code=e.code,
                 ) from None

@@ -12,11 +12,12 @@ import type {
   DashboardRegistration,
   WorkflowGroupStatus,
 } from '@api/modules/workflow-groups/workflow-groups.types';
-import * as docker from '@core/docker';
+import * as docker_engine from '@core/docker';
 import { config } from '@core/env';
 
 import { TEST_API_KEY, TEST_CONTROL_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
+import { core_image, create_fake_controller, docker, free_port } from './process-test.utils';
 import {
   reset_controller,
   seed_endpoint,
@@ -29,13 +30,8 @@ import { bearer } from './workflow-test.utils';
 
 // /v1/workflow-groups against the real Docker daemon and the real core image, whose
 // `canyonos_core.cli` commands the API runs in job containers and in the Global Controller.
-const CORE_IMAGE = Bun.env.CANYONOS_CORE_IMAGE;
-if (!CORE_IMAGE) {
-  throw new Error(
-    'Set CANYONOS_CORE_IMAGE to the core image to test /v1/workflow-groups against, e.g. one ' +
-      'built with `docker build -f packages/core/Dockerfile -t canyonos-core:dev .`'
-  );
-}
+// Throws here, failing the run, when CANYONOS_CORE_IMAGE is unset.
+const CORE_IMAGE = core_image();
 
 setupE2ETests();
 
@@ -52,43 +48,18 @@ const name = `e2e-${run_id}`;
 const workflow_group_id = crypto.randomUUID();
 const project = `canyonos-${name}`;
 
-async function docker_cli(args: string[]): Promise<string> {
-  const child = Bun.spawn(['docker', ...args], { stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, exit_code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  if (exit_code !== 0) throw new Error(`docker ${args.join(' ')} failed: ${stderr}`);
-  return stdout.trim();
-}
-
-/** A port nothing listens on: CI's Redis service holds 6379. */
-function free_port(): number {
-  const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
-  const { port } = server;
-  server.stop(true);
-  return port;
-}
-
 /** The Global Controller container as `canyonos deploy` creates it, with its network and
  * /workspace volume, not started. */
 async function create_controller(redis_port: number): Promise<string> {
-  await docker_cli([
-    'network',
-    'create',
-    '--label',
-    `com.docker.compose.project=${project}`,
-    project,
-  ]);
-  await docker_cli([
+  await docker(['network', 'create', '--label', `com.docker.compose.project=${project}`, project]);
+  await docker([
     'volume',
     'create',
     '--label',
     `com.docker.compose.project=${project}`,
     `${project}-workspace`,
   ]);
-  return docker_cli([
+  return docker([
     'create',
     '--init',
     '--name',
@@ -121,49 +92,27 @@ async function create_controller(redis_port: number): Promise<string> {
     `CANYONOS_WORKFLOW_GROUP_ID=${workflow_group_id}`,
     '-e',
     `CANYONOS_REDIS_PASSWORD=${run_id}`,
-    CORE_IMAGE!,
+    CORE_IMAGE,
   ]);
 }
 
-/** A stand-in Global Controller of another workflow group, labelled as one, that runs `on_term`
- * when it gets SIGTERM. */
-async function create_fake_controller(fake_group_id: string, on_term: string): Promise<string> {
-  const id = await docker_cli([
-    'create',
-    '--init',
-    '--label',
-    `com.docker.compose.project=${project}`,
-    '--label',
-    'canyonos.role=global-controller',
-    '--label',
-    `canyonos.workflow_group_id=${fake_group_id}`,
-    '--entrypoint',
-    'sh',
-    CORE_IMAGE!,
-    '-c',
-    `trap "${on_term}" TERM; sleep 300 & wait`,
-  ]);
-  await docker_cli(['start', id]);
-  return id;
-}
+/** A stand-in Global Controller of another workflow group that runs `on_term` when it gets
+ * SIGTERM. */
+const create_stopping_controller = (fake_group_id: string, on_term: string) =>
+  create_fake_controller({
+    project,
+    workflow_group_id: fake_group_id,
+    script: `trap "${on_term}" TERM; sleep 300 & wait`,
+  });
 
-/** A Global Controller of another workflow group, labelled as one, created and not started. */
-async function create_stopped_controller(fake_group_id: string): Promise<string> {
-  return docker_cli([
-    'create',
-    '--label',
-    `com.docker.compose.project=${project}`,
-    '--label',
-    'canyonos.role=global-controller',
-    '--label',
-    `canyonos.workflow_group_id=${fake_group_id}`,
-    '--entrypoint',
-    'sh',
-    CORE_IMAGE!,
-    '-c',
-    'sleep 300',
-  ]);
-}
+/** A Global Controller of another workflow group, created and not started. */
+const create_stopped_controller = (fake_group_id: string) =>
+  create_fake_controller({
+    project,
+    workflow_group_id: fake_group_id,
+    script: 'sleep 300',
+    start: false,
+  });
 
 // What `run-deploy` writes once the deploy is up.
 const UP_PROGRESS =
@@ -174,25 +123,12 @@ const UP_PROGRESS =
   'open("/var/lib/canyonos/progress.json", "w"))';
 
 /** A stand-in Global Controller of another workflow group whose deploy reports itself up. */
-async function create_up_controller(fake_group_id: string): Promise<string> {
-  const id = await docker_cli([
-    'create',
-    '--init',
-    '--label',
-    `com.docker.compose.project=${project}`,
-    '--label',
-    'canyonos.role=global-controller',
-    '--label',
-    `canyonos.workflow_group_id=${fake_group_id}`,
-    '--entrypoint',
-    'sh',
-    CORE_IMAGE!,
-    '-c',
-    `mkdir -p /var/lib/canyonos && python -c '${UP_PROGRESS}' && sleep 300`,
-  ]);
-  await docker_cli(['start', id]);
-  return id;
-}
+const create_up_controller = (fake_group_id: string) =>
+  create_fake_controller({
+    project,
+    workflow_group_id: fake_group_id,
+    script: `mkdir -p /var/lib/canyonos && python -c '${UP_PROGRESS}' && sleep 300`,
+  });
 
 /** A gzip tar of `files`, by path, as the CLI uploads a workflow. */
 const gzip_tar = (files: Record<string, string>) =>
@@ -263,20 +199,20 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  const leftovers = await docker_cli([
+  const leftovers = await docker([
     'ps',
     '-aq',
     '--filter',
     `label=com.docker.compose.project=${project}`,
   ]).catch(() => '');
   const ids = leftovers.split('\n').filter(Boolean);
-  if (ids.length > 0) await docker_cli(['rm', '-f', ...ids]).catch(() => undefined);
-  await docker_cli(['rm', '-f', `${project}-redis-localhost`]).catch(() => undefined);
-  await docker_cli(['network', 'rm', project]).catch(() => undefined);
+  if (ids.length > 0) await docker(['rm', '-f', ...ids]).catch(() => undefined);
+  await docker(['rm', '-f', `${project}-redis-localhost`]).catch(() => undefined);
+  await docker(['network', 'rm', project]).catch(() => undefined);
   for (const network of [`${project}-joined`, `${project}-own`]) {
-    await docker_cli(['network', 'rm', network]).catch(() => undefined);
+    await docker(['network', 'rm', network]).catch(() => undefined);
   }
-  await docker_cli(['volume', 'rm', `${project}-workspace`]).catch(() => undefined);
+  await docker(['volume', 'rm', `${project}-workspace`]).catch(() => undefined);
 }, 60_000);
 
 describe('the workflow groups API drives the Global Controller container', () => {
@@ -469,7 +405,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
 
   test('a Global Controller with no upload here is stopped too, and a failed stop is 500', async () => {
     const failing_id = crypto.randomUUID();
-    await create_fake_controller(failing_id, 'exit 3');
+    await create_stopping_controller(failing_id, 'exit 3');
 
     const res = await api.v1['workflow-groups'][failing_id]!.delete(undefined, {
       headers: control,
@@ -486,7 +422,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
     'a stop that outlasts the idle timeout still answers',
     async () => {
       const slow_id = crypto.randomUUID();
-      await create_fake_controller(slow_id, `sleep ${SLOW_STOP_SECONDS}; exit 0`);
+      await create_stopping_controller(slow_id, `sleep ${SLOW_STOP_SECONDS}; exit 0`);
 
       const res = await api.v1['workflow-groups'][slow_id]!.delete(undefined, {
         headers: control,
@@ -720,7 +656,7 @@ describe("the API's container joins the network of a workflow group's Global Con
     // gateway, and with it its published ports, at the same gateway priority.
     const own_network = `${project}-own`;
     for (const created of [network, own_network]) {
-      await docker_cli([
+      await docker([
         'network',
         'create',
         '--label',
@@ -730,7 +666,7 @@ describe("the API's container joins the network of a workflow group's Global Con
     }
     const controller_name = `${project}-joined-controller`;
     const labelled_sleeper = (container_name: string, labels: string[], args: string[] = []) =>
-      docker_cli([
+      docker([
         'run',
         '-d',
         '--init',
@@ -742,7 +678,7 @@ describe("the API's container joins the network of a workflow group's Global Con
         ...args,
         '--entrypoint',
         'sh',
-        CORE_IMAGE!,
+        CORE_IMAGE,
         '-c',
         'sleep 300',
       ]);
@@ -753,7 +689,7 @@ describe("the API's container joins the network of a workflow group's Global Con
     );
     const api_name = `${project}-joined-api`;
     await labelled_sleeper(api_name, [], ['--network', own_network]);
-    const in_api = (code: string) => docker_cli(['exec', api_name, 'python', '-c', code]);
+    const in_api = (code: string) => docker(['exec', api_name, 'python', '-c', code]);
     const gateway_interface = () =>
       in_api(
         "print(*[l.split()[0] for l in open('/proc/net/route') if l.split()[1] == '00000000'])"
@@ -768,15 +704,15 @@ describe("the API's container joins the network of a workflow group's Global Con
 
     expect(await join_controller_networks(api_name, group_id)).toEqual([network]);
 
-    expect((await docker.inspect(api_name)).networks).toContain(network);
+    expect((await docker_engine.inspect(api_name)).networks).toContain(network);
     expect(await resolves_controller()).toBe(true);
     expect(await gateway_interface()).toBe(gateway_before);
     // Already on it: nothing to join, and a connect Docker refuses as a duplicate succeeds.
     expect(await join_controller_networks(api_name, group_id)).toEqual([]);
-    await docker.connect_network(network, api_name);
-    expect((await docker.inspect(api_name)).networks.filter((on) => on === network)).toHaveLength(
-      1
-    );
+    await docker_engine.connect_network(network, api_name);
+    expect(
+      (await docker_engine.inspect(api_name)).networks.filter((on) => on === network)
+    ).toHaveLength(1);
     // A workflow group with no Global Controller container has no network to join.
     expect(await join_controller_networks(api_name, crypto.randomUUID())).toBeNull();
   }, 60_000);

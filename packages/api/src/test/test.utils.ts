@@ -9,8 +9,10 @@ import { config } from '@core/env';
 const READY_TIMEOUT_MS = 30_000;
 const POLL_MS = 200;
 
-export const createApi = (): ReturnType<typeof edenTreaty<CanyonosApi>> =>
-  edenTreaty<CanyonosApi>(config.app.apiUrl);
+/** An Eden client of the API at `url`, the suite's own unless given. */
+export const createApi = (
+  url: string = config.app.apiUrl
+): ReturnType<typeof edenTreaty<CanyonosApi>> => edenTreaty<CanyonosApi>(url);
 
 /** Resolves once `<url><path>` answers 200, polling until `timeout_ms` passes. */
 export async function until_answers(

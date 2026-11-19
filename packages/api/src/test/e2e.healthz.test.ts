@@ -6,15 +6,15 @@ import net from 'node:net';
 import { describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
 
-import { app } from '@api/app';
 import { set_database_state } from '@api/db/database';
-import { CONTROL_PATH_PREFIX } from '@api/modules/auth/control-key';
 import { config } from '@core/env';
 
 import { TEST_CONTROL_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
+import { refused_start, spawn_api } from './process-test.utils';
 import { until_answers } from './test.utils';
-import { bearer, TEST_API_KEY } from './workflow-test.utils';
+import { bearer } from './workflow-test.utils';
+import type { SpawnedApi } from './process-test.utils';
 
 setupE2ETests();
 
@@ -75,121 +75,36 @@ describe('readyz', () => {
   });
 });
 
-const NO_DATABASE_PATHS = ['/healthz', '/readyz', '/auth/status', '/auth/check'];
-const NO_DATABASE_PREFIXES = ['/docs'];
-const SOME_ID = '0190a5e8-0000-7000-8000-000000000000';
-
-const needs_database = ({ method, path }: { method: string; path: string }) =>
-  method !== 'OPTIONS' &&
-  !NO_DATABASE_PATHS.includes(path) &&
-  !NO_DATABASE_PREFIXES.some((prefix) => path.startsWith(prefix));
-
-describe('database guard', () => {
-  test('every route outside health, auth and docs answers 503 database.unavailable until the database is ready, whatever it sends', async () => {
-    const guarded = app.routes.filter(needs_database);
-    expect(guarded.length).toBeGreaterThan(40);
-
-    set_database_state('connecting');
-    try {
-      for (const { method, path } of guarded) {
-        // The right key, so only the database stands in the way; params, query and body unchecked.
-        const key = path.startsWith(CONTROL_PATH_PREFIX) ? TEST_CONTROL_KEY : TEST_API_KEY;
-        const response = await app.handle(
-          new Request(`http://localhost${path.replace(/:[^/]+/g, SOME_ID)}?limit=lots`, {
-            method,
-            headers: { 'content-type': 'application/json', ...bearer(key) },
-            ...(method === 'GET' ? {} : { body: '{}' }),
-          })
-        );
-        const body = (await response.json()) as { error?: string };
-        expect({ route: `${method} ${path}`, status: response.status, error: body.error }).toEqual({
-          route: `${method} ${path}`,
-          status: 503,
-          error: 'database.unavailable',
-        });
-      }
-    } finally {
-      set_database_state('ready');
-    }
-  });
-});
-
-const SERVER = new URL('../server.ts', import.meta.url).pathname;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 describe('DATABASE_URL', () => {
   test('outside development and test, an unset one refuses the start, naming it', async () => {
-    const child = Bun.spawn(['bun', '--no-env-file', SERVER], {
-      env: {
-        ...process.env,
-        APP_ENV: 'production',
-        DATABASE_URL: '',
-        PORT: String(config.app.port + 91),
-        REDIS_PASSWORD_ENCRYPTION_KEY: 'a production key of at least 32 characters',
-      },
-      stdout: 'ignore',
-      stderr: 'pipe',
+    const { exit_code, output } = await refused_start({
+      APP_ENV: 'production',
+      DATABASE_URL: '',
+      REDIS_PASSWORD_ENCRYPTION_KEY: 'a production key of at least 32 characters',
     });
-    const timeout = setTimeout(() => child.kill('SIGKILL'), SHUTDOWN_TIMEOUT_MS * 2);
-    const code = await child.exited;
-    clearTimeout(timeout);
 
-    expect(code).not.toBe(0);
-    expect(await new Response(child.stderr).text()).toContain(
-      'DATABASE_URL must be set explicitly outside development and test'
-    );
+    expect(exit_code).not.toBe(0);
+    expect(output).toContain('DATABASE_URL must be set explicitly outside development and test');
   }, 15_000);
 });
 
 describe('shutdown', () => {
   test('SIGTERM stops the server and exits 0 within five seconds', async () => {
-    const port = config.app.port + 90;
-    const url = `http://localhost:${port}`;
-    const child = Bun.spawn(['bun', '--no-env-file', SERVER], {
-      env: { ...process.env, PORT: String(port), API_URL: url },
-      stdout: 'ignore',
-      stderr: 'ignore',
-    });
-    try {
-      // Ready: connected to the database, with its loops started.
-      await until_answers(url, '/readyz');
-      const started_at = performance.now();
-      child.kill('SIGTERM');
-      const exit = await Promise.race([
-        child.exited,
-        Bun.sleep(SHUTDOWN_TIMEOUT_MS).then(() => 'still running'),
-      ]);
+    // Ready: connected to the database, with its loops started.
+    const server = await spawn_api();
+    const started_at = performance.now();
+    const exit = await Promise.race([
+      server.stop(),
+      Bun.sleep(SHUTDOWN_TIMEOUT_MS).then(() => 'still running'),
+    ]);
 
-      expect(exit).toBe(0);
-      expect(performance.now() - started_at).toBeLessThan(SHUTDOWN_TIMEOUT_MS);
-      expect(await fetch(`${url}/healthz`).catch(() => 'refused')).toBe('refused');
-    } finally {
-      if (child.exitCode === null) child.kill('SIGKILL');
-      await child.exited;
-    }
+    expect(exit).toBe(0);
+    expect(performance.now() - started_at).toBeLessThan(SHUTDOWN_TIMEOUT_MS);
+    expect(await fetch(`${server.url}/healthz`).catch(() => 'refused')).toBe('refused');
   }, 40_000);
 });
-
-/** Starts `src/server.ts` on its own port with `env` over this run's environment, its output
- * collected for a failure message. */
-function spawn_server(port: number, env: Record<string, string>) {
-  const url = `http://localhost:${port}`;
-  const child = Bun.spawn(['bun', '--no-env-file', SERVER], {
-    env: { ...process.env, PORT: String(port), API_URL: url, ...env },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const output = Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]).then((parts) => parts.join(''));
-  return { child, url, output };
-}
-
-async function stop_server({ child }: { child: Bun.Subprocess }) {
-  if (child.exitCode === null) child.kill('SIGKILL');
-  await child.exited;
-}
 
 /** A database of its own on the test server, `DATABASE_URL` but for its name, empty; `prepare`
  * runs in it first. */
@@ -227,12 +142,14 @@ const admin_options = (url: URL) => ({
 });
 
 describe('readyz without Docker', () => {
-  test('is 200 when DOCKER_SOCKET names no socket, and says Docker is unreachable', async () => {
-    const server = spawn_server(config.app.port + 93, {
-      DOCKER_SOCKET: '/nonexistent/docker.sock',
+  const group_status = (server: SpawnedApi) =>
+    fetch(`${server.url}/v1/workflow-groups/${crypto.randomUUID()}`, {
+      headers: bearer(TEST_CONTROL_KEY),
     });
+
+  test('is 200 when DOCKER_SOCKET names no socket, and says Docker is unreachable', async () => {
+    const server = await spawn_api({ DOCKER_SOCKET: '/nonexistent/docker.sock' });
     try {
-      await until_answers(server.url, '/readyz');
       const response = await fetch(`${server.url}/readyz`);
 
       expect(response.status).toBe(200);
@@ -241,13 +158,29 @@ describe('readyz without Docker', () => {
         checks: { database: 'ok', docker: 'unreachable' },
       });
       // The /v1 routes, which need Docker, say so themselves.
-      const groups = await fetch(`${server.url}/v1/workflow-groups/${crypto.randomUUID()}`, {
-        headers: bearer(TEST_CONTROL_KEY),
-      });
+      const groups = await group_status(server);
       expect(groups.status).toBe(503);
       expect(await groups.json()).toMatchObject({ error: 'docker.unavailable' });
     } finally {
-      await stop_server(server);
+      await server.stop();
+    }
+  }, 40_000);
+
+  test('is 200 when DOCKER_SOCKET is empty, and says Docker is disabled', async () => {
+    const server = await spawn_api({ DOCKER_SOCKET: '' });
+    try {
+      const response = await fetch(`${server.url}/readyz`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        status: 'ready',
+        checks: { database: 'ok', docker: 'disabled' },
+      });
+      const groups = await group_status(server);
+      expect(groups.status).toBe(503);
+      expect(await groups.json()).toMatchObject({ error: 'docker.disabled' });
+    } finally {
+      await server.stop();
     }
   }, 40_000);
 });
@@ -258,17 +191,15 @@ describe('a failed setup', () => {
     const url = await fresh_database('setup_failure', (db) =>
       db.unsafe(`CREATE TYPE "public"."deployment_status" AS ENUM('taken')`)
     );
-    const server = spawn_server(config.app.port + 94, { DATABASE_URL: url.toString() });
     try {
-      const exit = await Promise.race([
-        server.child.exited,
-        Bun.sleep(30_000).then(() => 'still running'),
-      ]);
+      const { exit_code, output } = await refused_start({
+        DATABASE_URL: url.toString(),
+        LOG_LEVEL: 'error',
+      });
 
-      expect(exit).toBe(1);
-      expect(await server.output).toContain('Database setup failed');
+      expect(exit_code).toBe(1);
+      expect(output).toContain('Database setup failed');
     } finally {
-      await stop_server(server);
       await drop_database(url);
     }
   }, 40_000);
@@ -313,12 +244,11 @@ describe('a database lost after the API was ready', () => {
     const proxied = new URL(url);
     proxied.hostname = '127.0.0.1';
     proxied.port = String(proxy.port);
-    const server = spawn_server(config.app.port + 95, {
+    const server = await spawn_api({
       DATABASE_URL: proxied.toString(),
       CANYONOS_API_KEY_HASH: '',
     });
     try {
-      await until_answers(server.url, '/readyz');
       expect((await fetch(`${server.url}/workflows`)).status).toBe(200);
 
       await proxy.stop();
@@ -334,10 +264,9 @@ describe('a database lost after the API was ready', () => {
       await until_answers(server.url, '/readyz');
       expect((await fetch(`${server.url}/workflows`)).status).toBe(200);
     } catch (error) {
-      await stop_server(server);
-      throw new Error(`${String(error)}\n${await server.output}`);
+      throw new Error(`${String(error)}\n${server.output()}`, { cause: error });
     } finally {
-      await stop_server(server);
+      await server.stop();
       await proxy.stop();
       await drop_database(url);
     }

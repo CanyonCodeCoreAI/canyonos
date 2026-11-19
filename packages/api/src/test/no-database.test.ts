@@ -13,6 +13,7 @@ process.env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
 
 const { start_api } = await import('@api/app');
 const { config } = await import('@core/env');
+const { sweep_answer, sweep_routes } = await import('./route-sweep.utils');
 const { until_answers } = await import('./test.utils');
 
 const API_URL = config.app.apiUrl;
@@ -70,6 +71,29 @@ describe('the API with its database down', () => {
     });
     expect(response.status).toBe(503);
     expect(await error_code(response)).toBe('database.unavailable');
+  });
+
+  // Health, auth and the docs read no database; everything else does, the OTLP receivers too.
+  test('every route outside health, auth and docs answers 503 database.unavailable, whatever it sends', async () => {
+    const no_database = ['/healthz', '/readyz', '/auth/status', '/auth/check'];
+    const routes = sweep_routes().filter(
+      ({ method, path }) =>
+        method !== 'OPTIONS' && !no_database.includes(path) && !path.startsWith('/docs')
+    );
+    expect(routes.length).toBeGreaterThan(40);
+
+    for (const swept of routes) {
+      // The right key, so only the database stands in the way: params and query unchecked, and a
+      // body that parses, as the guard runs once it is read.
+      const headers: Record<string, string> =
+        swept.kind === 'control_key' ? { authorization: `Bearer ${TEST_CONTROL_KEY}` } : {};
+      const { route, status, error } = await sweep_answer(API_URL, swept, headers, '{}');
+      expect({ route, status, error }).toEqual({
+        route,
+        status: 503,
+        error: 'database.unavailable',
+      });
+    }
   });
 
   test('POST /v1/metrics answers 503', async () => {

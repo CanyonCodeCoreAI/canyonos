@@ -16,6 +16,7 @@ import {
   WORKFLOW,
 } from './helpers/session';
 import { apiBaseUrl, fulfillJson } from './helpers/workflows';
+import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const GOVERNANCE_PATH = `/workflows/${WORKFLOW.id}/governance`;
@@ -466,7 +467,11 @@ test('a drawer opens with nothing unsaved, with or without spend rules', async (
 test('Discard after a failed save also clears its error', async ({ page }) => {
   const stub = await openGovernance(page, '?agent=MergeAgent');
   stub.write_failure = (route) =>
-    fulfillJson(route, { error: 'governance.unknown_agent', message: 'Not saved' }, 422);
+    fulfillJson(
+      route,
+      { error: 'governance.unknown_agent', message: 'Not saved' } satisfies ApiErrorBody,
+      422
+    );
   const form = drawer(page);
 
   await form.getByTestId('governance-spend-rule').nth(0).getByLabel('Above USD').fill('8');
@@ -602,7 +607,7 @@ test('a 422 on save shows the API message in the drawer', async ({ page }) => {
       {
         error: 'governance.unknown_agent',
         message: 'MergeAgent is not an agent of this workflow',
-      },
+      } satisfies ApiErrorBody,
       422
     );
 
@@ -620,7 +625,10 @@ test('a workflow that is not running says so', async ({ page }) => {
   stub.read_failure = (route) =>
     fulfillJson(
       route,
-      { error: 'registry.workflow_not_running', message: 'Workflow is not running' },
+      {
+        error: 'registry.workflow_not_running',
+        message: 'Workflow is not running',
+      } satisfies ApiErrorBody,
       404
     );
   await page.goto(GOVERNANCE_PATH);
@@ -700,7 +708,10 @@ test('a failed poll keeps the canvas and the open drawer, and says so', async ({
   stub.read_failure = (route) =>
     fulfillJson(
       route,
-      { error: 'registry.controller_unreachable', message: 'Controller unreachable' },
+      {
+        error: 'registry.controller_unreachable',
+        message: 'Controller unreachable',
+      } satisfies ApiErrorBody,
       502
     );
 

@@ -27,6 +27,8 @@ from ..harness import (
     qualified,
 )
 
+pytestmark = pytest.mark.trait("lifecycle")
+
 SYNC_TIMEOUT = 120
 # More CPUs than any machine has, so Docker refuses to start the container.
 UNSCHEDULABLE_CPUS = 999

@@ -182,7 +182,8 @@ def _start_api(api_key_hash: str, renewed: tuple[str, ...]) -> None:
     )
     if not result.ok:
         logs = f" Its logs are in {result.log_path}." if result.log_path else ""
-        raise RuntimeError(f"Could not start the CanyonOS API: {result.message}.{logs}")
+        message = result.message.rstrip(".")
+        raise RuntimeError(f"Could not start the CanyonOS API: {message}.{logs}")
 
 
 def ensure_api(api_key_hash: str | None = None) -> bool:

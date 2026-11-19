@@ -9,24 +9,35 @@ workflow group's password, and no container's command shows one. helloworld's
 workflow_group.yaml has no `otel:` block, so its traces reach the dashboard by the
 default destination; portfolio keeps its own. `canyonos test` in another workflow group
 folder named helloworld, with nothing deployed from it, refuses rather than test the
-running one. Then one workflow is stopped and the other keeps running; the stopped
+running one. With the dashboard's database stopped, the dashboard and both workflow
+groups' status answer 503 and `status` and `sync` name the database and the fix; once
+it runs again the same API serves both. A deploy of helloworld with a new
+`--api-key` moves the dashboard and helloworld to it while portfolio keeps the old key.
+Then one workflow is stopped and the other keeps running; the stopped
 one, redeployed without `endpoint.api_port` or `redis.port`, moves past the other's
 ports, keeps its machine metrics in its own Redis, and is told the running dashboard
 ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container,
 which reads the key's hash again, a redeploy keeps the dashboard, the workflow's
 id and the workflow group's CA, example runs go in with the machine's API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
-refuses a taken `dashboard_port`, a deploy pinned to a taken `api_port` stops before
-anything starts, a dashboard starting with a deploy takes its `dashboard_port` and its
-Global Controller publishes no port, and with 8080 held and no dashboard up, the endpoint and the
-dashboard starting with it end up on different ports. The cases are steps on one
-fleet: once one fails, the rest are skipped."""
+refuses a taken `dashboard_port`, a deploy pinned to an `api_port` another program
+holds or the dashboard's API is on stops before anything starts, a dashboard
+starting with a deploy takes its `dashboard_port`, even the API's default, with the
+API moving past it, while an unreadable workflow group record and a stale
+port-forward record claim nothing, and its Global Controller publishes no port, and
+with 8080 held and no dashboard up, the endpoint and the dashboard starting with it end
+up on different ports, the dashboard's picked from its default again. The cases are
+steps on one fleet: once one fails, the rest are skipped."""
 
+import json
+import os
 import re
+import secrets
 import socket
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,8 +45,8 @@ import pytest
 import yaml
 
 from ..harness import (
-    API_URL,
     Api,
+    api_url,
     bearer,
     canyonos,
     cli_value,
@@ -75,10 +86,16 @@ DASHBOARD_CONTAINERS = [
     f"{DASHBOARD_GROUP}-{service}" for service in ("api", "db", "web")
 ]
 DASHBOARD_API = f"{DASHBOARD_GROUP}-api"
+DASHBOARD_DB = f"{DASHBOARD_GROUP}-db"
 DEPLOY_TIMEOUT = 1800
 HELLOWORLD_API_PORT = 8082
 HELLOWORLD_REDIS_PORT = 6380
 DASHBOARD_PORT = 8090
+# The API's default port, set as the dashboard's in one case, so the API moves past it.
+DASHBOARD_API_PORT = 3000
+SYNC_TIMEOUT = 300
+# How long the API may take to answer again once its database runs again.
+DATABASE_BACK_TIMEOUT = 60
 TRACE_TIMEOUT = 60
 # Where a Redis container keeps the certificate it was given (redis_client.SERVER_TLS_DIR).
 REDIS_CLI_TLS = [
@@ -110,10 +127,12 @@ class Fleet:
     api_after_serve: str = ""
 
 
-def _deploy(recorder, directory: Path, name: str) -> None:
+def _deploy(recorder, directory: Path, name: str, *args: str):
+    """`canyonos deploy` of the workflow in `directory` with `args`; fail unless it
+    registered with the dashboard, and return the call."""
     call = canyonos(
         recorder,
-        ["deploy", str(workflow_dir(directory))],
+        ["deploy", str(workflow_dir(directory)), *args],
         cwd=directory,
         timeout=DEPLOY_TIMEOUT,
     )
@@ -121,6 +140,7 @@ def _deploy(recorder, directory: Path, name: str) -> None:
         f"Registered {workflow_name(workflow_dir(directory))} with the dashboard"
     )
     assert registered in call.output, call.output[-3000:]
+    return call
 
 
 def _stop(recorder, directory: Path) -> None:
@@ -252,6 +272,68 @@ def _held(port: int):
         holder.close()
 
 
+def _said(call) -> str:
+    return " ".join(call.output.split())
+
+
+def _refused_with(call, code: str) -> bool:
+    """Whether `call` was refused with 401 and the error `code`, in the dashboard API's
+    `error` or the endpoint's `error_name`."""
+    if call.code != 401:
+        return False
+    body = call.json()
+    return code in (body.get("error"), body.get("error_name"))
+
+
+def _status(recorder, directory: Path):
+    """`canyonos status --json` from `directory`, whatever it exits with."""
+    return canyonos(recorder, ["status", "--json"], cwd=directory, check=False)
+
+
+@contextmanager
+def _api_key_file_kept():
+    """Put `~/.canyonos/api_key` back as it was afterwards: a deploy with `--api-key`
+    writes the caller's own file, as for any `canyonos` command."""
+    stored = Path.home() / ".canyonos" / "api_key"
+    before = stored.read_bytes() if stored.is_file() else None
+    try:
+        yield
+    finally:
+        if before is None:
+            stored.unlink(missing_ok=True)
+        else:
+            stored.write_bytes(before)
+            stored.chmod(0o600)
+
+
+@contextmanager
+def _unreadable_records(recorder, directory: Path, port: int):
+    """Leave, while the block runs, what an earlier CanyonOS left behind and must
+    claim no port: a workflow group record whose `state.json` is not JSON, and the
+    record of a port-forward on `port` that no process has touched since 1970."""
+    deployments, forwards = cli_value(
+        recorder,
+        directory,
+        "[deployments_dir(), forwards_dir()]",
+        "from canyonos.deployment import deployments_dir; "
+        "from canyonos.forwards import forwards_dir",
+    )
+    name = f"e2e-left-{secrets.token_hex(4)}"
+    record = Path(deployments) / name
+    record.mkdir(parents=True)
+    (record / "state.json").write_text("{not json")
+    forward = Path(forwards) / f"{name}.json"
+    forward.parent.mkdir(parents=True, exist_ok=True)
+    forward.write_text(json.dumps({"port": port}))
+    os.utime(forward, (0, 0))
+    try:
+        yield
+    finally:
+        forward.unlink(missing_ok=True)
+        (record / "state.json").unlink(missing_ok=True)
+        record.rmdir()
+
+
 def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
     """Stop every folder the fleet deployed from and remove the dashboard, then
     fail naming each stop that failed and each group left with containers."""
@@ -304,7 +386,7 @@ def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
             api_after_first = api_after_first or _api_container(recorder)
     for name in WORKFLOWS:
         groups[name] = deployment_group(recorder, dirs[name])
-    api = Api(recorder, API_URL, dashboard_key(recorder))
+    api = Api(recorder, api_url(recorder), dashboard_key(recorder))
     return Fleet(
         dirs=dirs,
         parent=parent,
@@ -326,13 +408,14 @@ def test_both_deploy_at_once_and_register(fleet):
 def test_one_api_key_lists_both_workflows(recorder, fleet):
     """The dashboard needs the API key, and the key is for the whole machine, not
     for one workflow."""
-    status = http(recorder, "GET", f"{API_URL}/auth/status").json()
+    base_url = fleet.api.base_url
+    status = http(recorder, "GET", f"{base_url}/auth/status").json()
     assert status == {"api_key_required": True}, status
-    anonymous = http(recorder, "GET", f"{API_URL}/workflows", check=False)
+    anonymous = http(recorder, "GET", f"{base_url}/workflows", check=False)
     assert anonymous.code == 401, anonymous.output
     assert anonymous.json()["error"] == "auth.missing_key", anonymous.output
     headers = bearer(recorder.api_key)
-    workflows = http(recorder, "GET", f"{API_URL}/workflows", headers=headers).json()
+    workflows = http(recorder, "GET", f"{base_url}/workflows", headers=headers).json()
     listed = {workflow["id"] for workflow in workflows}
     assert set(fleet.ids.values()) <= listed, workflows
 
@@ -447,6 +530,96 @@ def test_test_in_another_folder_of_the_same_name_refuses(recorder, fleet):
         "No workflow group is running from this folder."
     ), call.stdout
     greets(recorder, fleet.dirs["helloworld"], "still-here")
+
+
+def test_a_stopped_database_is_named_until_it_runs_again(recorder, fleet):
+    """With the dashboard's database stopped, the API stays up but is not ready: the
+    dashboard's routes and the workflow groups' status answer 503
+    `database.unavailable`, and `canyonos status` and `sync` fail naming the database
+    and `canyonos serve`. Once the database runs again, the same API serves both
+    workflow groups without a restart."""
+    api_before = _api_container(recorder)
+    base_url = fleet.api.base_url
+    docker(recorder, ["stop", DASHBOARD_DB])
+    try:
+        assert http(recorder, "GET", f"{base_url}/healthz").code == 200
+        ready = http(recorder, "GET", f"{base_url}/readyz", check=False)
+        assert ready.code == 503, ready.output
+        assert ready.json()["checks"]["database"] != "ok", ready.output
+        listed = fleet.api.get("/workflows", check=False)
+        assert listed.code == 503, listed.output
+        assert listed.json()["error"] == "database.unavailable", listed.output
+        for name in WORKFLOWS:
+            status = _status(recorder, fleet.dirs[name])
+            assert status.code == 1, status.output
+            [error] = status.json()["errors"]
+            assert "database" in error and "`canyonos serve`" in error, error
+        directory = fleet.dirs["helloworld"]
+        sync = canyonos(
+            recorder,
+            ["sync", str(workflow_dir(directory))],
+            cwd=directory,
+            timeout=SYNC_TIMEOUT,
+            check=False,
+        )
+        assert sync.code == 1, sync.output
+        said = _said(sync)
+        assert "database" in said and "`canyonos serve`" in said, said
+        assert "Traceback" not in said, said
+    finally:
+        docker(recorder, ["start", DASHBOARD_DB])
+
+    def both_running():
+        return all(_status(recorder, fleet.dirs[name]).code == 0 for name in WORKFLOWS)
+
+    poll(
+        both_running,
+        timeout=DATABASE_BACK_TIMEOUT,
+        interval=2,
+        what="canyonos status to read both workflow groups again",
+    )
+    assert _api_container(recorder) == api_before, "the API was restarted"
+    for name in WORKFLOWS:
+        _reads_own_redis(recorder, fleet, name)
+
+
+def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, fleet):
+    """`canyonos deploy --api-key` with a new key: the dashboard API and the workflow
+    group it deployed take only the new key, the other workflow group keeps the old one
+    until it is deployed again, the dashboard lists both under the new key, and the
+    other one's status still reads, since the control key did not change. Then
+    `canyonos serve` with the session's key puts the dashboard back on it."""
+    new_key = f"e2e-rotated-{secrets.token_urlsafe(16)}"
+    old_key = recorder.api_key
+    rotated, kept = fleet.dirs["helloworld"], fleet.dirs["portfolio"]
+    with _api_key_file_kept():
+        _deploy(recorder, rotated, "helloworld", "--api-key", new_key)
+
+    endpoint = replace(deployed_endpoint(recorder, rotated), api_key=new_key)
+    _, result = result_of(recorder, endpoint, "rotated", timeout=60)
+    assert result == {"greeting": "Hello, rotated! I'm the HelloAgent!"}, result
+    query = {endpoint.argument: "old key"}
+    url = f"{endpoint.url}/{endpoint.route}"
+    old = http(recorder, "POST", url, json=query, headers=bearer(old_key), check=False)
+    assert _refused_with(old, "auth.invalid_key"), old.output
+    # A request id nothing made: past the key check it is only not found, so the
+    # other workflow's agents are never called.
+    other = f"{deployed_endpoint(recorder, kept).url}/status/{uuid.uuid4()}"
+    still = http(recorder, "GET", other, headers=bearer(old_key), check=False)
+    assert still.code == 404, still.output
+    refused = http(recorder, "GET", other, headers=bearer(new_key), check=False)
+    assert _refused_with(refused, "auth.invalid_key"), refused.output
+
+    workflows = f"{fleet.api.base_url}/workflows"
+    listed = http(recorder, "GET", workflows, headers=bearer(new_key)).json()
+    assert set(fleet.ids.values()) <= {workflow["id"] for workflow in listed}, listed
+    stale = http(recorder, "GET", workflows, headers=bearer(old_key), check=False)
+    assert _refused_with(stale, "auth.invalid_key"), stale.output
+    status = _status(recorder, kept)
+    assert status.code == 0 and status.json()["running"] is True, status.output
+
+    canyonos(recorder, ["serve"], cwd=kept, timeout=600)
+    assert fleet.api.get("/workflows").code == 200
 
 
 def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
@@ -595,51 +768,83 @@ def test_serve_refuses_a_taken_dashboard_port(recorder, fleet):
     assert not dashboard_containers(recorder), dashboard_containers(recorder)
 
 
-def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
-    recorder, fleet
-):
-    directory = fleet.dirs["helloworld"]
+def _deploy_pinned(recorder, directory: Path, api_port: int):
+    """`canyonos deploy` with `endpoint.api_port` set to `api_port` for this deploy
+    only; return the call, whatever it exits with."""
     _edit_settings(
         directory,
         lambda text: re.sub(
-            r"^endpoint:$", "endpoint:\n  api_port: 8080", text, flags=re.M
+            r"^endpoint:$", f"endpoint:\n  api_port: {api_port}", text, flags=re.M
         ),
     )
     try:
-        with _held(8080):
-            call = canyonos(
-                recorder,
-                ["deploy", str(workflow_dir(directory))],
-                cwd=directory,
-                timeout=DEPLOY_TIMEOUT,
-                check=False,
-            )
+        return canyonos(
+            recorder,
+            ["deploy", str(workflow_dir(directory))],
+            cwd=directory,
+            timeout=DEPLOY_TIMEOUT,
+            check=False,
+        )
     finally:
         _edit_settings(
             directory, lambda text: re.sub(r"^\s*api_port:.*\n", "", text, flags=re.M)
         )
-    assert call.code == 1, call.output
-    refused = (
-        "Port 8080 is already in use, and the endpoint needs it. Free it, or change "
-        "`endpoint.api_port` in"
+
+
+def test_a_deploy_pinned_to_a_taken_api_port_stops_before_anything_starts(
+    recorder, fleet
+):
+    """Taken by another program, or the port of the dashboard's API, which the deploy
+    brings up first: either way the deploy refuses it before it starts anything of its
+    own, and stops the dashboard it started."""
+    directory = fleet.dirs["helloworld"]
+    api_port = cli_value(
+        recorder,
+        directory,
+        "service_ports()['api']",
+        "from canyonos.dashboard_stack import service_ports",
     )
-    assert refused in " ".join(call.output.split()), call.output
+    with _held(8080):
+        held = _deploy_pinned(recorder, directory, 8080)
+    claimed = _deploy_pinned(recorder, directory, api_port)
+    for call, port in ((held, 8080), (claimed, api_port)):
+        assert call.code == 1, call.output
+        refused = (
+            f"Port {port} is already in use, and the endpoint needs it. Free it, or "
+            "change `endpoint.api_port` in"
+        )
+        assert refused in _said(call), call.output
     left = workflow_group_containers(recorder, fleet.groups["helloworld"], every=True)
     assert not left, left
     assert not dashboard_containers(recorder), dashboard_containers(recorder)
 
 
 def test_a_starting_dashboard_takes_its_dashboard_port(recorder, fleet):
+    """Set to the API's own default, `dashboard_port` is the web app's as it is, and the
+    API moves past it and says so. Neither a workflow group record that cannot be read
+    nor a port-forward record no process keeps up claims a port: with them left on
+    disk, nothing refuses the pinned port."""
     directory = fleet.dirs["helloworld"]
     _edit_settings(
         directory,
         lambda text: re.sub(
-            r"^dashboard_port:.*$", "dashboard_port: 8301", text, flags=re.M
+            r"^dashboard_port:.*$",
+            f"dashboard_port: {DASHBOARD_API_PORT}",
+            text,
+            flags=re.M,
         ),
     )
     try:
-        _deploy(recorder, directory, "helloworld")
-        assert dashboard_port(recorder) == 8301
+        with _unreadable_records(recorder, directory, DASHBOARD_API_PORT):
+            call = _deploy(recorder, directory, "helloworld")
+        assert dashboard_port(recorder) == DASHBOARD_API_PORT
+        moved = _port_of(api_url(recorder))
+        assert moved != DASHBOARD_API_PORT, moved
+        warned = (
+            f"Port {DASHBOARD_API_PORT} is the dashboard's, so the dashboard's API is "
+            f"on {moved}."
+        )
+        assert warned in _said(call), call.output
         controller = f"{fleet.groups['helloworld']}-global-controller"
         published = docker(recorder, ["port", controller]).output.strip()
         assert not published, published
@@ -663,6 +868,8 @@ def test_endpoint_and_a_starting_dashboard_get_their_own_ports(recorder, fleet):
         web_port = dashboard_port(recorder)
         assert 8080 not in (api_port, web_port), (api_port, web_port)
         assert api_port != web_port, api_port
+        # Picked again from its default, not from the port it was set to last time.
+        assert web_port != DASHBOARD_API_PORT, web_port
         assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
         greets(recorder, directory, "own-port")
     finally:

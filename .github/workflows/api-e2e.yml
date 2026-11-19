@@ -67,50 +67,24 @@ jobs:
           load: true
           tags: canyonos-core:ci
 
+      # No env file: src/test/setup.ts points the suite at this job's services. Bun 1.3.14 can
+      # crash partway through the suite, so a failed run gets one more attempt.
       - name: Run E2E Tests
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
         with:
           timeout_minutes: 10
           max_attempts: 2
           retry_on: error
-          command: cd packages/api && bun test:e2e
+          command: cd packages/api && bun run test:e2e
         env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-          CANYONOS_REDIS_HOST: 127.0.0.1
-          CANYONOS_REDIS_PORT: '6379'
           CANYONOS_CORE_IMAGE: canyonos-core:ci
-
-      - name: Run CanyonOS self-hosted bootstrap tests
-        run: cd packages/api && bun run test:canyonos
-        env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
 
       - name: Run migration tests on a populated database
         run: cd packages/api && bun run test:migration
-        env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-
-      - name: Run API tests with no API key
-        run: cd packages/api && bun run test:open
-        env:
-          NODE_ENV: test
-          CI: true
-          DATABASE_URL: postgres://canyonos:canyonos@localhost:5432/canyonos
-          CANYONOS_REDIS_HOST: 127.0.0.1
-          CANYONOS_REDIS_PORT: '6379'
 
       # The script points DATABASE_URL at a port nothing answers on.
       - name: Run API tests with the database down
         run: cd packages/api && bun run test:no-database
-        env:
-          NODE_ENV: test
-          CI: true
 
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
