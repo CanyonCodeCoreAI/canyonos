@@ -109,8 +109,9 @@ app = OpenAPI(
     validation_error_status=400,
     validation_error_model=Error,
     validation_error_callback=_bad_request,
-    # Any route answers it for a workflow_group_id other than this server's.
-    responses={404: Error},
+    # Any route answers 400 for a request it can't read, and 404 for a
+    # workflow_group_id other than this server's.
+    responses={400: Error, 404: Error},
 )
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 

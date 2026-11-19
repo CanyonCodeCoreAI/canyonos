@@ -15,7 +15,22 @@ class Error(BaseModel):
     """
 
     error: str = Field(..., title="Error")
-    code: str = Field(..., title="Code")
+    code: Literal[
+        "bad_request",
+        "bad_archive",
+        "workflow_invalid",
+        "unauthenticated",
+        "forbidden",
+        "unknown_workflow_group",
+        "unknown_workflow",
+        "unknown_agent",
+        "not_running",
+        "replicas_unreadable",
+        "stop_timeout",
+        "stop_failed",
+        "dashboard_unreachable",
+        "dashboard_refused",
+    ] = Field(..., title="Code")
     findings: list[str] | None = Field(None, title="Findings")
     warnings: list[str] | None = Field(None, title="Warnings")
 

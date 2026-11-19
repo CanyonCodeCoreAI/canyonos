@@ -16,7 +16,22 @@ class Error(BaseModel):
     `workflow_invalid`."""
 
     error: str
-    code: str
+    code: Literal[
+        "bad_request",
+        "bad_archive",
+        "workflow_invalid",
+        "unauthenticated",
+        "forbidden",
+        "unknown_workflow_group",
+        "unknown_workflow",
+        "unknown_agent",
+        "not_running",
+        "replicas_unreadable",
+        "stop_timeout",
+        "stop_failed",
+        "dashboard_unreachable",
+        "dashboard_refused",
+    ]
     findings: list[str] | None = None
     warnings: list[str] | None = None
 

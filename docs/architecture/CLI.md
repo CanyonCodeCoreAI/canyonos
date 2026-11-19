@@ -33,7 +33,7 @@ The Global Controller talks to the host's Docker engine, so the Redis, replica a
 4. Global Controller: builds the agent images, starts Redis and the agent containers, and publishes the endpoint record.
 5. CLI: follows the container's log until the workflow is up, then reads `GET /endpoint` for the summary.
 
-On Kubernetes, the CLI instead creates a `CanyonBuild` carrying the key's hash in `spec.auth.apiKeyHash` (no `auth` for no key), uploads the workflow to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder workflow groups yet.
+On Kubernetes, the CLI makes the same calls to the cluster's CanyonOS API through a port-forward, sending the key's hash. The API creates a `CanyonBuild` carrying it in `spec.auth.apiKeyHash` (no `auth` for no key), uploads the workflow to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ## Talking to the Global Controller
 
