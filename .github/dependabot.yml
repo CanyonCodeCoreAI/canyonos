@@ -19,3 +19,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+
+  # The images under an `image:` key in the operator chart's values.yaml (BuildKit),
+  # tag and digest together.
+  - package-ecosystem: docker
+    directory: /packages/operator/charts/canyonos-operator
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
