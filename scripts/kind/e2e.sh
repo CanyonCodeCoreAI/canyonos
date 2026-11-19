@@ -169,6 +169,13 @@ EOF
   as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -qF "${api_key}" \
     && fail "the CanyonProject holds the API key"
   project_id="$(grep -E '^workflow_group_id:' /hw/workflow_group.yaml | awk '{print $2}')"
+  workflow_in() {  # workflow group folder: the name the deploy gave its one workflow
+    # The folder's name and the start of its workflow_id, as in helloworld-3f9a2c1b.
+    /w/.venv/bin/python -c 'import sys, yaml; print(*yaml.safe_load(open(sys.argv[1]))["workflows"])' \
+      "$1/workflow_group.yaml"
+  }
+  workflow="$(workflow_in /hw)"
+  [ -n "${workflow}" ] || fail "the deploy wrote no workflow to /hw/workflow_group.yaml"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" \
     || fail "the endpoint is not forwarded to 127.0.0.1:8080: ${said}"
@@ -187,7 +194,7 @@ EOF
     || fail "status --json is not JSON"
   canyonos doctor || fail "doctor"
   canyonos logs --no-follow --tail 5 >/dev/null || fail "logs"
-  canyonos logs helloworld.HelloAgent-0 --no-follow --tail 5 >/dev/null || fail "logs helloworld.HelloAgent-0"
+  canyonos logs "${workflow}.HelloAgent-0" --no-follow --tail 5 >/dev/null || fail "logs ${workflow}.HelloAgent-0"
 
   log "The endpoint stays on 127.0.0.1:8080 when its pod is replaced"
   selector="$(as_deployer kubectl -n "${NS}" get svc canyonos-endpoint \
@@ -206,7 +213,7 @@ EOF
     local forward=$! ok=0 id sent answer
     endpoint_up http://127.0.0.1:18080 "${api_key}" || { kill "${forward}"; return 1; }
     for n in 1 2 3 4 5; do
-      sent="$(curl -s -m 10 -w ' %{http_code}' -X POST http://127.0.0.1:18080/helloworld/Workflow/main \
+      sent="$(curl -s -m 10 -w ' %{http_code}' -X POST http://127.0.0.1:18080/${workflow}/Workflow/main \
         -H "Authorization: Bearer ${api_key}" -H 'Content-Type: application/json' \
         -d "{\"query\": \"e2e ${n}\"}" || true)"
       id="$(echo "${sent% *}" | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])' 2>/dev/null || true)"
@@ -223,7 +230,7 @@ EOF
     [ "${ok}" = 5 ]
   }
   query_status() {  # API key: the status a POST of one query answers with
-    curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/helloworld/Workflow/main \
+    curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/${workflow}/Workflow/main \
       -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d '{"query": "e2e"}'
   }
   log "Requests through the endpoint"
@@ -425,12 +432,14 @@ EOF
   # CANYONOS_API_KEY sets this deploy's key without saving it.
   (cd /toy && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" /w/.venv/bin/canyonos deploy helloworld) \
     || fail "toy deploy"
-  [ "$(as_deployer kubectl -n "${NS}" get canyonagents -o name)" = canyonagent.canyonos.canyoncode.ai/helloworld-toy ] \
-    && [ "$(as_deployer kubectl -n "${NS}" get statefulsets -l canyonos.canyoncode.ai/agent -o name)" = statefulset.apps/helloworld-toy ] \
+  workflow="$(workflow_in /toy)"
+  [ -n "${workflow}" ] || fail "the toy deploy wrote no workflow to /toy/workflow_group.yaml"
+  [ "$(as_deployer kubectl -n "${NS}" get canyonagents -o name)" = "canyonagent.canyonos.canyoncode.ai/${workflow}-toy" ] \
+    && [ "$(as_deployer kubectl -n "${NS}" get statefulsets -l canyonos.canyoncode.ai/agent -o name)" = "statefulset.apps/${workflow}-toy" ] \
     && as_deployer kubectl -n "${NS}" get statefulset endpoint >/dev/null \
     || fail "toy runs: $(as_deployer kubectl -n "${NS}" get canyonagents,statefulsets -o name)"
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" || fail "the toy endpoint is not up with its key: ${said}"
-  id="$(curl -s -m 10 -X POST http://127.0.0.1:8080/helloworld/Workflow/main -H "Authorization: Bearer ${api_key}" \
+  id="$(curl -s -m 10 -X POST http://127.0.0.1:8080/${workflow}/Workflow/main -H "Authorization: Bearer ${api_key}" \
     -H 'Content-Type: application/json' -d '{"query": "toy"}' | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])')" || fail "toy query"
   for _ in $(seq 60); do
     answer="$(curl -s -m 5 -H "Authorization: Bearer ${api_key}" "http://127.0.0.1:8080/status/${id}")"
