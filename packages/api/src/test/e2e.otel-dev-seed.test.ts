@@ -5,10 +5,10 @@ import { describe, expect, test } from 'bun:test';
 import { eq, like, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelMetricRollups, otelSpans } from '@api/db/schema';
 import { seedMonitoringDemo } from '@api/db/seed-monitoring-demo';
 import { seedDevTelemetry } from '@api/db/seed-telemetry';
-import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
+import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
+import { otelMetricRollups, otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';

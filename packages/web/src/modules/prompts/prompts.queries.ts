@@ -10,12 +10,12 @@ import type {
   SystemPromptCreate,
 } from '@canyonos/api/prompts';
 
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import { workflowQueryKeys } from '@/modules/workflows/workflows.query-cache';
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.workflow_not_running': 'This workflow is not running, so its prompts cannot be read.',
-  'canyonos.controller_unreachable': 'The running controller could not be reached.',
+  'registry.workflow_not_running': 'This workflow is not running, so its prompts cannot be read.',
+  'registry.controller_unreachable': 'The running controller could not be reached.',
 };
 
 /** What to tell the reader about a failed prompt read: the known causes by name, else `fallback`. */
@@ -30,14 +30,15 @@ export const promptsQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.prompts(workflow_id),
     queryFn: () =>
-      apiCall<PromptListItem[]>(() => forgeAuthApi.workflows[workflow_id]!.prompts.get()),
+      apiCall<PromptListItem[]>(() => canyonosAuthApi.workflows[workflow_id]!.prompts.get()),
     retry: false,
   });
 
 export const promptQueryOptions = (workflow_id: string, name: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.prompt(workflow_id, name),
-    queryFn: () => apiCall<Prompt>(() => forgeAuthApi.workflows[workflow_id]!.prompts[name]!.get()),
+    queryFn: () =>
+      apiCall<Prompt>(() => canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.get()),
     retry: false,
   });
 
@@ -47,7 +48,7 @@ export function useCreateSystemPrompt(workflow_id: string, name: string) {
   return useMutation({
     mutationFn: (body: SystemPromptCreate) =>
       apiCall<SystemPrompt>(() =>
-        forgeAuthApi.workflows[workflow_id]!.prompts[name]!.versions.post(body)
+        canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.versions.post(body)
       ),
     onSuccess: () =>
       query_client.invalidateQueries({ queryKey: workflowQueryKeys.prompt(workflow_id, name) }),
@@ -60,7 +61,7 @@ export function useMakePromptLive(workflow_id: string, name: string) {
   return useMutation({
     mutationFn: (version: string) =>
       apiCall<PromptListItem>(() =>
-        forgeAuthApi.workflows[workflow_id]!.prompts[name]!.live.put({ version })
+        canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.live.put({ version })
       ),
     // The listing carries each prompt's live version too, so both reads are stale.
     onSuccess: () =>

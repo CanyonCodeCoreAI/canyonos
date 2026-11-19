@@ -6,14 +6,7 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetrics, otelSpans } from '@api/db/schema';
-import {
-  GEN_AI,
-  RUNTIME_ATTRIBUTES,
-  STATUS_CODE,
-  WORKFLOW_GROUP_ID_ATTRIBUTE,
-  WORKFLOW_ID_ATTRIBUTE,
-} from '@api/modules/metrics/metrics.contract';
+import { GEN_AI, RUNTIME_ATTRIBUTES } from '@api/modules/metrics/metrics.contract';
 import {
   replicas_sql,
   resource_utilization_sql,
@@ -27,10 +20,16 @@ import {
   REPLICA_UP_SECONDS,
   REQUESTS_COMPLETED_METRIC,
   REQUESTS_STARTED_METRIC,
-  RESOURCE_WORKFLOW_ATTRIBUTE,
   SATURATION_METRIC,
 } from '@api/modules/monitoring/monitoring.signals';
+import {
+  RESOURCE_WORKFLOW_ATTRIBUTE,
+  STATUS_CODE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from '@api/modules/telemetry/telemetry.contract';
 import { ROLLUP_SECONDS } from '@api/modules/telemetry/telemetry.rollup';
+import { otelLogs, otelMetrics, otelSpans } from '@api/modules/telemetry/telemetry.schema';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
 import { api, setupE2ETests } from './e2e.setup';
@@ -1773,7 +1772,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     ]),
   });
 
-  test('a workflow the controller is not running is 404 canyonos.workflow_not_running', async () => {
+  test('a workflow the controller is not running is 404 registry.workflow_not_running', async () => {
     const { workflow_id } = await create_workflow(token, 'Idle Endpoint');
 
     const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
@@ -1781,7 +1780,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     });
 
     expect(res.error?.status as number).toBe(404);
-    expect((res.error?.value as { error?: string })?.error).toBe('canyonos.workflow_not_running');
+    expect((res.error?.value as { error?: string })?.error).toBe('registry.workflow_not_running');
   });
 
   test('returns the endpoint the controller recorded, with its status url and an example body per route', async () => {

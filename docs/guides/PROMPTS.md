@@ -66,10 +66,10 @@ is kept.
 ## Where prompts are kept
 
 The dashboard keeps every version in its Postgres database, by each workflow's
-`workflow_id`. When a deploy registers the workflow group with the dashboard, and each
-time you open the Prompts page, the dashboard copies in every prompt from `prompts.yaml`
-it doesn't have yet, with all its versions. From then on, the dashboard's copy is what
-agents are sent. Without the dashboard, agents are sent the live versions in
+`workflow_id`. Once a minute while the workflow runs, and each time you open the Prompts
+page, the dashboard copies in every prompt from `prompts.yaml` it doesn't have yet, with
+all its versions. From then on, the dashboard's copy is what agents are sent, within a
+minute of each deploy. Without the dashboard, agents are sent the live versions in
 `prompts.yaml` as of the last deploy.
 
 Because prompts are kept by `workflow_group_id`, they carry over to the next deploy only
@@ -85,8 +85,8 @@ dashboard deletes its prompts. How the gateway gets the live versions is in
   versions, are ignored. Save a new version on the dashboard instead.
 - The dashboard cannot add or delete a prompt. To add one, put it in `prompts.yaml` and
   run `canyonos sync <workflow folder>` (Docker only) or `canyonos deploy`; it reaches
-  agents once the dashboard has stored it, at the latest when you next open the Prompts
-  page.
+  agents once the dashboard has stored it, within a minute or when you next open the
+  Prompts page.
 - Prompts are set on OpenAI chat completions and responses, Anthropic messages, and AWS
   Bedrock calls. A call with no place for a system prompt, such as an embeddings call,
   is sent unchanged.

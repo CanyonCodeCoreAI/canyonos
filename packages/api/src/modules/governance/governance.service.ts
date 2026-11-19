@@ -5,7 +5,8 @@ import type { RedisClient } from 'bun';
 
 import { unprocessable } from '@core/errors';
 
-import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
+import { desired_replicas_key } from '../registry/registry.contract';
+import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import { read_agents } from '../scaling/scaling.service';
 import { publish_spend } from './governance.publisher';
 import { governance_repo } from './governance.repo';
@@ -163,7 +164,7 @@ export async function set_stopped(
     const workflow = await assert_workflow_running(redis, workflow_id);
     const agents = await find_agent(redis, workflow, agent);
     const { replicas_configured } = agents.find(({ name }) => name === agent)!;
-    await redis.set(`agent:${agent}:desired_replicas`, String(stopped ? 0 : replicas_configured));
+    await redis.set(desired_replicas_key(agent), String(stopped ? 0 : replicas_configured));
     return read_governance(redis, workflow_id, workflow);
   });
 }

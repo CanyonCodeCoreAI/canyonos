@@ -5,9 +5,9 @@ import { describe, expect, test } from 'bun:test';
 import { asc, eq, inArray } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelMetricRollups, otelMetrics } from '@api/db/schema';
 import { prune_expired_metrics } from '@api/modules/telemetry/telemetry.retention';
 import { ROLLUP_NANOS } from '@api/modules/telemetry/telemetry.rollup';
+import { otelMetricRollups, otelMetrics } from '@api/modules/telemetry/telemetry.schema';
 import { config } from '@core/env';
 
 import { setupE2ETests } from './e2e.setup';

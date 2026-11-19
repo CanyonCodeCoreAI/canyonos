@@ -3,7 +3,7 @@
 
 import { edenTreaty } from '@elysiajs/eden';
 
-import type { ForgeApi } from '@canyonos/api/client';
+import type { CanyonosApi } from '@canyonos/api/client';
 import type {
   MetricsAgentDetails,
   MetricsBlocks,
@@ -12,10 +12,10 @@ import type {
 } from '@canyonos/api/metrics';
 import type { ListRequestsQuery, RequestList, RequestTrace } from '@canyonos/api/requests';
 
-const _client = edenTreaty<ForgeApi>('http://localhost:3000');
+const _client = edenTreaty<CanyonosApi>('http://localhost:3000');
 
 // Forces actual type resolution so tree-shaking can't hide a broken bridge.
-// If `ForgeApi` doesn't resolve, web typecheck fails here loudly and locally.
+// If `CanyonosApi` doesn't resolve, web typecheck fails here loudly and locally.
 export type _HealthzReturn = Awaited<ReturnType<typeof _client.healthz.get>>;
 
 function _workflow_contract(workflow_id: string) {

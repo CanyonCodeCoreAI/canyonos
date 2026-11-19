@@ -620,7 +620,7 @@ test('a workflow that is not running says so', async ({ page }) => {
   stub.read_failure = (route) =>
     fulfillJson(
       route,
-      { error: 'canyonos.workflow_not_running', message: 'Workflow is not running' },
+      { error: 'registry.workflow_not_running', message: 'Workflow is not running' },
       404
     );
   await page.goto(GOVERNANCE_PATH);
@@ -700,7 +700,7 @@ test('a failed poll keeps the canvas and the open drawer, and says so', async ({
   stub.read_failure = (route) =>
     fulfillJson(
       route,
-      { error: 'canyonos.controller_unreachable', message: 'Controller unreachable' },
+      { error: 'registry.controller_unreachable', message: 'Controller unreachable' },
       502
     );
 

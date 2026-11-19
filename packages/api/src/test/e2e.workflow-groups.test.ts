@@ -1,13 +1,30 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { eq } from 'drizzle-orm';
 
-import type { WorkflowGroupStatus } from '@api/modules/workflow-groups/workflow-groups.types';
+import { db } from '@api/db/client';
+import { workflows } from '@api/db/schema';
+import { join_controller_networks } from '@api/modules/registry/registry.network';
+import { registry_repo } from '@api/modules/registry/registry.repo';
+import type {
+  DashboardRegistration,
+  WorkflowGroupStatus,
+} from '@api/modules/workflow-groups/workflow-groups.types';
+import * as docker from '@core/docker';
 import { config } from '@core/env';
 
 import { TEST_API_KEY, TEST_CONTROL_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
+import {
+  reset_controller,
+  seed_endpoint,
+  seed_reconciler_errors,
+  seed_replica,
+  seed_running_workflow,
+  seed_scaling_agents,
+} from './redis-test.utils';
 import { bearer } from './workflow-test.utils';
 
 // /v1/workflow-groups against the real Docker daemon and the real core image, whose
@@ -130,6 +147,53 @@ async function create_fake_controller(fake_group_id: string, on_term: string): P
   return id;
 }
 
+/** A Global Controller of another workflow group, labelled as one, created and not started. */
+async function create_stopped_controller(fake_group_id: string): Promise<string> {
+  return docker_cli([
+    'create',
+    '--label',
+    `com.docker.compose.project=${project}`,
+    '--label',
+    'canyonos.role=global-controller',
+    '--label',
+    `canyonos.workflow_group_id=${fake_group_id}`,
+    '--entrypoint',
+    'sh',
+    CORE_IMAGE!,
+    '-c',
+    'sleep 300',
+  ]);
+}
+
+// What `run-deploy` writes once the deploy is up.
+const UP_PROGRESS =
+  'import json, time; json.dump({"version": "e2e", "started_at": time.time(), "phase": "up", ' +
+  '"message": None, "steps": [], "slowest_step": None, "last_output_at": None, "error": None, ' +
+  '"error_code": None, "root_cause": None, "reload": {"seq": 0, "ok": None, "error": None}, ' +
+  '"stopping": False, "finished": False, "exit_code": None}, ' +
+  'open("/var/lib/canyonos/progress.json", "w"))';
+
+/** A stand-in Global Controller of another workflow group whose deploy reports itself up. */
+async function create_up_controller(fake_group_id: string): Promise<string> {
+  const id = await docker_cli([
+    'create',
+    '--init',
+    '--label',
+    `com.docker.compose.project=${project}`,
+    '--label',
+    'canyonos.role=global-controller',
+    '--label',
+    `canyonos.workflow_group_id=${fake_group_id}`,
+    '--entrypoint',
+    'sh',
+    CORE_IMAGE!,
+    '-c',
+    `mkdir -p /var/lib/canyonos && python -c '${UP_PROGRESS}' && sleep 300`,
+  ]);
+  await docker_cli(['start', id]);
+  return id;
+}
+
 /** A gzip tar of `files`, by path, as the CLI uploads a workflow. */
 const gzip_tar = (files: Record<string, string>) =>
   new Bun.Archive(files, { compress: 'gzip' }).bytes();
@@ -209,6 +273,9 @@ afterAll(async () => {
   if (ids.length > 0) await docker_cli(['rm', '-f', ...ids]).catch(() => undefined);
   await docker_cli(['rm', '-f', `${project}-redis-localhost`]).catch(() => undefined);
   await docker_cli(['network', 'rm', project]).catch(() => undefined);
+  for (const network of [`${project}-joined`, `${project}-own`]) {
+    await docker_cli(['network', 'rm', network]).catch(() => undefined);
+  }
   await docker_cli(['volume', 'rm', `${project}-workspace`]).catch(() => undefined);
 }, 60_000);
 
@@ -298,17 +365,16 @@ describe('the workflow groups API drives the Global Controller container', () =>
   );
 
   test('the routes that need a running deploy are 409 before it starts', async () => {
-    const [health, agent_logs, dashboard, log] = await Promise.all([
+    const [health, agent_logs, log] = await Promise.all([
       group().health.get({ $headers: control }),
       group().logs.agents['helloworld.Workflow']!.get({
         $headers: control,
         $query: { tail: '10' },
       }),
-      group().dashboard.put(undefined, { headers: control }),
       v1(`/${workflow_group_id}/logs/controller?tail=all`),
     ]);
 
-    for (const res of [health, agent_logs, dashboard]) {
+    for (const res of [health, agent_logs]) {
       expect(refusal(res)).toMatchObject({
         status: 409,
         error: 'workflow_groups.not_running',
@@ -431,4 +497,287 @@ describe('the workflow groups API drives the Global Controller container', () =>
     },
     (SLOW_STOP_SECONDS + 30) * 1000
   );
+});
+
+describe('canyonos deploy registers the workflow group with the dashboard, and the status reads its Redis', () => {
+  beforeEach(reset_controller);
+
+  const CLOSED_PORT = 1;
+  const TLS = { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' };
+
+  const registration = (
+    names: Record<string, string>,
+    redis: Partial<DashboardRegistration> = {}
+  ): DashboardRegistration => ({
+    workflows: names,
+    redis_host: `canyonos-${name}-redis-localhost`,
+    redis_port: config.canyonos.redisPort,
+    redis_password: '',
+    redis_tls: null,
+    ...redis,
+  });
+
+  const register = (group_id: string, body: DashboardRegistration) =>
+    api.v1['workflow-groups'][group_id]!.dashboard.put(body, { headers: control });
+
+  async function read_workflow(workflow_id: string) {
+    const [row] = await db.select().from(workflows).where(eq(workflows.id, workflow_id)).limit(1);
+    return row;
+  }
+
+  async function group_status(group_id: string): Promise<WorkflowGroupStatus> {
+    const res = await api.v1['workflow-groups'][group_id]!.get({ $headers: control });
+    if (res.error || !res.data)
+      throw new Error(`GET status failed: ${JSON.stringify(refusal(res))}`);
+    return res.data;
+  }
+
+  /** Polls the group's status, which is read at most every two seconds, until `done` holds. */
+  async function group_status_when(
+    group_id: string,
+    done: (current: WorkflowGroupStatus) => boolean
+  ): Promise<WorkflowGroupStatus> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const current = await group_status(group_id);
+      if (done(current)) return current;
+      if (Date.now() > deadline) {
+        throw new Error(`Status never got there: ${JSON.stringify(current)}`);
+      }
+      await Bun.sleep(250);
+    }
+  }
+
+  test('no body, or one naming another host, a port out of range or a workflow by no uuid is 422; a workflow group with no container 404', async () => {
+    const group_id = crypto.randomUUID();
+    await create_stopped_controller(group_id);
+    const workflow_id = crypto.randomUUID();
+
+    const refused = await Promise.all([
+      ...['10.0.0.5', 'example.com', 'canyonos-a-redis-localhost.evil.com'].map((redis_host) =>
+        register(group_id, registration({ [workflow_id]: 'app' }, { redis_host }))
+      ),
+      ...[0, 65536, 6379.5].map((redis_port) =>
+        register(group_id, registration({ [workflow_id]: 'app' }, { redis_port }))
+      ),
+      register(group_id, registration({ 'not-a-uuid': 'app' })),
+    ]);
+    for (const res of refused) {
+      expect(refusal(res)).toMatchObject({ status: 422, error: 'validation_error' });
+    }
+    // Optional for Kubernetes only: on Docker the body is the only source of the workflows.
+    const bodiless = await fetch(`${config.app.apiUrl}/v1/workflow-groups/${group_id}/dashboard`, {
+      method: 'PUT',
+      headers: control,
+    });
+    expect(bodiless.status).toBe(422);
+    expect(await bodiless.json()).toMatchObject({ error: 'workflow_groups.registration_required' });
+    const unknown = await register(crypto.randomUUID(), registration({ [workflow_id]: 'app' }));
+    expect(refusal(unknown)).toMatchObject({
+      status: 404,
+      error: 'workflow_groups.unknown_workflow_group',
+    });
+    expect(await read_workflow(workflow_id)).toBeUndefined();
+  }, 60_000);
+
+  test('it stores each workflow with the Redis before the Global Controller starts, without reaching it', async () => {
+    const group_id = crypto.randomUUID();
+    await create_stopped_controller(group_id);
+    const alpha = crypto.randomUUID();
+    const beta = crypto.randomUUID();
+
+    // Nothing answers on CLOSED_PORT: the registration does not connect to the Redis.
+    const res = await register(
+      group_id,
+      registration(
+        { [beta]: 'beta', [alpha]: 'alpha' },
+        { redis_port: CLOSED_PORT, redis_password: 's3cret', redis_tls: TLS }
+      )
+    );
+
+    expect(res.error).toBeNull();
+    expect(res.data).toEqual({
+      workflows: [
+        { workflow_id: alpha, name: 'alpha' },
+        { workflow_id: beta, name: 'beta' },
+      ],
+    });
+    for (const workflow_id of [alpha, beta]) {
+      const row = await read_workflow(workflow_id);
+      expect(row).toMatchObject({
+        workflow_group_id: group_id,
+        redis_host: `canyonos-${name}-redis-localhost`,
+        redis_port: CLOSED_PORT,
+      });
+      // Sealed in the database, opened for the api.
+      expect(row?.redis_password).not.toContain('s3cret');
+      expect(row?.redis_tls).not.toContain('cert-pem');
+      expect(await registry_repo.find_redis(workflow_id)).toMatchObject({
+        redis_password: 's3cret',
+        redis_tls: TLS,
+      });
+    }
+
+    // Again, as `canyonos serve` does: the new Redis is taken, the stored name stays.
+    const again = await register(group_id, registration({ [alpha]: 'renamed' }));
+    expect(again.data).toEqual({ workflows: [{ workflow_id: alpha, name: 'alpha' }] });
+    expect(await registry_repo.find_redis(alpha)).toMatchObject({
+      redis_port: config.canyonos.redisPort,
+      redis_password: '',
+      redis_tls: null,
+    });
+  }, 60_000);
+
+  test('the status reads the endpoint, agents and machine errors from the registered Redis once the controller publishes there', async () => {
+    const group_id = crypto.randomUUID();
+    await create_up_controller(group_id);
+    const workflow_id = crypto.randomUUID();
+
+    const unregistered = await group_status_when(group_id, ({ phase }) => phase === 'up');
+    expect(unregistered).toMatchObject({
+      running: true,
+      endpoint: null,
+      agents: null,
+      machine_errors: null,
+      errors: ['Not registered with the dashboard; run canyonos deploy again'],
+    });
+
+    expect((await register(group_id, registration({ [workflow_id]: 'app' }))).error).toBeNull();
+    const unpublished = await group_status_when(group_id, ({ errors }) =>
+      errors.every((error) => !error.startsWith('Not registered'))
+    );
+    expect(unpublished).toMatchObject({
+      endpoint: null,
+      agents: null,
+      machine_errors: null,
+      errors: ['The Global Controller has not published to its Redis yet'],
+    });
+
+    // Its identity names the registered workflow; no agent spec is published yet.
+    await seed_running_workflow(workflow_id, { prompts: {} });
+    const published = await group_status_when(group_id, ({ errors }) => errors.length === 0);
+    expect(published).toMatchObject({ endpoint: null, agents: {}, machine_errors: {} });
+
+    const route = {
+      workflow: 'app',
+      workflow_id,
+      agent: 'Alpha',
+      method: 'main',
+      arguments: ['query'],
+      url: `http://203.0.113.7:8080/${workflow_id}`,
+    };
+    await seed_endpoint({
+      public_host: '203.0.113.7',
+      api_port: '8080',
+      routes: JSON.stringify([route]),
+    });
+    await seed_scaling_agents([{ name: 'app.Alpha', desired: 2 }, { name: 'app.Beta' }]);
+    await seed_replica('app.Alpha', 'app.Alpha-1a2b3c4d', '10.0.0.1:9000');
+    // Still starting: its launch has not written its address.
+    await seed_replica('app.Alpha', 'app.Alpha-5e6f7a8b', null);
+    await seed_reconciler_errors({ 'app.Beta': 'no such image' }, { 't3.small': 'quota' });
+
+    const running = await group_status_when(group_id, ({ endpoint }) => endpoint !== null);
+    expect(running).toMatchObject({
+      endpoint: { public_host: '203.0.113.7', api_port: 8080, routes: [route] },
+      agents: {
+        'app.Alpha': { desired_replicas: 2, running_replicas: 1, launch_error: null },
+        'app.Beta': { desired_replicas: 0, running_replicas: 0, launch_error: 'no such image' },
+      },
+      machine_errors: { 't3.small': 'quota' },
+      errors: [],
+    });
+  }, 60_000);
+
+  test('a registered Redis that does not answer is named under errors', async () => {
+    const group_id = crypto.randomUUID();
+    await create_up_controller(group_id);
+    expect(
+      (
+        await register(
+          group_id,
+          registration({ [crypto.randomUUID()]: 'app' }, { redis_port: CLOSED_PORT })
+        )
+      ).error
+    ).toBeNull();
+
+    const unread = await group_status_when(group_id, ({ phase }) => phase === 'up');
+
+    expect(unread).toMatchObject({ endpoint: null, agents: null, machine_errors: null });
+    expect(unread.errors).toEqual([
+      expect.stringMatching(/^Could not read the deploy's state in Redis: /),
+    ]);
+  }, 60_000);
+});
+
+describe("the API's container joins the network of a workflow group's Global Controller container", () => {
+  // In the dashboard's compose file the API runs in a container that reads each group's Redis
+  // by name; here the API runs on the host, so a container stands in for it.
+  test('it joins the networks it is not on, keeps its own gateway, resolves the names there, and joining again changes nothing', async () => {
+    const group_id = crypto.randomUUID();
+    const network = `${project}-joined`;
+    // The stand-in's own network sorts after the one it joins, which would take its default
+    // gateway, and with it its published ports, at the same gateway priority.
+    const own_network = `${project}-own`;
+    for (const created of [network, own_network]) {
+      await docker_cli([
+        'network',
+        'create',
+        '--label',
+        `com.docker.compose.project=${project}`,
+        created,
+      ]);
+    }
+    const controller_name = `${project}-joined-controller`;
+    const labelled_sleeper = (container_name: string, labels: string[], args: string[] = []) =>
+      docker_cli([
+        'run',
+        '-d',
+        '--init',
+        '--name',
+        container_name,
+        '--label',
+        `com.docker.compose.project=${project}`,
+        ...labels.flatMap((label) => ['--label', label]),
+        ...args,
+        '--entrypoint',
+        'sh',
+        CORE_IMAGE!,
+        '-c',
+        'sleep 300',
+      ]);
+    await labelled_sleeper(
+      controller_name,
+      ['canyonos.role=global-controller', `canyonos.workflow_group_id=${group_id}`],
+      ['--network', network]
+    );
+    const api_name = `${project}-joined-api`;
+    await labelled_sleeper(api_name, [], ['--network', own_network]);
+    const in_api = (code: string) => docker_cli(['exec', api_name, 'python', '-c', code]);
+    const gateway_interface = () =>
+      in_api(
+        "print(*[l.split()[0] for l in open('/proc/net/route') if l.split()[1] == '00000000'])"
+      );
+    const gateway_before = await gateway_interface();
+    const resolves_controller = () =>
+      in_api(`import socket; socket.gethostbyname("${controller_name}")`).then(
+        () => true,
+        () => false
+      );
+    expect(await resolves_controller()).toBe(false);
+
+    expect(await join_controller_networks(api_name, group_id)).toEqual([network]);
+
+    expect((await docker.inspect(api_name)).networks).toContain(network);
+    expect(await resolves_controller()).toBe(true);
+    expect(await gateway_interface()).toBe(gateway_before);
+    // Already on it: nothing to join, and a connect Docker refuses as a duplicate succeeds.
+    expect(await join_controller_networks(api_name, group_id)).toEqual([]);
+    await docker.connect_network(network, api_name);
+    expect((await docker.inspect(api_name)).networks.filter((on) => on === network)).toHaveLength(
+      1
+    );
+    // A workflow group with no Global Controller container has no network to join.
+    expect(await join_controller_networks(api_name, crypto.randomUUID())).toBeNull();
+  }, 60_000);
 });

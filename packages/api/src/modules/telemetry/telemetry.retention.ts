@@ -5,9 +5,10 @@ import { lt, sql } from 'drizzle-orm';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 
 import { db } from '@api/db/client';
-import { otelMetricRollups, otelMetrics } from '@api/db/schema';
 import { config } from '@core/env';
 import { LOG_DOMAINS, logger } from '@core/logger';
+
+import { otelMetricRollups, otelMetrics } from './telemetry.schema';
 
 // Small batches keep each delete's locks and WAL short, so ingest never waits on a prune.
 const RETENTION_BATCH = 10_000;
@@ -55,7 +56,7 @@ export async function prune_expired_metrics(
 }
 
 /** Prunes now, then hourly; a failed run is logged and the next one tries again. */
-export function start_metrics_retention(): void {
+export function start_metrics_retention(): { stop(): void } {
   const run = () =>
     prune_expired_metrics()
       .then((deleted) => retention_logger.info('Pruned expired metrics', deleted))
@@ -63,5 +64,7 @@ export function start_metrics_retention(): void {
         retention_logger.warn('Could not prune expired metrics', { error })
       );
   void run();
-  setInterval(run, RETENTION_INTERVAL_MS).unref();
+  const timer = setInterval(run, RETENTION_INTERVAL_MS);
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
 }

@@ -81,8 +81,10 @@ const canyonos = {
   workflowsFile: env.CANYONOS_PROJECTS_FILE ?? null,
 };
 
-const governance = {
-  publishIntervalMs: parseInteger(env.GOVERNANCE_PUBLISH_INTERVAL_MS, 60_000),
+/** How often the API visits the Redis of every registered workflow: governance spend, live
+ * prompts. */
+const registry = {
+  tickIntervalMs: parseInteger(env.WORKFLOWS_TICK_INTERVAL_MS, 60_000),
 };
 
 /** A retention period in whole days; zero or less would delete every metric as it arrives. */
@@ -111,6 +113,10 @@ const docker = {
   // The Docker Engine socket /v1 drives each workflow group's Global Controller container
   // through; empty runs the API without Docker, and every /v1 route answers 503.
   socket: env.DOCKER_SOCKET === '' ? null : (env.DOCKER_SOCKET ?? '/var/run/docker.sock'),
+  // `CANYONOS_API_CONTAINER`: the container this API runs in, which joins each Docker workflow
+  // group's network to reach its Redis by name. Unset, as on the host or in a cluster, it
+  // joins none and reaches each Redis as `reachable_redis_host` says.
+  apiContainer: env.CANYONOS_API_CONTAINER || null,
 };
 
 /** `CANYONOS_TARGET`: where /v1 runs workflow groups, `kubernetes` in the cluster this API runs
@@ -139,6 +145,8 @@ const kubernetes = {
 
 const LOCAL_DATABASE_URL = 'postgres://canyonos:canyonos@localhost:5432/canyonos';
 
+/** `DATABASE_URL`: unset, development and test use a local database and anywhere else the start
+ * is refused. A database that is set but down is waited for: the API listens before it connects. */
 export function resolveDatabaseUrl(value: string | undefined, environment: AppEnvironment): string {
   if (value === undefined || value === '') {
     if (environment === 'development' || environment === 'test') return LOCAL_DATABASE_URL;
@@ -152,7 +160,7 @@ export function resolveDatabaseUrl(value: string | undefined, environment: AppEn
 export const config = {
   environment,
   canyonos,
-  governance,
+  registry,
   metrics,
   docker,
   workflowGroups,

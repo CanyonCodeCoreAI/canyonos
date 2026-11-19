@@ -4,9 +4,9 @@
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetricRollups, otelMetrics, otelSpans } from '@api/db/schema';
 
 import { rollup_rows } from './telemetry.rollup';
+import { otelLogs, otelMetricRollups, otelMetrics, otelSpans } from './telemetry.schema';
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export type SpanRow = typeof otelSpans.$inferInsert;

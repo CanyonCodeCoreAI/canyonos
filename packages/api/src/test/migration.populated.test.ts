@@ -8,14 +8,16 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
-import { forgeApi } from '@api/app';
-import { db, runMigrations, sql } from '@api/db/client';
+import { app } from '@api/app';
+import { db, run_migrations, sql } from '@api/db/client';
+import { set_database_state } from '@api/db/database';
 
 import { bearer, TEST_API_KEY } from './workflow-test.utils';
 
 const MIGRATIONS = new URL('../db/migrations', import.meta.url).pathname;
 const PASSWORD_AUTH_TAG = '0005_password_auth';
 const DROP_USERS_TAG = '0009_drop_users';
+const DROP_DEPLOY_QUEUE_TAG = '0013_drop_deploy_queue';
 
 interface Journal {
   entries: { tag: string }[];
@@ -37,6 +39,7 @@ const copies: string[] = [];
 let seeded: Seeded;
 let password_seeded: PasswordSeeded;
 let after_password_auth: Record<string, unknown>[];
+let before_drop_deploy_queue: string[];
 
 /** Migrates with a journal copy that stops right before `tag`, the shape a running install has. */
 async function migrate_before(tag: string): Promise<void> {
@@ -69,6 +72,18 @@ async function seed_password_install(): Promise<PasswordSeeded> {
   return { workflow_id: seeded.workflow_id, prompt_id: prompt!.id };
 }
 
+/** The seeded rows of the tables 0013 keeps. */
+const survivors_left = async () =>
+  (
+    await sql<{ kind: string }[]>`
+      SELECT 'workflow' AS kind FROM workflows WHERE id = ${seeded.workflow_id}
+      UNION ALL
+      SELECT 'file' FROM files WHERE id = ${seeded.file_id}
+      UNION ALL
+      SELECT 'prompt' FROM system_prompts WHERE id = ${password_seeded.prompt_id}
+    `
+  ).map(({ kind }) => kind);
+
 const creators = () => sql<{ kind: string; created_by: string | null }[]>`
   SELECT 'workflow' AS kind, created_by FROM projects WHERE id = ${seeded.workflow_id}
   UNION ALL
@@ -77,6 +92,19 @@ const creators = () => sql<{ kind: string; created_by: string | null }[]>`
   SELECT 'deploy_setup', created_by FROM deploy_setups WHERE id = ${seeded.deploy_setup_id}
   UNION ALL
   SELECT 'deployment', created_by FROM deployments WHERE id = ${seeded.deployment_id}
+`;
+
+/** The seeded rows of every kind 0009 keeps, from the tables 0013 then drops. */
+const survivors = () => sql<{ kind: string }[]>`
+  SELECT 'workflow' AS kind FROM workflows WHERE id = ${seeded.workflow_id}
+  UNION ALL
+  SELECT 'file' FROM files WHERE id = ${seeded.file_id}
+  UNION ALL
+  SELECT 'prompt' FROM system_prompts WHERE id = ${password_seeded.prompt_id}
+  UNION ALL
+  SELECT 'deploy_setup' FROM deploy_setups WHERE id = ${seeded.deploy_setup_id}
+  UNION ALL
+  SELECT 'deployment' FROM deployments WHERE id = ${seeded.deployment_id}
 `;
 
 async function seed_otp_install(): Promise<Seeded> {
@@ -128,7 +156,11 @@ beforeAll(async () => {
   await migrate_before(DROP_USERS_TAG);
   after_password_auth = (await creators()).map((row) => ({ ...row }));
   password_seeded = await seed_password_install();
-  await runMigrations();
+  await migrate_before(DROP_DEPLOY_QUEUE_TAG);
+  before_drop_deploy_queue = (await survivors()).map(({ kind }) => kind);
+  await run_migrations();
+  // The API is not started here: its routes wait for the database until told it is ready.
+  set_database_state('ready');
 });
 
 afterAll(async () => {
@@ -187,33 +219,18 @@ describe('migration 0009 on a password install', () => {
     expect(columns).toHaveLength(0);
   });
 
-  test('the workflow, its file, prompt, deploy setup and deployment survive', async () => {
-    const rows = await sql<{ kind: string }[]>`
-      SELECT 'workflow' AS kind FROM workflows WHERE id = ${seeded.workflow_id}
-      UNION ALL
-      SELECT 'file' FROM files WHERE id = ${seeded.file_id}
-      UNION ALL
-      SELECT 'prompt' FROM system_prompts WHERE id = ${password_seeded.prompt_id}
-      UNION ALL
-      SELECT 'deploy_setup' FROM deploy_setups WHERE id = ${seeded.deploy_setup_id}
-      UNION ALL
-      SELECT 'deployment' FROM deployments WHERE id = ${seeded.deployment_id}
-    `;
-    expect(rows.map(({ kind }) => kind)).toEqual([
+  test('the workflow, its file, prompt, deploy setup and deployment survive', () => {
+    expect(before_drop_deploy_queue).toEqual([
       'workflow',
       'file',
       'prompt',
       'deploy_setup',
       'deployment',
     ]);
-
-    const [prompt] =
-      await sql`SELECT content, live FROM system_prompts WHERE id = ${password_seeded.prompt_id}`;
-    expect(prompt).toEqual({ content: 'Be brief.', live: true });
   });
 
   test('the API key lists the workflow', async () => {
-    const response = await forgeApi.handle(
+    const response = await app.handle(
       new Request('http://localhost/workflows', { headers: bearer(TEST_API_KEY) })
     );
 
@@ -222,5 +239,42 @@ describe('migration 0009 on a password install', () => {
     expect(listed).toContainEqual(
       expect.objectContaining({ id: password_seeded.workflow_id, name: 'controller' })
     );
+  });
+});
+
+describe('migration 0013 on a populated install', () => {
+  test('the deploy queue is gone: its tables, their notify functions and the status type', async () => {
+    const tables = await sql`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+        AND table_name IN ('deploy_setups', 'deployments', 'deployment_events', 'deployment_files')
+    `;
+    expect(tables).toHaveLength(0);
+
+    const functions = await sql`
+      SELECT proname FROM pg_proc WHERE proname IN ('notify_deploy_job', 'notify_deploy_event')
+    `;
+    expect(functions).toHaveLength(0);
+
+    const types = await sql`SELECT 1 FROM pg_type WHERE typname = 'deployment_status'`;
+    expect(types).toHaveLength(0);
+  });
+
+  test('the workflow, its file and prompt survive, and their ids take no database default', async () => {
+    const [prompt] =
+      await sql`SELECT content, live FROM system_prompts WHERE id = ${password_seeded.prompt_id}`;
+    expect(prompt).toEqual({ content: 'Be brief.', live: true });
+    expect(await survivors_left()).toEqual(['workflow', 'file', 'prompt']);
+
+    const defaults = await sql<{ table_name: string; column_default: string | null }[]>`
+      SELECT table_name, column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'id'
+        AND table_name IN ('workflows', 'files', 'system_prompts')
+      ORDER BY table_name
+    `;
+    expect(defaults.map((row) => ({ ...row }))).toEqual([
+      { table_name: 'files', column_default: null },
+      { table_name: 'system_prompts', column_default: null },
+      { table_name: 'workflows', column_default: null },
+    ]);
   });
 });

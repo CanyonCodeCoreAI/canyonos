@@ -105,6 +105,13 @@ jobs:
           CANYONOS_REDIS_HOST: 127.0.0.1
           CANYONOS_REDIS_PORT: '6379'
 
+      # The script points DATABASE_URL at a port nothing answers on.
+      - name: Run API tests with the database down
+        run: cd packages/api && bun run test:no-database
+        env:
+          NODE_ENV: test
+          CI: true
+
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -5,8 +5,17 @@ import { z } from 'zod';
 import type { RedisClient } from 'bun';
 
 import { badGateway, conflict, notFound } from '@core/errors';
+import { parse_json } from '@core/json';
+import { update_json_key } from '@core/redis';
 
-import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
+import {
+  ACTIVE_AGENTS_KEY,
+  agent_samples_key,
+  agent_spec_key,
+  desired_replicas_key,
+  SCALING_CONFIG_KEY,
+} from '../registry/registry.contract';
+import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import { ScalingPolicySchema } from './scaling.types';
 import type {
   ScalingAgent,
@@ -16,10 +25,6 @@ import type {
   ScalingResponse,
   ScalingStatus,
 } from './scaling.types';
-
-const CONFIG_KEY = 'scaling:config';
-const ACTIVE_AGENTS_KEY = 'agents:active';
-const SAVE_ATTEMPTS = 5;
 
 // Each workflow's config/scaling.yaml as the GC published it, by workflow name: other top-level
 // keys are kept untouched on save.
@@ -46,9 +51,13 @@ const AgentSampleSchema = z.object({
 });
 
 function config_invalid(reason: string, cause: unknown) {
-  return badGateway('scaling.config_invalid', `The running controller's ${CONFIG_KEY} ${reason}`, {
-    cause,
-  });
+  return badGateway(
+    'scaling.config_invalid',
+    `The running controller's ${SCALING_CONFIG_KEY} ${reason}`,
+    {
+      cause,
+    }
+  );
 }
 
 function parse_config(raw: string | null): ScalingConfig {
@@ -91,21 +100,12 @@ function status_of(stored: unknown): ScalingStatus {
   return { status: 'invalid', reason: invalid_reason(result.error) };
 }
 
-/**
- * Rewrites scaling:config with `change` applied, retrying while another writer races us.
- * WATCH makes EXEC a no-op (null) when the key changed after our read.
- */
+/** Rewrites scaling:config with `change` applied, retrying while another writer races us. */
 async function update_config(
   redis: RedisClient,
   change: (config: ScalingConfig) => ScalingConfig
 ): Promise<void> {
-  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt += 1) {
-    await redis.send('WATCH', [CONFIG_KEY]);
-    const next = change(parse_config(await redis.get(CONFIG_KEY)));
-    await redis.send('MULTI', []);
-    await redis.set(CONFIG_KEY, JSON.stringify(next));
-    if ((await redis.send('EXEC', [])) !== null) return;
-  }
+  if (await update_json_key(redis, SCALING_CONFIG_KEY, (raw) => change(parse_config(raw)))) return;
   throw conflict(
     'scaling.save_conflict',
     'The scaling policy kept changing while it was being saved, try again'
@@ -115,7 +115,7 @@ async function update_config(
 export async function get_scaling(workflow_id: string): Promise<ScalingResponse> {
   return with_redis(workflow_id, async (redis) => {
     const workflow = await assert_workflow_running(redis, workflow_id);
-    const { workflows } = parse_config(await redis.get(CONFIG_KEY));
+    const { workflows } = parse_config(await redis.get(SCALING_CONFIG_KEY));
     return { workflows: { [workflow]: status_of(workflows[workflow]) } };
   });
 }
@@ -148,16 +148,6 @@ export async function delete_scaling_policy(workflow_id: string): Promise<Scalin
   });
 }
 
-/** The parsed JSON, or undefined when the stored value is missing or not JSON. */
-function parse_json(raw: string | null | undefined): unknown {
-  if (raw == null) return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 function parse_names(raw: string | null): string[] {
   const result = z.array(z.string()).safeParse(parse_json(raw ?? '[]'));
   if (!result.success) {
@@ -180,9 +170,9 @@ async function read_agent(
   workflow: string
 ): Promise<AgentReading | null> {
   const [spec_raw, desired_raw, [sample_raw]] = await Promise.all([
-    redis.get(`agent:${name}:spec`),
-    redis.get(`agent:${name}:desired_replicas`),
-    redis.lrange(`agent:${name}:samples`, 0, 0),
+    redis.get(agent_spec_key(name)),
+    redis.get(desired_replicas_key(name)),
+    redis.lrange(agent_samples_key(name), 0, 0),
   ]);
   const spec = AgentSpecSchema.safeParse(parse_json(spec_raw));
   if (!spec.success || (spec.data.type ?? 'agent') !== 'agent' || spec.data.workflow !== workflow) {

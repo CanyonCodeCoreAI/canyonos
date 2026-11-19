@@ -45,7 +45,7 @@ function deploymentOf(endpoint: UseQueryResult<MonitoringEndpointResponse>): Dep
   if (endpoint.isSuccess) return 'running';
   const is_not_running =
     endpoint.error instanceof ApiResponseError &&
-    endpoint.error.code === 'canyonos.workflow_not_running';
+    endpoint.error.code === 'registry.workflow_not_running';
   return is_not_running ? 'not_running' : 'unknown';
 }
 

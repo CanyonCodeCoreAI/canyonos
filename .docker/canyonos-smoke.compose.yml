@@ -42,6 +42,9 @@ services:
       CANYONOS_REDIS_PORT: '6379'
       CANYONOS_API_KEY_HASH: ${CANYONOS_API_KEY_HASH:?set by scripts/canyonos-smoke.ts}
       REDIS_PASSWORD_ENCRYPTION_KEY: canyonos-smoke-redis-password-key-not-for-production
+      # No Docker socket here: the API runs no workflow group, and /readyz, which the image's
+      # HEALTHCHECK and so the web app wait on, counts a disabled Docker as ready.
+      DOCKER_SOCKET: ''
       LOG_LEVEL: info
     ports:
       - '127.0.0.1:${SMOKE_API_PORT:-53000}:3000'

@@ -3,10 +3,10 @@
 
 import { Elysia } from 'elysia';
 
+import { databasePlugin } from '@api/db/database';
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import { WorkflowIdParams } from '../workflows/workflows.types';
 import {
   get_endpoint,
@@ -36,8 +36,8 @@ import {
 const doc = { tags: ['Monitoring'], security: [{ bearerAuth: [] }] };
 
 export const monitoringRoutes = new Elysia({ name: 'monitoring.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get(
     '/:workflow_id/monitoring/series',
     ({ params, query }) => get_series(params.workflow_id, query),

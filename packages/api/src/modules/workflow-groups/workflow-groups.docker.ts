@@ -6,15 +6,14 @@ import { z } from 'zod';
 import type { DeployedFingerprints, StoredWorkflow } from '@api/db/schema';
 import * as docker from '@core/docker';
 import { config } from '@core/env';
-import { AppError, badGateway, notFound, serviceUnavailable } from '@core/errors';
+import { notFound, serviceUnavailable, unprocessable } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 import type { Container } from '@core/docker';
 
-import { register_workflows_at } from '../canyonos/canyonos.bootstrap';
-import { RedisClientTlsSchema } from '../canyonos/canyonos.types';
+import { find_controller, join_group_networks } from '../registry/registry.network';
+import { register_workflow_group } from '../registry/registry.service';
 import {
   controller_missing,
-  find_controller,
   list_controllers,
   not_running,
   read_progress,
@@ -26,14 +25,10 @@ import {
 import { core_answer, core_error } from './workflow-groups.core';
 import { unknown_workflow_group } from './workflow-groups.errors';
 import { workflow_groups_repo } from './workflow-groups.repo';
-import {
-  AgentStatusSchema,
-  DEPLOY_PHASES,
-  EndpointSchema,
-  HealthCheckSchema,
-  ReplicaLogsSchema,
-} from './workflow-groups.types';
+import { read_runtime_status } from './workflow-groups.runtime';
+import { DEPLOY_PHASES, HealthCheckSchema, ReplicaLogsSchema } from './workflow-groups.types';
 import type { WorkflowGroupRow } from './workflow-groups.repo';
+import type { RuntimeStatus } from './workflow-groups.runtime';
 import type {
   ApplyFailure,
   ApplyPass,
@@ -43,8 +38,9 @@ import type {
 
 // The Docker target: each workflow group's Global Controller container, which the CLI creates.
 // Its /workspace volume holds the upload, which one-shot job containers change; its `run-deploy`
-// writes the progress file the status reads; its `canyonos_core.cli` commands read the running
-// deploy (workflow-groups.controller.ts).
+// writes the progress file the status reads; its `canyonos_core.cli` commands check and read the
+// running deploy (workflow-groups.controller.ts), and its Redis, which `canyonos deploy`
+// registers here, holds the endpoint and agents (workflow-groups.runtime.ts).
 
 const docker_logger = logger.child({ domain: LOG_DOMAINS.WORKFLOW_GROUPS });
 
@@ -55,29 +51,12 @@ const UNKNOWN_AGENT_EXIT_CODE = 3;
 // Past the 180 s an SSH read of one replica's log takes at most.
 const AGENT_LOGS_TIMEOUT_MS = 190_000;
 const RUNTIME_STATUS_CACHE_MS = 2_000;
-// Just after a deploy its Redis can refuse connections for a moment.
-const DASHBOARD_RETRY_MS = 60_000;
-const DASHBOARD_RETRY_DELAY_MS = 2_000;
 const RELOAD_TIMEOUT_SECONDS = 60;
 const RELOAD_POLL_MS = 500;
 
 const OkSchema = z.object({ ok: z.literal(true) });
 const RemovedSchema = z.object({ removed: z.array(z.string()) });
-const RuntimeStatusSchema = z.object({
-  endpoint: EndpointSchema.nullable(),
-  agents: z.record(AgentStatusSchema).nullable(),
-  machine_errors: z.record(z.string()).nullable(),
-  errors: z.array(z.string()),
-});
 const HealthAnswerSchema = z.object({ checks: z.array(HealthCheckSchema) });
-const DashboardCredentialsSchema = z.object({
-  redis_host: z.string(),
-  redis_port: z.number().int(),
-  redis_password: z.string(),
-  redis_tls: RedisClientTlsSchema.nullable(),
-});
-
-type RuntimeStatus = z.infer<typeof RuntimeStatusSchema>;
 
 /** The workflow group's Global Controller container; 404 when it has neither that nor a row. */
 async function locate(
@@ -130,18 +109,7 @@ function runtime_status(workflow_group_id: string, controller: Container): Promi
   ) {
     return cached.read;
   }
-  const read = run_in_controller(controller, ['runtime-status'])
-    .then((reply) => core_answer(reply, RuntimeStatusSchema))
-    .catch(
-      (error: unknown): RuntimeStatus => ({
-        endpoint: null,
-        agents: null,
-        machine_errors: null,
-        errors: [
-          `Could not read the deploy's state: ${error instanceof Error ? error.message : String(error)}`,
-        ],
-      })
-    );
+  const read = read_runtime_status(workflow_group_id);
   runtime_statuses.set(workflow_group_id, { container_id: controller.id, at: Date.now(), read });
   return read;
 }
@@ -198,6 +166,8 @@ async function reload(
     const current = await docker.inspect(controller.id);
     const progress = await read_progress(current);
     if (progress.reload && progress.reload.seq > asked_seq) {
+      // The status read before this reload holds the old replica counts.
+      runtime_statuses.delete(row.id);
       if (progress.reload.ok === false) {
         return { error: progress.reload.error ?? 'Reload failed.', code: 'reload_failed' };
       }
@@ -374,44 +344,22 @@ export const docker_target: WorkflowGroupTarget = {
     return core_answer(reply, ReplicaLogsSchema);
   },
 
-  /** Registers the running deploy's workflows with this dashboard: its Redis host, port and
-   * password, plus a client certificate its CA signs when its Redis takes only TLS. Failures
-   * that may pass, such as its Redis not answering yet, are retried for a minute. */
-  async register_dashboard(workflow_group_id, row) {
-    const controller = await running_controller(workflow_group_id, row);
-    const credentials = core_answer(
-      await run_in_controller(controller, ['dashboard-credentials']),
-      DashboardCredentialsSchema
-    );
-    const deadline = Date.now() + DASHBOARD_RETRY_MS;
-    for (;;) {
-      try {
-        const workflows = await register_workflows_at(
-          credentials.redis_host,
-          credentials.redis_port,
-          credentials.redis_password,
-          credentials.redis_tls ?? undefined
-        );
-        return { workflows };
-      } catch (error) {
-        const app_error = error instanceof AppError ? error : null;
-        const transient = !app_error || app_error.status >= 500;
-        if (!transient || Date.now() + DASHBOARD_RETRY_DELAY_MS > deadline) {
-          const message = error instanceof Error ? error.message : String(error);
-          docker_logger.warn('Could not register the workflow group with the dashboard', {
-            workflow_group_id,
-            error,
-          });
-          throw badGateway(
-            app_error?.code === 'canyonos.controller_unreachable'
-              ? 'workflow_groups.dashboard_unreachable'
-              : 'workflow_groups.dashboard_refused',
-            message,
-            { cause: error }
-          );
-        }
-        await Bun.sleep(DASHBOARD_RETRY_DELAY_MS);
-      }
+  /** Registers the workflow group's workflows and its Redis with this dashboard, as
+   * `canyonos deploy` creates its Global Controller container and before that starts: nothing
+   * connects to the Redis here, the status reads it once the deploy runs. This API's container
+   * joins the container's networks now, so that read finds the Redis by name. 422 without it:
+   * the body is optional only for Kubernetes. */
+  async register_dashboard(workflow_group_id, row, registration) {
+    if (registration === undefined) {
+      throw unprocessable(
+        'workflow_groups.registration_required',
+        "Send the workflow group's workflows and its Redis: on Docker the dashboard has no " +
+          'other way to know them'
+      );
     }
+    const controller = await locate(workflow_group_id, row);
+    const workflows = await register_workflow_group(workflow_group_id, registration);
+    if (controller) await join_group_networks(workflow_group_id, { fresh: true });
+    return { workflows };
   },
 };

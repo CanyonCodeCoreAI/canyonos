@@ -4,17 +4,22 @@
 import { cors } from '@elysiajs/cors';
 import { openapi } from '@elysiajs/openapi';
 import { Elysia } from 'elysia';
+import { ZodFirstPartyTypeKind } from 'zod';
 import { ignoreOverride, zodToJsonSchema } from 'zod-to-json-schema';
-import type { ZodType, ZodTypeDef } from 'zod';
+import type { ZodOptionalDef, ZodType, ZodTypeDef } from 'zod';
 
-import { runMigrations } from '@api/db/client';
+import { close_db, run_migrations } from '@api/db/client';
+import { set_database_state, wait_for_database } from '@api/db/database';
 import { seedDevData } from '@api/db/seed';
+import { apiKeyGuard } from '@api/modules/auth/auth.plugin';
 import { authRoutes } from '@api/modules/auth/auth.routes';
 import { noCorsOnControlPaths } from '@api/modules/auth/control-key';
-import { bootstrap_canyonos } from '@api/modules/canyonos/canyonos.bootstrap';
-import { canyonosRoutes } from '@api/modules/canyonos/canyonos.routes';
-import { start_registered_workflows_sync } from '@api/modules/canyonos/canyonos.sync';
-import { start_governance_publisher } from '@api/modules/governance/governance.publisher';
+import { healthRoutes } from '@api/modules/health/health.routes';
+import {
+  bootstrap_registry,
+  start_listed_workflows_sync,
+  start_registered_workflows_tick,
+} from '@api/modules/registry/registry.service';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
 import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
@@ -26,16 +31,20 @@ import {
 } from '@api/modules/workflow-groups/workflow-groups.routes';
 import { WORKFLOW_GROUP_MODELS } from '@api/modules/workflow-groups/workflow-groups.types';
 import { workflowsRoutes } from '@api/modules/workflows/workflows.routes';
+import { dotSegmentGuard } from '@core/dot-segments';
 import { config } from '@core/env';
 import { ApiErrorSchema, errorPlugin } from '@core/errors';
-import { LOG_DOMAINS, logger } from '@core/logger';
-import { enterRequestContext } from '@core/request-context';
+import { emit_metric, LOG_DOMAINS, logger } from '@core/logger';
+import { begin_request, request_timing } from '@core/request-context';
 import { securityHeaders } from '@core/security-headers';
-import { emitMetric } from '@core/telemetry';
 
 import packageJson from '../package.json';
 
-const httpLogger = logger.child({ domain: LOG_DOMAINS.HTTP });
+const http_logger = logger.child({ domain: LOG_DOMAINS.HTTP });
+const database_logger = logger.child({ domain: LOG_DOMAINS.DB });
+
+// Probes, asked every few seconds: no request metric for them.
+const UNMEASURED_PATHS = new Set(['/healthz', '/readyz']);
 
 // The API reference page /docs loads; pinned, so it does not change under a running API.
 const SCALAR_VERSION = '1.76.4';
@@ -48,6 +57,11 @@ const COMPONENT_NAMES = new Map<ZodTypeDef, string>(
   Object.entries(WORKFLOW_GROUP_MODELS).map(([name, schema]) => [schema._def, name])
 );
 const component_ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+/** The schema `def` makes optional, if it is a ZodOptional. */
+const optional_of = (def: ZodTypeDef): ZodTypeDef | undefined =>
+  def instanceof Object && 'typeName' in def && def.typeName === ZodFirstPartyTypeKind.ZodOptional
+    ? (def as ZodOptionalDef).innerType._def
+    : undefined;
 
 const to_openapi_schema = (schema: ZodType) =>
   zodToJsonSchema(schema, {
@@ -55,131 +69,161 @@ const to_openapi_schema = (schema: ZodType) =>
     $refStrategy: 'none',
     override: (def, refs) => {
       if (def === ApiErrorSchema._def) return component_ref(ERROR_COMPONENT);
-      // A model itself, where it is the component, stays whole.
+      // A model itself, where it is the component, stays whole; an optional body of one is the
+      // model, which the route's description says may be left out.
       const nested = refs.currentPath.length > refs.basePath.length;
-      const name = nested ? COMPONENT_NAMES.get(def) : undefined;
+      const model = nested ? def : optional_of(def);
+      const name = model && COMPONENT_NAMES.get(model);
       return name ? component_ref(name) : ignoreOverride;
     },
   });
 
-const getClientIp = (request: Request): string =>
-  request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-  request.headers.get('x-real-ip') ??
-  'unknown';
-
-export const createApp = () =>
-  new Elysia({ name: 'forge-api' })
-    .use(errorPlugin)
-    .use(securityHeaders())
-    .onRequest(({ request, set }) => {
-      const requestId =
-        request.headers.get('x-request-id') ?? request.headers.get('cf-ray') ?? Bun.randomUUIDv7();
-      set.headers['x-request-id'] = requestId;
-      (request as any).__requestId = requestId;
-      (request as any).__startTime = performance.now();
-      enterRequestContext(requestId, getClientIp(request));
-    })
-    .onAfterResponse(({ request, set, path: route }) => {
-      const startTime = (request as any).__startTime;
-      if (!startTime) return;
-      const url = new URL(request.url);
-      if (url.pathname === '/healthz') return;
-      const duration_ms = Math.round((performance.now() - startTime) * 100) / 100;
-      emitMetric('http.request.duration', duration_ms, {
-        request_id: (request as any).__requestId,
+export const app = new Elysia({ name: 'canyonos.api' })
+  .use(errorPlugin)
+  .use(securityHeaders())
+  // First, so every refusal after it carries the request's id.
+  .onRequest(({ request, set }) => {
+    set.headers['x-request-id'] = begin_request(request).request_id;
+  })
+  .onAfterResponse(({ request, set, path: route }) => {
+    const timing = request_timing(request);
+    const path = new URL(request.url).pathname;
+    if (!timing || UNMEASURED_PATHS.has(path)) return;
+    emit_metric(
+      'http.request.duration',
+      Math.round((performance.now() - timing.started_at) * 100) / 100,
+      {
+        request_id: timing.request_id,
         method: request.method,
-        path: url.pathname,
+        path,
         route,
-        status: (set as any).status ?? 200,
-      });
-    })
-    // Before the CORS plugin, so a /v1 request it refuses gets no CORS answer.
-    .use(workflowGroupsGuard)
-    .use(cors())
-    .use(noCorsOnControlPaths)
-    .use(
-      openapi({
-        path: '/docs',
-        // Renders /docs per request, with the spec in it; the static page the plugin makes
-        // otherwise keeps `bun test` from seeing any test finish.
-        embedSpec: true,
-        mapJsonSchema: { zod: to_openapi_schema },
-        scalar: { version: SCALAR_VERSION },
-        documentation: {
-          info: {
-            title: 'CanyonOS API',
-            // The version every CanyonOS package shares, which `bun run version:set` writes.
-            version: packageJson.version,
-            description:
-              'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route needs the API key as `Authorization: Bearer <key>`. Without it every route is open. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
+        status: set.status ?? 200,
+      }
+    );
+  })
+  // Before every guard: a `..` the router matches but request.url resolves would let a guard
+  // judge another path than the route that answers.
+  .use(dotSegmentGuard)
+  // Before the CORS plugin, so a /v1 request it refuses gets no CORS answer.
+  .use(workflowGroupsGuard)
+  .use(cors())
+  .use(noCorsOnControlPaths)
+  // After the CORS plugin, which answers a preflight before it, and whose headers a browser
+  // needs to read the 401.
+  .use(apiKeyGuard)
+  .use(
+    openapi({
+      path: '/docs',
+      // Renders /docs per request, with the spec in it; the static page the plugin makes
+      // otherwise keeps `bun test` from seeing any test finish.
+      embedSpec: true,
+      mapJsonSchema: { zod: to_openapi_schema },
+      scalar: { version: SCALAR_VERSION },
+      documentation: {
+        info: {
+          title: 'CanyonOS API',
+          // The version every CanyonOS package shares, which `bun run version:set` writes.
+          version: packageJson.version,
+          description:
+            'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route, and /auth/check, needs the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /readyz says when the API is ready. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
+        },
+        tags: [
+          { name: 'Auth' },
+          { name: 'Workflows' },
+          { name: 'Requests' },
+          { name: 'Metrics' },
+          { name: 'Telemetry' },
+          { name: 'WorkflowGroups' },
+        ],
+        components: {
+          schemas: {
+            [ERROR_COMPONENT]: zodToJsonSchema(ApiErrorSchema, {
+              target: 'openApi3',
+              $refStrategy: 'none',
+            }) as Record<string, unknown>,
           },
-          tags: [
-            { name: 'Auth' },
-            { name: 'Workflows' },
-            { name: 'Requests' },
-            { name: 'Metrics' },
-            { name: 'Telemetry' },
-            { name: 'CanyonOS' },
-            { name: 'WorkflowGroups' },
-          ],
-          components: {
-            schemas: {
-              [ERROR_COMPONENT]: zodToJsonSchema(ApiErrorSchema, {
-                target: 'openApi3',
-                $refStrategy: 'none',
-              }) as Record<string, unknown>,
-            },
-            securitySchemes: {
-              bearerAuth: { type: 'http', scheme: 'bearer' },
-              controlKey: { type: 'http', scheme: 'bearer' },
-              kubernetesToken: { type: 'http', scheme: 'bearer' },
-            },
+          securitySchemes: {
+            bearerAuth: { type: 'http', scheme: 'bearer' },
+            controlKey: { type: 'http', scheme: 'bearer' },
+            kubernetesToken: { type: 'http', scheme: 'bearer' },
           },
         },
-      })
-    )
-    .get(
-      '/healthz',
-      () => ({
-        status: 'ok',
-        version: process.env.GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || 'unknown',
-        timestamp: new Date().toISOString(),
-      }),
-      { detail: { summary: 'Health Check', tags: ['system'] } }
-    )
-    .use(authRoutes)
-    .use(resourcesRoutes)
-    .use(workflowsRoutes)
-    // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API key.
-    .use(telemetryRoutes)
-    .use(canyonosRoutes)
-    .use(workflowGroupsRoutes);
+      },
+    })
+  )
+  .use(healthRoutes)
+  .use(authRoutes)
+  .use(resourcesRoutes)
+  .use(workflowsRoutes)
+  // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API key.
+  .use(telemetryRoutes)
+  .use(workflowGroupsRoutes);
 
-export const forgeApi = createApp();
+export type CanyonosApi = typeof app;
 
-export type ForgeApi = typeof forgeApi;
+/** What runs on the database once it is ready; stopped on shutdown. */
+const background: { stop(): void }[] = [];
 
-export const setupApi = async () => {
-  await runMigrations();
+/** Readies the database the routes need, then starts the loops that read it, unless `signal`
+ * aborts first: the API is shutting down. */
+async function prepare_database(signal: AbortSignal): Promise<void> {
+  // A loop started while the API shuts down is stopped at once: stop() has already run.
+  const keep = (loop: { stop(): void }) => {
+    if (signal.aborted) loop.stop();
+    else background.push(loop);
+  };
+  await wait_for_database(signal);
+  if (signal.aborted) return;
+  set_database_state('migrating');
+  await run_migrations();
   await seedDevData();
   // Kubernetes: the operator lists the workflows; there is no one controller to register.
-  if (config.canyonos.workflowsFile) await start_registered_workflows_sync();
-  else await bootstrap_canyonos();
+  if (config.canyonos.workflowsFile) keep(await start_listed_workflows_sync());
+  else await bootstrap_registry();
   // On Kubernetes first finds the deploys running in the cluster again, then resumes nothing.
   await resume_apply_loops();
-  httpLogger.info('Setup complete', { env: config.environment });
-};
+  if (signal.aborted) return;
+  keep(start_registered_workflows_tick(config.registry.tickIntervalMs));
+  keep(start_metrics_retention());
+  set_database_state('ready');
+  database_logger.info('Database ready', { env: config.environment });
+}
 
-export const startApi = async ({ host, port }: { host: string; port: number }) => {
-  httpLogger.info('Starting API', { env: config.environment });
-  await setupApi();
-  start_governance_publisher();
-  start_metrics_retention();
+/** A started API: `stop` closes its connections, the loops on its database and the database. */
+export interface RunningApi {
+  stop(): Promise<void>;
+}
+
+/** Listens at once and readies the database in the background, so /healthz, /readyz and
+ * /auth/status answer while it is down and every route that needs it answers 503. A setup that
+ * fails once the database answers (a migration, a restore) exits the process with code 1, so its
+ * restart policy, or Kubernetes, starts it again; a database that does not answer is waited for. */
+export function start_api({ host, port }: { host: string; port: number }): RunningApi {
+  http_logger.info('Starting API', { env: config.environment });
   // Bun's own cap is 128 MB; a workflow archive may be larger.
-  return forgeApi.listen(
+  const listening = app.listen(
     { hostname: host, port, maxRequestBodySize: MAX_UPLOAD_BYTES },
     ({ port }) => {
-      httpLogger.info('API listening', { host, port, env: config.environment });
+      http_logger.info('API listening', { host, port, env: config.environment });
     }
   );
-};
+  const shutting_down = new AbortController();
+  void prepare_database(shutting_down.signal).catch((error: unknown) => {
+    // A shutdown closing the database under the setup is no failure: it exits 0 itself.
+    if (shutting_down.signal.aborted) return;
+    set_database_state('failed');
+    database_logger.error('Database setup failed; exiting so the API is started again', {
+      error,
+    });
+    process.exit(1);
+  });
+  return {
+    async stop() {
+      shutting_down.abort();
+      for (const loop of background.splice(0)) loop.stop();
+      // Closes open connections too: a followed log or a long stop would hold a graceful stop.
+      await listening.stop(true);
+      await close_db();
+    },
+  };
+}

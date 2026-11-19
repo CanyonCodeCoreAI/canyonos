@@ -6,13 +6,18 @@ import { gunzipSync } from 'node:zlib';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetricRollups, otelMetrics, otelSpans } from '@api/db/schema';
 import {
+  RESOURCE_WORKFLOW_ATTRIBUTE,
   WORKFLOW_GROUP_ID_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
-} from '@api/modules/metrics/metrics.contract';
-import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
+} from '@api/modules/telemetry/telemetry.contract';
 import { append_metrics } from '@api/modules/telemetry/telemetry.repo';
+import {
+  otelLogs,
+  otelMetricRollups,
+  otelMetrics,
+  otelSpans,
+} from '@api/modules/telemetry/telemetry.schema';
 import type { LogRow, MetricRow, SpanRow } from '@api/modules/telemetry/telemetry.repo';
 
 import { workflows_repo } from './workflows.repo';

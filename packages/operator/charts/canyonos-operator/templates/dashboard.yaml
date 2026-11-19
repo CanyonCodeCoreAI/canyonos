@@ -279,7 +279,7 @@ spec:
             - {name: METRICS_ROLLUP_RETENTION_DAYS, value: {{ .Values.dashboard.metricsRollupRetentionDays | quote }}}
           ports: [{name: http, containerPort: 3000}]
           readinessProbe:
-            httpGet: {path: /healthz, port: 3000}
+            httpGet: {path: /readyz, port: 3000}
             periodSeconds: 5
           livenessProbe:
             httpGet: {path: /healthz, port: 3000}

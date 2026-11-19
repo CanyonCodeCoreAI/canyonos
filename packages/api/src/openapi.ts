@@ -5,11 +5,11 @@
 // asks the app for /docs/json without connecting to the database or migrating it. It listens on
 // a free loopback port rather than calling `app.handle`, which crashes Bun 1.3.14 on this app.
 
-import { forgeApi } from './app';
+import { app } from './app';
 
 const OUTPUT = new URL('../openapi.json', import.meta.url).pathname;
 
-const server = forgeApi.listen({ hostname: '127.0.0.1', port: 0 }).server;
+const server = app.listen({ hostname: '127.0.0.1', port: 0 }).server;
 if (!server) throw new Error('The app did not start listening');
 const response = await fetch(`http://127.0.0.1:${server.port}/docs/json`);
 if (!response.ok) {

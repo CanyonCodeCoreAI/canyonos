@@ -5,11 +5,11 @@ import { queryOptions } from '@tanstack/react-query';
 
 import type { AuthCheck, AuthStatus } from '@canyonos/api/auth';
 
-import { apiCall, forgePublicApi } from '@/api';
+import { apiCall, canyonosPublicApi } from '@/api';
 
 export const authStatusQuery = queryOptions({
   queryKey: ['auth', 'status'],
-  queryFn: () => apiCall<AuthStatus>(() => forgePublicApi.auth.status.get()),
+  queryFn: () => apiCall<AuthStatus>(() => canyonosPublicApi.auth.status.get()),
   staleTime: 0,
 });
 
@@ -19,7 +19,7 @@ export const apiKeyCheckQuery = (apiKey: string) =>
     queryKey: ['auth', 'check', apiKey],
     queryFn: () =>
       apiCall<AuthCheck>(() =>
-        forgePublicApi.auth.check.get({ $headers: { authorization: `Bearer ${apiKey}` } })
+        canyonosPublicApi.auth.check.get({ $headers: { authorization: `Bearer ${apiKey}` } })
       ),
     retry: false,
   });

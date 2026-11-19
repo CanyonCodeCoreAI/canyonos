@@ -3,16 +3,16 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { forgeApi } from '@api/app';
-import { requireApiKey } from '@api/modules/auth/auth.middleware';
-import { CONTROL_PATH_PREFIX } from '@api/modules/auth/control-key';
-import { load_prompts } from '@api/modules/prompts/prompts.service';
+import { app } from '@api/app';
+import { reconcile_live_prompts } from '@api/modules/prompts/prompts.service';
+import { with_redis } from '@api/modules/registry/registry.redis';
 import type { ScalingPolicy } from '@api/modules/scaling/scaling.types';
 import { config } from '@core/env';
 
-import { hashApiKey } from './api-key-test.utils';
+import { hashApiKey, TEST_CONTROL_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
-import { seed_active_agents, seed_running_workflow } from './redis-test.utils';
+import { seed_active_agents, seed_running_workflow, TEST_WORKFLOW } from './redis-test.utils';
+import { until_ready } from './test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
@@ -52,7 +52,10 @@ async function running_workflow(name: string): Promise<string> {
   const { workflow_id } = await create_test_workflow({ name });
   await seed_running_workflow(workflow_id, PROMPTS);
   await seed_active_agents(JSON.stringify(['app.Greeter']));
-  await load_prompts(workflow_id);
+  // What the registered-workflows tick does: store prompts.yaml's prompts and publish them.
+  await with_redis(workflow_id, (redis) =>
+    reconcile_live_prompts(redis, workflow_id, TEST_WORKFLOW)
+  );
   return workflow_id;
 }
 
@@ -222,30 +225,50 @@ describe('the dashboard API checks the API key', () => {
     });
   });
 
-  test('every route under /workflows, /resources and /auth/check checks the key', () => {
-    const guarded = forgeApi.routes.filter(({ path }) =>
-      ['/workflows', '/resources', '/auth/check'].some((prefix) => path.startsWith(prefix))
-    );
-    expect(guarded.length).toBeGreaterThan(30);
+  test('a path that only starts like a guarded one is not guarded', async () => {
+    const response = await fetch_api('/workflows-x');
 
-    for (const { method, path, hooks } of guarded) {
-      const handlers = [hooks.beforeHandle ?? []].flat() as { fn?: unknown }[];
-      expect({
-        route: `${method} ${path}`,
-        checked: handlers.some(({ fn }) => fn === requireApiKey),
-      }).toEqual({ route: `${method} ${path}`, checked: true });
-    }
+    expect(response.status).toBe(404);
   });
+});
 
-  test('every route under /v1/workflow-groups needs the control key, not the API key, before it reads the request', async () => {
-    const guarded = forgeApi.routes.filter(({ path }) => path.startsWith(CONTROL_PATH_PREFIX));
-    expect(guarded.length).toBeGreaterThanOrEqual(12);
+// Written here, not read from the guards, so a route mounted outside them shows up: every route
+// is one of these, or needs a key.
+const OPEN_ROUTES = [
+  'OPTIONS /',
+  'OPTIONS /*',
+  'GET /docs',
+  'GET /docs/json',
+  'GET /healthz',
+  'GET /readyz',
+  'GET /auth/status',
+  // The OTLP receivers: an agent process holds no API key.
+  'POST /v1/traces',
+  'POST /v1/metrics',
+  'POST /v1/logs',
+];
+const CONTROL_KEY_PATH = /^\/v1\/workflow-groups(?:\/|$)/;
 
-    for (const { method, path } of guarded) {
-      // Params that fail validation and a body that is not JSON: the key is checked first.
-      const url = `http://localhost${path.replace(/:[^/]+/g, 'not-an-id')}?tail=lots`;
+describe('every route', () => {
+  test('is open by name, or checks its key before it reads the request', async () => {
+    const routes = app.routes.map(({ method, path }) => ({
+      method,
+      path,
+      route: `${method} ${path}`,
+    }));
+    expect(OPEN_ROUTES.filter((route) => !routes.some((r) => r.route === route))).toEqual([]);
+    const guarded = routes.filter(({ route }) => !OPEN_ROUTES.includes(route));
+    expect(guarded.length).toBeGreaterThan(40);
+
+    for (const { method, path, route } of guarded) {
+      // The control key on /v1/workflow-groups, never the API key; the API key everywhere else.
+      const [key, wrong_key] = CONTROL_KEY_PATH.test(path)
+        ? [TEST_CONTROL_KEY, TEST_API_KEY]
+        : [TEST_API_KEY, WRONG_KEY];
+      // Params, a query and a body that all fail validation: the key is checked first, so 401.
+      const url = `http://localhost${path.replace(/:[^/]+/g, 'not-an-id')}?from=never&limit=lots&tail=lots`;
       const send = (headers: Record<string, string>) =>
-        forgeApi.handle(
+        app.handle(
           new Request(url, {
             method,
             headers: { 'content-type': 'application/json', ...headers },
@@ -254,16 +277,77 @@ describe('the dashboard API checks the API key', () => {
         );
       for (const [headers, error] of [
         [{}, 'auth.missing_key'],
-        [bearer(TEST_API_KEY), 'auth.invalid_key'],
+        [bearer(wrong_key), 'auth.invalid_key'],
       ] as const) {
         const response = await send(headers);
-        expect({ route: `${method} ${path}`, status: response.status }).toEqual({
-          route: `${method} ${path}`,
+        const body = (await response.json()) as { error: string };
+        expect({ route, status: response.status, error: body.error }).toEqual({
+          route,
           status: 401,
+          error,
         });
-        expect(((await response.json()) as { error: string }).error).toBe(error);
       }
+      // And the right key gets past the guard.
+      expect({ route, status: (await send(bearer(key))).status }).not.toEqual({
+        route,
+        status: 401,
+      });
     }
+  });
+});
+
+/** The status line and body of `GET <target>` sent as is over a socket to the running API, which
+ * no URL parser resolves first. */
+async function raw_get(target: string): Promise<{ status: number; body: string }> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  let received = '';
+  await Bun.connect({
+    hostname: '127.0.0.1',
+    port: config.app.port,
+    socket: {
+      open(socket) {
+        socket.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+      },
+      data(_, data) {
+        received += data.toString();
+      },
+      close: () => resolve(received),
+      error: () => resolve(received),
+    },
+  });
+  const answer = await promise;
+  const [head = '', body = ''] = answer.split('\r\n\r\n');
+  return { status: Number(head.split(' ')[1]), body };
+}
+
+describe('a path with a dot segment', () => {
+  // Bun resolves these in request.url, but its router matches the raw path: each reaches a
+  // guarded route with `..` or `.` as its id.
+  const targets = [
+    '/workflows/../monitoring/logs',
+    '/workflows/%2e%2e/monitoring/logs',
+    '/workflows/%2E%2e/monitoring/logs?limit=1',
+    '/workflows/..',
+    '/workflows/.',
+    '/v1/workflow-groups/..',
+    '/v1/workflow-groups/%2e%2e/workflows/x',
+  ];
+
+  for (const target of targets) {
+    test(`${target} is 400 bad_request with no key, before any guard`, async () => {
+      const { status, body } = await raw_get(target);
+
+      expect(status).toBe(400);
+      expect(JSON.parse(body)).toMatchObject({
+        error: 'bad_request',
+        message: 'Path segments `.` and `..` are not allowed',
+      });
+    });
+  }
+
+  test('the same request with no dot segment is 401', async () => {
+    expect((await raw_get(`/workflows/${crypto.randomUUID()}/monitoring/logs`)).status).toBe(401);
+    expect((await raw_get(`/v1/workflow-groups/${crypto.randomUUID()}`)).status).toBe(401);
   });
 });
 
@@ -292,22 +376,10 @@ async function refused_start(env: Record<string, string>) {
   return { code, stderr: await new Response(child.stderr).text() };
 }
 
-async function until_healthy(url: string): Promise<void> {
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS * 3;
-  while (Date.now() < deadline) {
-    const healthy = await fetch(`${url}/healthz`)
-      .then((response) => response.ok)
-      .catch(() => false);
-    if (healthy) return;
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} never answered /healthz`);
-}
-
 async function with_api(env: Record<string, string>, check: (url: string) => Promise<void>) {
   const { child, url } = spawn_api(env);
   try {
-    await until_healthy(url);
+    await until_ready(url);
     await check(url);
   } finally {
     child.kill();

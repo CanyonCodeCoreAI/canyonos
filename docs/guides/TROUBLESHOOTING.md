@@ -461,7 +461,7 @@ docker compose -p canyonos-dashboard stop
 
 ### A copied workflow group folder doesn't get its own dashboard entry
 
-`Registered <another deployment> with the dashboard`
+`Registered <another workflow group's workflows> with the dashboard`
 
 **Cause:** the first deploy writes a `workflow_group_id:` line into `workflow_group.yaml`, and
 the dashboard identifies workflow groups by it. A copied folder, or a clone of a repo where
@@ -480,7 +480,7 @@ own workflow group.
 **Solution:** sign in with the current key, or run `canyonos dashboard` on the machine
 that holds it.
 
-### The dashboard shows `canyonos.redis_auth_failed` for a workflow group
+### The dashboard shows `registry.redis_auth_failed` for a workflow group
 
 `This workflow group's Redis refused the password the dashboard holds for it.`
 

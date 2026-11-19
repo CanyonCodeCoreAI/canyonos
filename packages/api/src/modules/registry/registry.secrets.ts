@@ -25,7 +25,7 @@ export function seal_redis_password(password: string): string {
 
 function unreadable(cause: unknown) {
   return internalError(
-    'canyonos.redis_password_unreadable',
+    'registry.redis_password_unreadable',
     "The dashboard can't decrypt the Redis password it stored for this workflow group; its REDIS_PASSWORD_ENCRYPTION_KEY may have changed since. Deploy it again with `canyonos deploy` to register it again.",
     { cause }
   );

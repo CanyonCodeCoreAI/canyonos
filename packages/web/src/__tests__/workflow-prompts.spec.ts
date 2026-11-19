@@ -88,7 +88,7 @@ async function stubPrompts(
       if (stub.list_reads === 1 && first === 'not_running') {
         return fulfillJson(
           route,
-          { error: 'canyonos.workflow_not_running', message: 'No running controller' },
+          { error: 'registry.workflow_not_running', message: 'No running controller' },
           404
         );
       }

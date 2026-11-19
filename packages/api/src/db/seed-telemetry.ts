@@ -5,14 +5,11 @@ import { createHash } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
 
-import {
-  GEN_AI,
-  RUNTIME_ATTRIBUTES,
-  STATUS_CODE,
-  WORKFLOW_ID_ATTRIBUTE,
-} from '../modules/metrics/metrics.contract';
+import { GEN_AI, RUNTIME_ATTRIBUTES } from '../modules/metrics/metrics.contract';
+import { STATUS_CODE, WORKFLOW_ID_ATTRIBUTE } from '../modules/telemetry/telemetry.contract';
+import { otelSpans } from '../modules/telemetry/telemetry.schema';
 import { db } from './client';
-import { otelSpans, workflows } from './schema';
+import { workflows } from './schema';
 
 const DEMO_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 

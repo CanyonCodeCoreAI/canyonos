@@ -115,4 +115,6 @@ hex, and compares in constant time.
 - The endpoint answers `{"error": <message>, "error_name": <code>}`, and the dashboard
   API `{"error": <code>, "message": <message>}`.
 - A `401` carries `WWW-Authenticate: Bearer`.
+- The dashboard API checks the key before it reads anything else the request sends, so a
+  request without the key gets `401` whatever it holds.
 - A CORS preflight (`OPTIONS`) always passes.

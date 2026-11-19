@@ -7,14 +7,13 @@ import { Root } from 'protobufjs';
 import type { Type } from 'protobufjs';
 
 import { db } from '@api/db/client';
-import { otelSpans } from '@api/db/schema';
+import { GEN_AI, RUNTIME_ATTRIBUTES } from '@api/modules/metrics/metrics.contract';
 import {
-  GEN_AI,
-  RUNTIME_ATTRIBUTES,
   STATUS_CODE,
   WORKFLOW_GROUP_ID_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
-} from '@api/modules/metrics/metrics.contract';
+} from '@api/modules/telemetry/telemetry.contract';
+import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 import { config } from '@core/env';
 
 type AttributeValue = number | string | boolean | Record<string, unknown>;

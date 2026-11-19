@@ -108,7 +108,7 @@ On Kubernetes the operator sets `CANYONOS_ENDPOINT_URL` to the Route, Ingress or
 
 Three components read this hash:
 
-- The CanyonOS API, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`, which it reads with `runtime-status` in the Global Controller's container on Docker. The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
+- The CanyonOS API, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`, which it reads from the workflow group's Redis (`packages/api/src/modules/workflow-groups/workflow-groups.runtime.ts`). The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
 - The dashboard API, at `GET /workflows/:workflow_id/monitoring/endpoint`.
 - The Reconciler, which reads `api_port` before it launches the endpoint.
 
@@ -116,7 +116,7 @@ Without `endpoint.api_port` in `workflow_group.yaml`, the endpoint keeps the por
 
 ## Changing the endpoint
 
-- The record is read by the CLI and the dashboard API (`packages/api/src/modules/monitoring/`). Change all three together.
+- The record is read by the CLI and the dashboard API (its keys and shape in `packages/api/src/modules/registry/registry.contract.ts`). Change all three together.
 - The operator builds the same container on Kubernetes, so a new environment variable is set in `endpoint.go` as well as in the Reconciler's image args.
 - The end-to-end suites send requests through the endpoint; see [Testing](../contributing/TESTING.md#end-to-end-tests).
 - The dashboard API checks the same key with the same rules, in TypeScript (`packages/api/src/modules/auth/`), so a rule change touches both.

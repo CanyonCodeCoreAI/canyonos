@@ -4,15 +4,16 @@
 import { sql } from 'drizzle-orm';
 
 import {
+  RESOURCE_WORKFLOW_ATTRIBUTE,
   STATUS_CODE,
   WORKFLOW_GROUP_ID_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
-} from '../modules/metrics/metrics.contract';
-import { RESOURCE_WORKFLOW_ATTRIBUTE } from '../modules/monitoring/monitoring.signals';
+} from '../modules/telemetry/telemetry.contract';
 import { append_metrics } from '../modules/telemetry/telemetry.repo';
+import { otelLogs, otelSpans } from '../modules/telemetry/telemetry.schema';
 import { workflows_repo } from '../modules/workflows/workflows.repo';
-import { closeDb, db } from './client';
-import { otelLogs, otelSpans, workflows } from './schema';
+import { close_db, db } from './client';
+import { workflows } from './schema';
 import type { MetricRow } from '../modules/telemetry/telemetry.repo';
 
 const HOURS = 24;
@@ -259,5 +260,5 @@ export async function seedMonitoringDemo(workflow_id: string): Promise<void> {
 if (import.meta.main) {
   const workflow_id = await resolveWorkflowId(process.argv[2]);
   await seedMonitoringDemo(workflow_id);
-  await closeDb();
+  await close_db();
 }

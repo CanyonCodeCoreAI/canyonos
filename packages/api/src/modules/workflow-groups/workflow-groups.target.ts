@@ -10,6 +10,7 @@ import type { CoreReply } from './workflow-groups.core';
 import type { WorkflowGroupRow } from './workflow-groups.repo';
 import type {
   ApplyFailureCode,
+  DashboardRegistration,
   DashboardWorkflows,
   Health,
   ReplicaLogs,
@@ -108,9 +109,12 @@ export interface WorkflowGroupTarget {
     name: string,
     tail: string
   ): Promise<ReplicaLogs>;
+  /** Registers the workflow group's workflows with this dashboard, before its deploy starts;
+   * `registration` is what the caller sent, which only Docker needs. */
   register_dashboard(
     workflow_group_id: string,
-    row: WorkflowGroupRow | null
+    row: WorkflowGroupRow | null,
+    registration: DashboardRegistration | undefined
   ): Promise<DashboardWorkflows>;
 }
 

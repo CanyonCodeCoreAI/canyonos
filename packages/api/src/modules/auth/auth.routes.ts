@@ -5,15 +5,14 @@ import { Elysia } from 'elysia';
 
 import { config } from '@core/env';
 
-import { authPlugin } from './auth.middleware';
-import { AuthCheckSchema, AuthStatusSchema } from './types';
+import { AuthCheckSchema, AuthStatusSchema } from './auth.types';
 
+// `/auth/check` needs the API key: `apiKeyGuard` checks it as the request arrives.
 export const authRoutes = new Elysia({ prefix: '/auth', name: 'auth.routes' })
   .get('/status', () => ({ api_key_required: config.auth.apiKeyHash !== null }), {
     response: { 200: AuthStatusSchema },
     detail: { tags: ['Auth'], summary: 'Whether the API needs a key; asked before sign-in' },
   })
-  .use(authPlugin)
   .get('/check', () => ({ ok: true as const }), {
     response: { 200: AuthCheckSchema },
     detail: {

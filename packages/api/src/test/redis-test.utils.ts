@@ -3,18 +3,28 @@
 
 import { RedisClient } from 'bun';
 
-import { ENDPOINT_KEY } from '@api/modules/monitoring/monitoring.repo';
+import { reconcile_live_prompts } from '@api/modules/prompts/prompts.service';
+import {
+  ACTIVE_AGENTS_KEY,
+  agent_replicas_key,
+  agent_samples_key,
+  agent_spec_key,
+  CONTROLLER_IDENTITY_KEY,
+  desired_replicas_key,
+  ENDPOINT_KEY,
+  GOVERNANCE_CONFIG_KEY,
+  GOVERNANCE_SPEND_KEY,
+  LAUNCH_ERRORS_KEY,
+  LLMS_CONFIG_KEY,
+  MACHINE_ERRORS_KEY,
+  PROMPTS_CONFIG_KEY,
+  PROMPTS_YAML_KEY,
+  replica_key,
+  SCALING_CONFIG_KEY,
+  UP_AGENTS_KEY,
+} from '@api/modules/registry/registry.contract';
+import { assert_workflow_running, with_redis } from '@api/modules/registry/registry.redis';
 import { config } from '@core/env';
-
-export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
-export const PROMPTS_CONFIG_KEY = 'prompts:config';
-export const PROMPTS_YAML_KEY = 'prompts:yaml';
-export const SCALING_CONFIG_KEY = 'scaling:config';
-export const ACTIVE_AGENTS_KEY = 'agents:active';
-export const GOVERNANCE_CONFIG_KEY = 'governance:config';
-export const GOVERNANCE_SPEND_KEY = 'governance:spend';
-export const LLMS_CONFIG_KEY = 'llms:config';
-export const UP_AGENTS_KEY = 'routing_table:up';
 
 /** The workflow group, and the name of the workflow, a seeded workflow runs as. */
 export const TEST_WORKFLOW_GROUP_ID = '00000000-0000-4000-8000-000000000000';
@@ -95,6 +105,11 @@ export async function seed_workflows(workflows: Record<string, string>): Promise
   );
 }
 
+/** Publishes raw as the running controller's `workflows`, to stand in for one that wrote junk. */
+export async function seed_workflows_raw(raw: string): Promise<void> {
+  await with_test_redis((redis) => redis.hset(CONTROLLER_IDENTITY_KEY, 'workflows', raw));
+}
+
 /** Leaves no controller running, so each test starts from the same Redis state. */
 export async function reset_controller(): Promise<void> {
   await with_test_redis(async (redis) => {
@@ -103,8 +118,11 @@ export async function reset_controller(): Promise<void> {
     await redis.del(PROMPTS_YAML_KEY);
     await redis.del(SCALING_CONFIG_KEY);
     const agent_keys = (await redis.send('KEYS', ['agent:*'])) as string[];
-    for (const key of agent_keys) await redis.del(key);
+    const replica_keys = (await redis.send('KEYS', [replica_key('*')])) as string[];
+    for (const key of [...agent_keys, ...replica_keys]) await redis.del(key);
     await redis.del(ENDPOINT_KEY);
+    await redis.del(LAUNCH_ERRORS_KEY);
+    await redis.del(MACHINE_ERRORS_KEY);
     await redis.del(ACTIVE_AGENTS_KEY);
     await redis.del(GOVERNANCE_CONFIG_KEY);
     await redis.del(GOVERNANCE_SPEND_KEY);
@@ -118,7 +136,7 @@ export async function seed_scaling_agents(agents: readonly SeededAgent[]): Promi
   await with_test_redis(async (redis) => {
     for (const agent of agents) {
       await redis.set(
-        `agent:${agent.name}:spec`,
+        agent_spec_key(agent.name),
         agent.raw_spec ??
           JSON.stringify({
             name: agent.name,
@@ -128,10 +146,10 @@ export async function seed_scaling_agents(agents: readonly SeededAgent[]): Promi
           })
       );
       if (agent.desired !== undefined) {
-        await redis.set(`agent:${agent.name}:desired_replicas`, String(agent.desired));
+        await redis.set(desired_replicas_key(agent.name), String(agent.desired));
       }
       const sample = agent.raw_sample ?? (agent.sample ? JSON.stringify(agent.sample) : null);
-      if (sample !== null) await redis.send('LPUSH', [`agent:${agent.name}:samples`, sample]);
+      if (sample !== null) await redis.send('LPUSH', [agent_samples_key(agent.name), sample]);
     }
     await redis.set(ACTIVE_AGENTS_KEY, JSON.stringify(agents.map((agent) => agent.name)));
   });
@@ -142,6 +160,36 @@ export async function seed_endpoint(record: Record<string, string>): Promise<voi
   await with_test_redis(async (redis) => {
     for (const [field, value] of Object.entries(record)) {
       await redis.hset(ENDPOINT_KEY, field, value);
+    }
+  });
+}
+
+/** Records a replica of agent the way the reconciler does: `address` is written last, so a
+ * replica without one is still starting. */
+export async function seed_replica(
+  agent: string,
+  replica_id: string,
+  address: string | null
+): Promise<void> {
+  await with_test_redis(async (redis) => {
+    await redis.sadd(agent_replicas_key(agent), replica_id);
+    await redis.hset(replica_key(replica_id), 'agent_name', agent);
+    if (address !== null) await redis.hset(replica_key(replica_id), 'address', address);
+  });
+}
+
+/** Records why agents' last launches and machine types' last starts failed, as the reconciler
+ * does. */
+export async function seed_reconciler_errors(
+  launch_errors: Record<string, string>,
+  machine_errors: Record<string, string>
+): Promise<void> {
+  await with_test_redis(async (redis) => {
+    for (const [agent, error] of Object.entries(launch_errors)) {
+      await redis.hset(LAUNCH_ERRORS_KEY, agent, error);
+    }
+    for (const [machine_type, error] of Object.entries(machine_errors)) {
+      await redis.hset(MACHINE_ERRORS_KEY, machine_type, error);
     }
   });
 }
@@ -159,6 +207,14 @@ export async function seed_scaling(scaling_config: string): Promise<void> {
 export async function read_scaling_config(): Promise<unknown> {
   const raw = await with_test_redis((redis) => redis.get(SCALING_CONFIG_KEY));
   return raw === null ? null : JSON.parse(raw);
+}
+
+/** Publishes prompts as prompts:config, each prompt's live version by name, as a controller
+ * does at its start. */
+export async function seed_live_prompts(
+  prompts: Record<string, StoredSystemPrompt>
+): Promise<void> {
+  await with_test_redis((redis) => redis.set(PROMPTS_CONFIG_KEY, JSON.stringify({ prompts })));
 }
 
 export async function read_prompts_config(): Promise<LivePromptsConfig | null> {
@@ -192,10 +248,18 @@ export async function read_governance_config(): Promise<unknown> {
 }
 
 export async function read_desired_replicas(agent: string): Promise<string | null> {
-  return with_test_redis((redis) => redis.get(`agent:${agent}:desired_replicas`));
+  return with_test_redis((redis) => redis.get(desired_replicas_key(agent)));
 }
 
 export async function read_governance_spend(): Promise<unknown> {
   const raw = await with_test_redis((redis) => redis.get(GOVERNANCE_SPEND_KEY));
   return raw === null ? null : JSON.parse(raw);
+}
+
+/** Runs the tick's prompts job on workflow_id now, as the registered-workflows tick would: its
+ * prompts.yaml prompts are stored and its live versions published to prompts:config. */
+export async function reconcile_prompts_now(workflow_id: string): Promise<void> {
+  await with_redis(workflow_id, async (redis) =>
+    reconcile_live_prompts(redis, workflow_id, await assert_workflow_running(redis, workflow_id))
+  );
 }

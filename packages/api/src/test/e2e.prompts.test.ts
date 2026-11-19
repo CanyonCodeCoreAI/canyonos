@@ -8,9 +8,22 @@ import { asc, eq } from 'drizzle-orm';
 import { db } from '@api/db/client';
 import { systemPrompts } from '@api/db/schema';
 
-import { load_prompts } from '../modules/prompts/prompts.service';
+import {
+  reconcile_live_prompts,
+  RECONCILE_PROMPTS_FAILED,
+} from '../modules/prompts/prompts.service';
+import {
+  for_each_registered_workflow,
+  start_registered_workflows_tick,
+} from '../modules/registry/registry.service';
 import { api, setupE2ETests } from './e2e.setup';
-import { read_prompts_config, reset_controller, seed_running_workflow } from './redis-test.utils';
+import {
+  read_prompts_config,
+  reconcile_prompts_now,
+  reset_controller,
+  seed_live_prompts,
+  seed_running_workflow,
+} from './redis-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 import type { PromptsConfig } from './redis-test.utils';
 
@@ -63,7 +76,7 @@ async function running_workflow(): Promise<{ token: string; workflow_id: string 
   const token = TEST_API_KEY;
   const { workflow_id } = await create_test_workflow({ name: 'Prompts Workflow' });
   await seed_running_workflow(workflow_id, CONFIG);
-  await load_prompts(workflow_id);
+  await reconcile_prompts_now(workflow_id);
   return { token, workflow_id };
 }
 
@@ -181,7 +194,7 @@ describe('workflow prompts', () => {
     expect(await read_prompts_config()).toEqual(before);
   });
 
-  test('a workflow the controller is not running is 404 canyonos.workflow_not_running', async () => {
+  test('a workflow the controller is not running is 404 registry.workflow_not_running', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
     const { workflow_id } = await create_test_workflow({ name: 'Idle Workflow' });
@@ -200,7 +213,7 @@ describe('workflow prompts', () => {
 
     for (const res of [listed, read, created, live]) {
       expect(res.error?.status as number).toBe(404);
-      expect(error_code(res)).toBe('canyonos.workflow_not_running');
+      expect(error_code(res)).toBe('registry.workflow_not_running');
     }
     expect(await read_prompts_config()).toEqual(before);
   });
@@ -236,13 +249,14 @@ describe('workflow prompts', () => {
     const token = TEST_API_KEY;
     const { workflow_id } = await create_test_workflow({ name: 'Bare Workflow' });
     await seed_running_workflow(workflow_id, { prompts: {} });
-    await load_prompts(workflow_id);
+    await reconcile_prompts_now(workflow_id);
 
     const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([]);
-    expect(await read_prompts_config()).toEqual({ prompts: {} });
+    // Nothing stored and nothing published: the tick writes nothing.
+    expect(await read_prompts_config()).toBeNull();
   });
 
   test('a redeploy keeps stored prompts over prompts.yaml and stores a prompt new to it', async () => {
@@ -258,7 +272,7 @@ describe('workflow prompts', () => {
         'app.advise': [added],
       },
     });
-    await load_prompts(workflow_id);
+    await reconcile_prompts_now(workflow_id);
 
     expect(await recorded(workflow_id)).toEqual([
       ['app.advise', 'app-advise-00000001-v1', true],
@@ -304,6 +318,76 @@ describe('workflow prompts', () => {
     expect((await read_prompts_config())?.prompts['app.advise']).toMatchObject({
       version: added.version,
       content: added.content,
+    });
+  });
+
+  test('the tick republishes the version made live in the dashboard after a redeploy', async () => {
+    const { workflow_id } = await running_workflow();
+    const older = 'app-intent-parse-00000002-v2';
+    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    expect((await prompt.live.put({ version: older }, { headers: key_headers })).error).toBeNull();
+    // A redeployed controller publishes prompts.yaml's live versions, beside another workflow's.
+    const other = { version: 'other-x-00000001-v1', content: 'Other.', updated_at: null };
+    await seed_running_workflow(workflow_id, CONFIG);
+    await seed_live_prompts({
+      'app.intent.parse': INTENT_V3,
+      'app.summarize': SUMMARIZE_V1,
+      'other.x': other,
+    });
+
+    const tick = start_registered_workflows_tick(50);
+    try {
+      const deadline = Date.now() + 10_000;
+      while ((await read_prompts_config())?.prompts['app.intent.parse']?.version !== older) {
+        if (Date.now() > deadline) throw new Error('The tick never republished the live prompt');
+        await Bun.sleep(50);
+      }
+    } finally {
+      tick.stop();
+    }
+
+    expect(await read_prompts_config()).toEqual({
+      prompts: {
+        'app.intent.parse': stored(2, '2026-09-25T00:00:00.000Z'),
+        'app.summarize': SUMMARIZE_V1,
+        'other.x': other,
+      },
+    });
+  });
+
+  test('the tick runs its first round as it starts, not an interval later', async () => {
+    const { workflow_id } = await running_workflow();
+    const older = 'app-intent-parse-00000002-v2';
+    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    expect((await prompt.live.put({ version: older }, { headers: key_headers })).error).toBeNull();
+    await seed_live_prompts({ 'app.intent.parse': INTENT_V3, 'app.summarize': SUMMARIZE_V1 });
+
+    // An hour between rounds: only the first round can republish within the deadline.
+    const tick = start_registered_workflows_tick(3_600_000);
+    try {
+      const deadline = Date.now() + 5_000;
+      while ((await read_prompts_config())?.prompts['app.intent.parse']?.version !== older) {
+        if (Date.now() > deadline) throw new Error('The first round did not run at the start');
+        await Bun.sleep(50);
+      }
+    } finally {
+      tick.stop();
+    }
+  });
+
+  test('the prompts job leaves prompts:config alone while it holds the stored live versions', async () => {
+    const { workflow_id } = await running_workflow();
+    const publish = spyOn(RedisClient.prototype, 'set');
+
+    try {
+      await for_each_registered_workflow(reconcile_live_prompts, RECONCILE_PROMPTS_FAILED);
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      publish.mockRestore();
+    }
+    expect(await recorded(workflow_id)).toHaveLength(3);
+    expect(await read_prompts_config()).toEqual({
+      prompts: { 'app.intent.parse': INTENT_V3, 'app.summarize': SUMMARIZE_V1 },
     });
   });
 
@@ -361,12 +445,12 @@ describe('a prompt write whose publish to Redis fails', () => {
     expect([await recorded(workflow_id), await read_prompts_config()]).toEqual(before);
   });
 
-  test('loading prompts.yaml at startup stores nothing', async () => {
+  test('storing prompts.yaml from the tick stores nothing', async () => {
     const { workflow_id } = await create_test_workflow({ name: 'Prompts Workflow' });
     await seed_running_workflow(workflow_id, CONFIG);
 
     fail_publish();
-    const error = await load_prompts(workflow_id).then(
+    const error = await reconcile_prompts_now(workflow_id).then(
       () => null,
       (error: unknown) => error
     );

@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { otelMetricRollups } from '@api/db/schema';
-
 import type { MetricRow } from './telemetry.repo';
+import type { otelMetricRollups } from './telemetry.schema';
 
 export const ROLLUP_SECONDS = 300;
 export const ROLLUP_NANOS = BigInt(ROLLUP_SECONDS) * 1_000_000_000n;

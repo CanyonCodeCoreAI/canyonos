@@ -600,14 +600,6 @@ def _cmd_check(args):
     _show_result(controller_status.check, os.getcwd())
 
 
-def _cmd_runtime_status(args):
-    """Show the running deploy's endpoint, agents and machine errors, for
-    `canyonos status`."""
-    from canyonos_core import controller_status
-
-    _show_result(controller_status.runtime_status, os.getcwd())
-
-
 def _cmd_health(args):
     """Show the running deploy's health checks, for `canyonos doctor`."""
     from canyonos_core import controller_status
@@ -621,14 +613,6 @@ def _cmd_agent_logs(args):
     from canyonos_core import controller_status
 
     _show_result(controller_status.agent_logs, os.getcwd(), args.name, args.tail)
-
-
-def _cmd_dashboard_credentials(args):
-    """Show the Redis credentials the CanyonOS API registers this workflow group with
-    the dashboard by."""
-    from canyonos_core import controller_status
-
-    _show_result(controller_status.dashboard_credentials)
 
 
 def _cmd_job_worker(args):
@@ -705,12 +689,6 @@ def main():
     )
     check.set_defaults(func=_cmd_check)
 
-    runtime_status = subparsers.add_parser(
-        "runtime-status",
-        help="Show the running deploy's endpoint, agents and machine errors, as JSON",
-    )
-    runtime_status.set_defaults(func=_cmd_runtime_status)
-
     health = subparsers.add_parser(
         "health", help="Check the running deploy's health, as JSON"
     )
@@ -724,12 +702,6 @@ def main():
         "--tail", default="all", help="Lines per replica: a number or `all`"
     )
     agent_logs.set_defaults(func=_cmd_agent_logs)
-
-    dashboard_credentials = subparsers.add_parser(
-        "dashboard-credentials",
-        help="Show the Redis credentials the dashboard registers, as JSON",
-    )
-    dashboard_credentials.set_defaults(func=_cmd_dashboard_credentials)
 
     job_worker = subparsers.add_parser(
         "job-worker",

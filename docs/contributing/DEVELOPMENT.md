@@ -137,13 +137,25 @@ running. Set the workflow group's
 `http://host.docker.internal:3000`.
 
 **Register the workflow group.** At start, the API registers only the
-workflows on the default Redis, which has no password. A workflow group's Redis has one, so
-register its workflows while the API runs, with the workflow group's `redis.port`:
+workflows on the default Redis, which has no password. The deploy registered its
+workflow group with the dashboard image's API, whose database is not this one. To
+register it here too, start the API with this machine's control key, which every `/v1`
+route needs:
 
 ```bash
-curl -X POST http://localhost:3000/canyonos/workflows \
-  -H 'Content-Type: application/json' \
-  -d "{\"redis_port\":6379,\"redis_password\":\"$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' canyonos-<workflow group>-redis-localhost | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')\"}"
+export CANYONOS_CONTROL_KEY_HASH=$(printf %s "$(cat ~/.canyonos/control_key)" | shasum -a 256 | cut -d' ' -f1)
+bun run dashboard:dev
+```
+
+Then, from the folder you deployed from, send it the registration the deploy sent: each
+workflow by its `workflow_id`, the workflow group's Redis and its password, and a client
+certificate its CA signs when that Redis takes only TLS:
+
+```bash
+python -c 'import json; from canyonos.dashboard_registration import _registration; from canyonos.init import load_state; print(json.dumps(_registration(load_state())))' > registration.json
+curl -X PUT "http://localhost:3000/v1/workflow-groups/$(sed -n 's/^workflow_group_id: //p' workflow_group.yaml)/dashboard" \
+  -H "Authorization: Bearer $(cat ~/.canyonos/control_key)" \
+  -H 'Content-Type: application/json' -d @registration.json
 ```
 
 The API stores the password encrypted, with a fixed development key unless

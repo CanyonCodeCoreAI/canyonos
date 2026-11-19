@@ -6,7 +6,7 @@ import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query
 import type { AgentRules, GovernanceResponse } from '@canyonos/api/governance';
 
 import { toast } from '@repo/ui/shadcn/sonner';
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import {
   dashboardPollInterval,
   workflowQueryKeys,
@@ -15,9 +15,9 @@ import {
 const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.workflow_not_running':
+  'registry.workflow_not_running':
     'This workflow is not running, so its governance rules cannot be read. Deploy it, then retry.',
-  'canyonos.controller_unreachable':
+  'registry.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'governance.config_invalid':
     "The controller's governance config could not be read. Fix it and reload, then retry.",
@@ -38,7 +38,7 @@ export const governanceQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.governance(workflow_id),
     queryFn: () =>
-      apiCall<GovernanceResponse>(() => forgeAuthApi.workflows[workflow_id]!.governance.get()),
+      apiCall<GovernanceResponse>(() => canyonosAuthApi.workflows[workflow_id]!.governance.get()),
     retry: false,
     refetchInterval: dashboardPollInterval,
   });
@@ -54,7 +54,7 @@ export function useSaveAgentRules(workflow_id: string, agent: string) {
   return useMutation({
     mutationFn: (rules: AgentRules) =>
       apiCall<GovernanceResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.governance.agents[agent]!.put(rules)
+        canyonosAuthApi.workflows[workflow_id]!.governance.agents[agent]!.put(rules)
       ),
     onSuccess: () => {
       toast.success("Governance rules saved. They apply on the controller's next poll.", TOAST);
@@ -68,7 +68,7 @@ export function useSetStopped(workflow_id: string, agent: string) {
   return useMutation({
     mutationFn: (stopped: boolean) =>
       apiCall<GovernanceResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.governance.agents[agent]!.stopped.put({ stopped })
+        canyonosAuthApi.workflows[workflow_id]!.governance.agents[agent]!.stopped.put({ stopped })
       ),
     onSuccess: (_response, stopped) => {
       toast.success(

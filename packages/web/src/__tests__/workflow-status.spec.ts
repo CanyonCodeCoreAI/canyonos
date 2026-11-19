@@ -120,7 +120,7 @@ async function openStatus(page: Page, stub: StatusStub = {}): Promise<void> {
 const notRunning: Handler = (route) =>
   fulfillJson(
     route,
-    { error: 'canyonos.workflow_not_running', message: 'No running controller' },
+    { error: 'registry.workflow_not_running', message: 'No running controller' },
     404
   );
 

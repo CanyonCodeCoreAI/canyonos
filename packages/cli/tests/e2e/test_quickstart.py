@@ -16,8 +16,10 @@ agent.
 The same deploy carries the endpoint's API key checks that need a real runtime: a
 query without the key or with another is refused, a new key refuses the old one,
 `--no-api-key` opens the deploy until a key is set again, a later deploy reuses the
-stored key, and a paused Redis is a quick 503 rather than a hang. Each case has its
-own HOME, so its `~/.canyonos/api_key` touches nobody's.
+stored key, and a paused Redis is a quick 503 rather than a hang. It also carries the
+registration with the dashboard every deploy makes, and the commands that start a
+stopped CanyonOS API again. Each case has its own HOME, so its `~/.canyonos/api_key`
+touches nobody's.
 
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
 so it tears the deploy down whether or not it passed.
@@ -59,6 +61,10 @@ REQUEST_TIMEOUT = 120
 POLL_INTERVAL = 2
 # How long a request may take to be refused while Redis does not answer.
 NOT_READY_WITHIN = 10
+# The dashboard's CanyonOS API, as `dashboard.compose.yml` names it.
+API_CONTAINER = "canyonos-dashboard-api"
+# What a deploy shows once the dashboard stored the workflow group.
+REGISTERED = re.compile(rf"Registered {STARTER}-[0-9a-f]{{8}} with the dashboard")
 API_KEY = "quickstart-e2e-key-7f3a"
 NEXT_API_KEY = "quickstart-e2e-key-9c1d"
 OPEN_WARNING = (
@@ -382,6 +388,32 @@ def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
     _assert_refused(refused, 503, "auth.not_ready")
     assert took < NOT_READY_WITHIN, took
     assert _post(endpoint, "CanyonOS", API_KEY)[0] == 202
+
+
+@needs_a_runtime
+def test_a_deploy_registers_first_and_commands_start_a_stopped_api(
+    deployed_workflow,
+):
+    """A deploy without the dashboard registers the workflow group with it before the
+    upload, and `canyonos status`, `logs` and `sync` each start the CanyonOS API again
+    after it was stopped, then answer from it."""
+    case, folder = deployed_workflow
+    _, output = _deploy(case, folder)
+    registered = REGISTERED.search(output)
+    assert registered, output
+    assert registered.start() < output.index("Sync complete."), output
+
+    for command in (["status"], ["logs", "--no-follow"], ["sync", STARTER]):
+        _docker("stop", API_CONTAINER)
+        shown = _run(
+            case,
+            command,
+            timeout=DEPLOY_TIMEOUT,
+            env=_runtime_environment(),
+            cwd=folder,
+        )
+        running = _docker("inspect", "--format", "{{.State.Running}}", API_CONTAINER)
+        assert running == "true", f"{command} left the API stopped: {shown}"
 
 
 needs_docker = pytest.mark.skipif(

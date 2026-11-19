@@ -1,17 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The receiver writes OTLP/JSON, which spells this enum as the proto's own value names.
-export const STATUS_CODE = {
-  UNSET: 'STATUS_CODE_UNSET',
-  OK: 'STATUS_CODE_OK',
-  ERROR: 'STATUS_CODE_ERROR',
-} as const;
-
-// Spans carry their workflow's id, and that of the workflow group it runs in.
-export const WORKFLOW_ID_ATTRIBUTE = 'canyonos.workflow.id';
-export const WORKFLOW_GROUP_ID_ATTRIBUTE = 'canyonos.workflow_group.id';
-
 export const GEN_AI = {
   AGENT_ID: 'gen_ai.agent.id',
   REQUEST_MODEL: 'gen_ai.request.model',

@@ -4,8 +4,9 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { databasePlugin } from '@api/db/database';
+
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import { WorkflowIdParams } from '../workflows/workflows.types';
 import { get_governance, save_agent_rules, set_stopped } from './governance.service';
 import { AgentRulesSchema, GovernanceResponseSchema, StoppedBodySchema } from './governance.types';
@@ -15,8 +16,8 @@ const doc = { tags: ['Governance'], security: [{ bearerAuth: [] }] };
 const AgentParams = WorkflowIdParams.extend({ agent: z.string().min(1) });
 
 export const governanceRoutes = new Elysia({ name: 'governance.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id/governance', ({ params }) => get_governance(params.workflow_id), {
     params: WorkflowIdParams,
     response: { 200: GovernanceResponseSchema },

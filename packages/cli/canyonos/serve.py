@@ -40,17 +40,37 @@ from .dashboard_stack import (
 )
 
 
-def _register_running_workflows() -> None:
-    """Register this folder's workflows with the dashboard when its controller is running.
+def register_with_dashboard(state: dict, *, required: bool = False) -> None:
+    """Register the workflow group `state` records with the dashboard, whether or not
+    its Global Controller runs yet, and say so in the terminal. `canyonos deploy` needs
+    it (`required`): the status, `canyonos curl` and the dashboard read the workflow
+    group's Redis through it, so a failure raises RuntimeError. Otherwise, as for
+    `canyonos serve`'s registration again, a failure only warns.
 
-    Temporary: applied now so multi-workflow dashboards work without blocking the flow;
-    revisit with the workflow-key design in CAN-521 (the api should not hold
+    Temporary: revisit with the workflow-key design in CAN-521 (the api should not hold
     per-workflow Redis addresses).
-
-    A folder with no readable deploy state or no running deploy has nothing to
-    register, so it is skipped without a word. A failed registration only
-    warns: the dashboard is up either way.
     """
+    try:
+        registered = register_workflows(state)
+    except RegistrationError as e:
+        if required:
+            raise RuntimeError(
+                f"Could not register this workflow group with the dashboard: {e}. "
+                "Its status and `canyonos curl` read it through the dashboard; fix "
+                "that and run `canyonos deploy` again."
+            ) from None
+        ui.warn(f"The dashboard won't show this workflow group: {e}")
+        ui.hint("Run `canyonos serve` to try again.")
+        return
+    names = ", ".join(workflow["name"] for workflow in registered)
+    ui.ok(f"Registered {names} with the dashboard")
+
+
+def _register_running_workflows() -> None:
+    """Register this folder's workflow group with the dashboard again when its deploy
+    runs, for `canyonos serve`, whose new API container must join its network again.
+    A folder with no readable deploy state or no running deploy has nothing to
+    register, so it is skipped without a word."""
     try:
         state = load_state()
     except (FileNotFoundError, RuntimeError):
@@ -58,19 +78,10 @@ def _register_running_workflows() -> None:
     try:
         running = is_running(workflow_group_status(state))
     except ApiError as e:
-        ui.warn(f"Dashboard could not register this workflow group: {e}")
+        ui.warn(f"The dashboard won't show this workflow group: {e}")
         return
-    if not running:
-        return
-
-    try:
-        registered = register_workflows(state)
-    except RegistrationError as e:
-        ui.warn(f"Dashboard could not register this workflow group: {e}")
-        ui.hint("Run `canyonos serve` again to retry.")
-        return
-    names = ", ".join(workflow["name"] for workflow in registered)
-    ui.ok(f"Registered {names} with the dashboard")
+    if running:
+        register_with_dashboard(state)
 
 
 def _warn_if_dashboard_port_ignored() -> None:
@@ -93,8 +104,7 @@ def serve_dashboard(
 ) -> ServeResult:
     """Bring `services` of the local stack up, reporting progress, with its API
     checking the API key whose hash is `api_key_hash` (by default this machine's key),
-    and the `renewed` services in new containers. Returns the stack's result; with the
-    web app among `services`, this folder's running workflows are registered with it.
+    and the `renewed` services in new containers. Returns the stack's result.
 
     Phases drive the spinner while the stack comes up; the trace itself is
     only printed when something fails and the user needs to see how far it got.
@@ -124,7 +134,6 @@ def serve_dashboard(
     if result.ok:
         if "web" in services:
             _warn_if_dashboard_port_ignored()
-            _register_running_workflows()
         return result
     if not report_failure:
         return result
@@ -250,5 +259,6 @@ def run_serve(api_key: str | None = None, no_api_key: bool = False) -> int:
     if not result.ok:
         return 1
 
+    _register_running_workflows()
     ui.ok(f"Dashboard: {result.url}")
     return 0

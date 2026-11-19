@@ -3,7 +3,7 @@
 
 import pino from 'pino';
 
-import { getRequestContext } from './request-context';
+import { current_request } from './request-context';
 
 interface LogFields {
   [key: string]: unknown;
@@ -51,8 +51,8 @@ function createPinoInstance(): pino.Logger {
       level: stdoutLevel,
       base: { service_name: Bun.env.SERVICE_NAME ?? 'canyonos-api' },
       mixin: () => {
-        const reqCtx = getRequestContext();
-        return reqCtx ? { request_id: reqCtx.request_id, client_ip: reqCtx.client_ip } : {};
+        const scope = current_request();
+        return scope ? { request_id: scope.request_id, client_ip: scope.client_ip } : {};
       },
       formatters: { level: (label) => ({ level: label }) },
       serializers: { error: pino.stdSerializers.err },
@@ -102,3 +102,15 @@ export const logger = {
   error: (m: string, f?: LogFields) => getPinoLogger().error(f || {}, m),
   child: (fields: LogFields): ChildLogger => createChildLogger(fields),
 };
+
+const metric_logger = logger.child({ domain: LOG_DOMAINS.TELEMETRY });
+
+/** Logs one measurement as a `metric:<name>` line that log pipelines pick out by `_metric`. */
+export function emit_metric(name: string, value: number, tags?: Record<string, unknown>): void {
+  metric_logger.info(`metric:${name}`, {
+    _metric: true,
+    metric_name: name,
+    metric_value: value,
+    ...tags,
+  });
+}

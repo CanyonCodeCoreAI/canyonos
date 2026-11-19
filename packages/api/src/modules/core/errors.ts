@@ -5,7 +5,7 @@ import { Elysia, ValidationError } from 'elysia';
 import { z } from 'zod';
 
 import { logger } from './logger';
-import { getRequestContext } from './request-context';
+import { current_request } from './request-context';
 
 export const ApiErrorSchema = z.object({
   error: z.string(),
@@ -86,7 +86,7 @@ export const gatewayTimeout = (code: string, message: string, opts?: AppErrorOpt
  * returns this instead. */
 export function early_refusal(set: { status?: number | string }, error: AppError) {
   set.status = error.status;
-  return { ...error.toResponse(), request_id: getRequestContext()?.request_id };
+  return { ...error.toResponse(), request_id: current_request()?.request_id };
 }
 
 export const wrapError = (
@@ -101,6 +101,26 @@ export const wrapError = (
 
 export const isNonRetryableError = (error: unknown): error is AppError =>
   error instanceof AppError && !error.retryable;
+
+/** The AppError an error a library throws answers as, or null when it does not know it. */
+export type ErrorTranslation = (error: unknown) => AppError | null;
+
+const translations: ErrorTranslation[] = [];
+
+/** Has the error plugin answer each error `translation` knows as the AppError it gives; the
+ * database module adds one for a lost connection. */
+export function translate_errors(translation: ErrorTranslation): void {
+  translations.push(translation);
+}
+
+const translated = (error: unknown): unknown => {
+  if (error instanceof AppError) return error;
+  for (const translation of translations) {
+    const known = translation(error);
+    if (known) return known;
+  }
+  return error;
+};
 
 export const errorPlugin = new Elysia({ name: 'plugin.error' })
   .guard({
@@ -119,11 +139,12 @@ export const errorPlugin = new Elysia({ name: 'plugin.error' })
       504: ApiErrorSchema,
     },
   })
-  .onError(({ code, error, status }) => {
-    const request_id = getRequestContext()?.request_id;
+  .onError(({ code, error: thrown, status }) => {
+    const request_id = current_request()?.request_id;
     if (code === 'NOT_FOUND') {
       return status(404, { error: 'not_found', message: 'Resource not found', request_id });
     }
+    const error = translated(thrown);
     if (error instanceof AppError) {
       if (error.status !== 401) {
         logger.error('App error', {

@@ -13,7 +13,7 @@ import { LOG_DOMAINS, logger } from '@core/logger';
 import type { AppError } from '@core/errors';
 import type { KubernetesObject } from '@core/kubernetes';
 
-import { canyonos_repo } from '../canyonos/canyonos.repo';
+import { registry_repo } from '../registry/registry.repo';
 import { core_answer } from './workflow-groups.core';
 import { unknown_workflow_group } from './workflow-groups.errors';
 import { with_group_lock } from './workflow-groups.lock';
@@ -1100,9 +1100,9 @@ export const kubernetes_target: WorkflowGroupTarget = {
   },
 
   /** The operator's registry already makes the dashboard know the workflow group's workflows:
-   * nothing to register, only the workflows it knows. */
+   * nothing to register, only the workflows it knows; a registration sent is not used. */
   async register_dashboard(workflow_group_id, row) {
     located(workflow_group_id, row);
-    return { workflows: await canyonos_repo.workflows_of_group(workflow_group_id) };
+    return { workflows: await registry_repo.workflows_of_group(workflow_group_id) };
   },
 };

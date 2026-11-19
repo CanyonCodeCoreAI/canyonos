@@ -129,6 +129,9 @@ def test_sync_scales_an_agent_without_redeploying(recorder, deployed):
         deployed, _config(deployed).read_text(), agent, replicas=desired + 1
     )
     with _synced(recorder, deployed, edited):
+        # The reload sets the count before it answers, so the status right after the sync
+        # shows it; only the new replica takes a while.
+        assert agent_status(recorder, deployed, agent)[0] == desired + 1
         poll(
             lambda: (
                 agent_status(recorder, deployed, agent)

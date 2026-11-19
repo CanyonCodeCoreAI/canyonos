@@ -4,8 +4,10 @@
 import { describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
-import { otelSpans, workflows } from '@api/db/schema';
-import { GEN_AI, WORKFLOW_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
+import { workflows } from '@api/db/schema';
+import { GEN_AI } from '@api/modules/metrics/metrics.contract';
+import { WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
+import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';

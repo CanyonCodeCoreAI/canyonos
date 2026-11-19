@@ -4,14 +4,14 @@
 import { edenTreaty } from '@elysiajs/eden';
 import type { z } from 'zod';
 
-import type { ForgeApi as ForgeApiType } from '@canyonos/api/client';
+import type { CanyonosApi } from '@canyonos/api/client';
 
 import { authActions } from '@/modules/auth/auth.store';
 import { webEnv } from '@/modules/core/lib/env';
 
 const API_URL = webEnv.api.baseUrl;
 
-export const forgePublicApi = edenTreaty<ForgeApiType>(API_URL);
+export const canyonosPublicApi = edenTreaty<CanyonosApi>(API_URL);
 
 const fetchWithAuth = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const apiKey = authActions.apiKey();
@@ -20,9 +20,9 @@ const fetchWithAuth = ((input: RequestInfo | URL, init?: RequestInit): Promise<R
   return fetch(input, { ...init, headers });
 }) as typeof fetch;
 
-export const forgeAuthApi = edenTreaty<ForgeApiType>(API_URL, { fetcher: fetchWithAuth });
+export const canyonosAuthApi = edenTreaty<CanyonosApi>(API_URL, { fetcher: fetchWithAuth });
 
-export const forgeApi = forgePublicApi;
+export const canyonosApi = canyonosPublicApi;
 
 interface ErrorPayload {
   value: {
@@ -56,10 +56,10 @@ type EdenResponse<T> = Promise<{ data: T; error: null } | { data: null; error: a
  * Generic API call wrapper. Extracts errors, optionally parses with Zod.
  *
  * @example
- * const data = await apiCall<MyType>(() => forgeApi.healthz.get());
+ * const data = await apiCall<MyType>(() => canyonosApi.healthz.get());
  *
  * const workflow = await apiCall<Workflow>(
- *   () => forgeAuthApi.workflows[workflow_id]!.get(),
+ *   () => canyonosAuthApi.workflows[workflow_id]!.get(),
  *   workflowSchema
  * );
  */

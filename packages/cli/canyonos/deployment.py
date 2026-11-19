@@ -162,6 +162,14 @@ def save_workflows(config_path, folders, ids):
     write_config(config_path, data, yaml_rt)
 
 
+def workflow_names_by_id():
+    """Each workflow in the workflow group's `workflows:`, its name by its workflow_id:
+    the workflows its Global Controller publishes to its Redis as the workflow
+    group's."""
+    workflows = read_config(deployment_config_path()).get("workflows") or {}
+    return {entry["workflow_id"]: name for name, entry in workflows.items()}
+
+
 def configured_target(config_path=None):
     """The `target` in this workflow group's config, lowercased, or docker without one (or
     without a config). Any other value, or a config that is not valid YAML, is

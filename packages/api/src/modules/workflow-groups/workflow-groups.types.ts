@@ -3,6 +3,8 @@
 
 import { z } from 'zod';
 
+import { RedisClientTlsSchema, WorkflowGroupRegistrationSchema } from '../registry/registry.types';
+
 // What /v1/workflow-groups takes and answers, the same on Docker and on Kubernetes; the CLI's
 // models (packages/cli/canyonos/sdk/models.py) are generated from these.
 
@@ -159,6 +161,10 @@ export const WorkflowSchema = z.object({
 
 export const WorkflowsSchema = z.object({ workflows: z.array(WorkflowSchema) });
 
+// What `canyonos deploy` registers with the dashboard on Docker, before the Global Controller
+// starts: each workflow's name by its workflow_id, and the Redis the dashboard reads them from.
+export const DashboardRegistrationSchema = WorkflowGroupRegistrationSchema;
+
 export const DashboardWorkflowSchema = z.object({ workflow_id: z.string(), name: z.string() });
 
 export const DashboardWorkflowsSchema = z.object({
@@ -183,9 +189,10 @@ export const WORKFLOW_GROUP_ERRORS = [
   'workflow_groups.stop_failed',
   'workflow_groups.controller_missing',
   'workflow_groups.controller_failed',
-  'workflow_groups.dashboard_unreachable',
-  'workflow_groups.dashboard_refused',
   'workflow_groups.reupload_needed',
+  'workflow_groups.registration_required',
+  'registry.registration_failed',
+  'database.unavailable',
   'kubernetes.error',
   'docker.disabled',
   'docker.unavailable',
@@ -231,6 +238,8 @@ export const WORKFLOW_GROUP_MODELS = {
   Fingerprints: FingerprintsSchema,
   Workflow: WorkflowSchema,
   Workflows: WorkflowsSchema,
+  RedisClientTls: RedisClientTlsSchema,
+  DashboardRegistration: DashboardRegistrationSchema,
   DashboardWorkflow: DashboardWorkflowSchema,
   DashboardWorkflows: DashboardWorkflowsSchema,
   WorkflowGroupError: WorkflowGroupErrorSchema,
@@ -255,5 +264,6 @@ export type ReplicaLogs = z.infer<typeof ReplicaLogsSchema>;
 export type Fingerprints = z.infer<typeof FingerprintsSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type Workflows = z.infer<typeof WorkflowsSchema>;
+export type DashboardRegistration = z.infer<typeof DashboardRegistrationSchema>;
 export type DashboardWorkflows = z.infer<typeof DashboardWorkflowsSchema>;
 export type WorkflowGroupError = z.infer<typeof WorkflowGroupErrorSchema>;

@@ -67,9 +67,11 @@ async function checkApiKey(apiUrl: string): Promise<void> {
   equal(await check.json(), { ok: true }, 'the key check answers ok');
 }
 
-const waitForHealth = () =>
-  waitFor('/healthz', 120_000, async () => {
-    const { status } = await getJson('/healthz');
+// /readyz, not /healthz: the API answers /healthz before its database is migrated and the
+// configured controller's workflows are registered, and the smoke reads both next.
+const waitForReady = () =>
+  waitFor('/readyz', 120_000, async () => {
+    const { status } = await getJson('/readyz');
     return status === 200 ? true : null;
   });
 
@@ -151,7 +153,7 @@ async function main() {
 
   log('starting the api');
   await compose('up', '-d', 'api');
-  await waitForHealth();
+  await waitForReady();
 
   log('checking the API key');
   await checkApiKey(BASE_URL);
@@ -219,7 +221,7 @@ async function main() {
 
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
-  await waitForHealth();
+  await waitForReady();
   const after = await getJson('/workflows', API_KEY);
   equal(
     after.body.filter((row: any) => row.id === WORKFLOW_ID).length,

@@ -21,6 +21,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/readyz': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Ready once the database is migrated and answers; also says whether Docker does */
+    get: operations['getReadyz'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/auth/status': {
     parameters: {
       query?: never;
@@ -647,23 +664,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/canyonos/workflows': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Register each workflow a controller runs */
-    post: operations['postCanyonosWorkflows'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/v1/workflow-groups': {
     parameters: {
       query?: never;
@@ -830,7 +830,7 @@ export interface paths {
     get?: never;
     /**
      * Register the workflow group's workflows with this dashboard
-     * @description Registers the running deploy's Redis, and a client certificate its CA signs when its Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures that may pass are retried for a minute; 502 when it is refused or never answers. On Kubernetes the operator's registry already lists the workflow group: returns the workflows the dashboard knows of it.
+     * @description Stores each workflow's name by its workflow_id with the workflow group's Redis: its container name, port and password, and a client certificate its CA signs when it takes only TLS. `canyonos deploy` sends it once the Global Controller container exists, before it starts: nothing connects to the Redis here; the status and the dashboard read it once the deploy runs. Returns the workflows as the dashboard names them; a workflow registered before keeps its name. On Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry already lists the workflow group: the body is optional and not used, and the workflows the dashboard knows of it are returned; on Docker a request without it is 422 `workflow_groups.registration_required`.
      */
     put: operations['putWorkflowGroupDashboard'];
     post?: never;
@@ -965,6 +965,20 @@ export interface components {
     Workflows: {
       workflows: components['schemas']['Workflow'][];
     };
+    RedisClientTls: {
+      ca: string;
+      cert: string;
+      key: string;
+    };
+    DashboardRegistration: {
+      workflows: {
+        [key: string]: string;
+      };
+      redis_host: string;
+      redis_port: number;
+      redis_password: string;
+      redis_tls: components['schemas']['RedisClientTls'] | null;
+    };
     DashboardWorkflow: {
       workflow_id: string;
       name: string;
@@ -992,9 +1006,10 @@ export interface components {
         | 'workflow_groups.stop_failed'
         | 'workflow_groups.controller_missing'
         | 'workflow_groups.controller_failed'
-        | 'workflow_groups.dashboard_unreachable'
-        | 'workflow_groups.dashboard_refused'
         | 'workflow_groups.reupload_needed'
+        | 'workflow_groups.registration_required'
+        | 'registry.registration_failed'
+        | 'database.unavailable'
         | 'kubernetes.error'
         | 'docker.disabled'
         | 'docker.unavailable'
@@ -1045,6 +1060,157 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            status: 'ok';
+            version: string;
+            timestamp: string;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  getReadyz: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            status: 'ready' | 'not_ready';
+            checks: {
+              /** @enum {string} */
+              database: 'ok' | 'connecting' | 'migrating' | 'failed' | 'unreachable';
+              /** @enum {string} */
+              docker: 'ok' | 'disabled' | 'unreachable';
+            };
+          };
+        };
+      };
       /** @description Response for status 400 */
       400: {
         headers: {
@@ -7006,176 +7172,6 @@ export interface operations {
       };
     };
   };
-  postCanyonosWorkflows: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          redis_host?: string;
-          redis_port: number;
-          /** @default  */
-          redis_password?: string;
-          redis_tls?: {
-            ca: string;
-            cert: string;
-            key: string;
-          };
-        };
-        'application/x-www-form-urlencoded': {
-          redis_host?: string;
-          redis_port: number;
-          /** @default  */
-          redis_password?: string;
-          redis_tls?: {
-            ca: string;
-            cert: string;
-            key: string;
-          };
-        };
-        'multipart/form-data': {
-          redis_host?: string;
-          redis_port: number;
-          /** @default  */
-          redis_password?: string;
-          redis_tls?: {
-            ca: string;
-            cert: string;
-            key: string;
-          };
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            workflows: {
-              /** Format: uuid */
-              workflow_id: string;
-              name: string;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
   listWorkflowGroups: {
     parameters: {
       query?: never;
@@ -8631,7 +8627,13 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DashboardRegistration'];
+        'application/x-www-form-urlencoded': components['schemas']['DashboardRegistration'];
+        'multipart/form-data': components['schemas']['DashboardRegistration'];
+      };
+    };
     responses: {
       /** @description Response for status 200 */
       200: {

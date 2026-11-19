@@ -4,8 +4,8 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { databasePlugin } from '@api/db/database';
+
 import { governanceRoutes } from '../governance/governance.routes';
 import { metricsRoutes } from '../metrics/metrics.routes';
 import { monitoringRoutes } from '../monitoring/monitoring.routes';
@@ -13,6 +13,7 @@ import { promptsRoutes } from '../prompts/prompts.routes';
 import { requestsRoutes } from '../requests/requests.routes';
 import { scalingRoutes } from '../scaling/scaling.routes';
 import { add_sample_data } from './sample-data';
+import { resolve_workflow_access } from './workflows.access';
 import {
   delete_workflow,
   get_workflow,
@@ -31,12 +32,12 @@ import {
 const doc = { tags: ['Workflows'], security: [{ bearerAuth: [] }] };
 
 export const workflowsRoutes = new Elysia({ prefix: '/workflows', name: 'workflows.routes' })
-  .use(authPlugin)
+  .use(databasePlugin)
   .get('/', () => list_workflows(), {
     response: { 200: z.array(WorkflowSummarySchema) },
     detail: doc,
   })
-  .resolve(resolveWorkflowAccess)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id', ({ params }) => get_workflow(params.workflow_id), {
     params: WorkflowIdParams,
     response: { 200: WorkflowSummarySchema },

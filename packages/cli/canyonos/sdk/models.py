@@ -141,6 +141,20 @@ class Workflows(TypedDict, closed=True):
     workflows: list[Workflow]
 
 
+class RedisClientTls(TypedDict, closed=True):
+    ca: str
+    cert: str
+    key: str
+
+
+class DashboardRegistration(TypedDict, closed=True):
+    workflows: dict[str, str]
+    redis_host: str
+    redis_port: int
+    redis_password: str
+    redis_tls: RedisClientTls | None
+
+
 class DashboardWorkflow(TypedDict, closed=True):
     workflow_id: str
     name: str

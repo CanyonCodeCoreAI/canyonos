@@ -5,9 +5,16 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetricRollups, otelMetrics, otelSpans } from '@api/db/schema';
-import { WORKFLOW_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
-import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
+import {
+  RESOURCE_WORKFLOW_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from '@api/modules/telemetry/telemetry.contract';
+import {
+  otelLogs,
+  otelMetricRollups,
+  otelMetrics,
+  otelSpans,
+} from '@api/modules/telemetry/telemetry.schema';
 import { SAMPLE_ATTRIBUTE } from '@api/modules/workflows/sample-data';
 
 import { api, setupE2ETests } from './e2e.setup';

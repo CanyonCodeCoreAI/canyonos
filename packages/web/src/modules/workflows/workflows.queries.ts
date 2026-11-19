@@ -15,7 +15,7 @@ import type { RequestList, RequestStatus, RequestTrace } from '@canyonos/api/req
 import type { FleetOverview } from '@canyonos/api/resources';
 import type { WorkflowDeleted, WorkflowSummary } from '@canyonos/api/workflows';
 
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import {
   dashboardPollInterval,
   toParams,
@@ -49,7 +49,7 @@ export type RequestsQuery = RangeQuery &
 export function workflowDetailQueryOptions(workflow_id: string) {
   return queryOptions({
     queryKey: workflowQueryKeys.detail(workflow_id),
-    queryFn: () => apiCall<WorkflowSummary>(() => forgeAuthApi.workflows[workflow_id]!.get()),
+    queryFn: () => apiCall<WorkflowSummary>(() => canyonosAuthApi.workflows[workflow_id]!.get()),
     retry: false,
   });
 }
@@ -58,7 +58,8 @@ export function useDeleteWorkflow(workflow_id: string) {
   const query_client = useQueryClient();
 
   return useMutation({
-    mutationFn: () => apiCall<WorkflowDeleted>(() => forgeAuthApi.workflows[workflow_id]!.delete()),
+    mutationFn: () =>
+      apiCall<WorkflowDeleted>(() => canyonosAuthApi.workflows[workflow_id]!.delete()),
     onSuccess: () =>
       query_client.invalidateQueries({ queryKey: workflowQueryKeys.all, exact: true }),
   });
@@ -67,7 +68,7 @@ export function useDeleteWorkflow(workflow_id: string) {
 export const workflowsQueryOptions = () =>
   queryOptions({
     queryKey: workflowQueryKeys.all,
-    queryFn: () => apiCall<WorkflowSummary[]>(() => forgeAuthApi.workflows.get()),
+    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.workflows.get()),
     retry: false,
   });
 
@@ -76,7 +77,7 @@ export const fleetOverviewQueryOptions = (query: RangeQuery) =>
     queryKey: ['resources', 'overview', query],
     queryFn: () =>
       apiCall<FleetOverview>(() =>
-        forgeAuthApi.resources.overview.get({ $query: toParams(query) })
+        canyonosAuthApi.resources.overview.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -86,7 +87,7 @@ export const workflowKpisQueryOptions = (workflow_id: string, query: RangeQuery)
     queryKey: ['workflows', workflow_id, 'kpis', query],
     queryFn: () =>
       apiCall<MetricsKpis>(() =>
-        forgeAuthApi.workflows[workflow_id]!.metrics.kpis.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.metrics.kpis.get({ $query: toParams(query) })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -97,7 +98,7 @@ export const workflowBlocksQueryOptions = (workflow_id: string, query: RangeQuer
     queryKey: ['workflows', workflow_id, 'blocks', query],
     queryFn: () =>
       apiCall<MetricsBlocks>(() =>
-        forgeAuthApi.workflows[workflow_id]!.metrics.blocks.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.metrics.blocks.get({ $query: toParams(query) })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -108,7 +109,7 @@ export const workflowTimeseriesQueryOptions = (workflow_id: string, query: Bucke
     queryKey: ['workflows', workflow_id, 'timeseries', query],
     queryFn: () =>
       apiCall<MetricsTimeseries>(() =>
-        forgeAuthApi.workflows[workflow_id]!.metrics.timeseries.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.metrics.timeseries.get({ $query: toParams(query) })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -123,7 +124,7 @@ export const workflowAgentQueryOptions = (
     queryKey: ['workflows', workflow_id, 'agents', agent_id, query],
     queryFn: () =>
       apiCall<MetricsAgentDetails>(() =>
-        forgeAuthApi.workflows[workflow_id]!.metrics.agents[agent_id]!.get({
+        canyonosAuthApi.workflows[workflow_id]!.metrics.agents[agent_id]!.get({
           $query: toParams(query),
         })
       ),
@@ -135,7 +136,9 @@ export const workflowDistributionQueryOptions = (workflow_id: string, query: Dis
     queryKey: ['workflows', workflow_id, 'distribution', query],
     queryFn: () =>
       apiCall<MetricsDistribution>(() =>
-        forgeAuthApi.workflows[workflow_id]!.metrics.distribution.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.metrics.distribution.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -146,7 +149,7 @@ export const workflowRequestsQueryOptions = (workflow_id: string, query: Request
     queryKey: ['workflows', workflow_id, 'requests', query],
     queryFn: () =>
       apiCall<RequestList>(() =>
-        forgeAuthApi.workflows[workflow_id]!.requests.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.requests.get({ $query: toParams(query) })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -161,7 +164,9 @@ export const workflowRequestTraceQueryOptions = (
     queryKey: ['workflows', workflow_id, 'requests', session_id, 'trace', query],
     queryFn: () =>
       apiCall<RequestTrace>(() =>
-        forgeAuthApi.workflows[workflow_id]!.requests[session_id]!.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.requests[session_id]!.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
   });

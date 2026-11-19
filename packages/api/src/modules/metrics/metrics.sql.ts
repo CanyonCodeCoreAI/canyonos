@@ -4,17 +4,17 @@
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 
-import { otelSpans, workflows } from '@api/db/schema';
+import { workflows } from '@api/db/schema';
+import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 import { withinRange } from '@core/time-range';
 import type { TimeRange } from '@core/time-range';
 
 import {
-  GEN_AI,
-  RUNTIME_ATTRIBUTES,
   STATUS_CODE,
   WORKFLOW_GROUP_ID_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
-} from './metrics.contract';
+} from '../telemetry/telemetry.contract';
+import { GEN_AI, RUNTIME_ATTRIBUTES } from './metrics.contract';
 
 const attrText = (alias: string, key: string): string => `(${alias}.attributes ->> '${key}')`;
 

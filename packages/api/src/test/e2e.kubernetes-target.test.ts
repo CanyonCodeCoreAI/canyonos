@@ -212,7 +212,8 @@ beforeAll(async () => {
   void collect(child.stderr as ReadableStream<Uint8Array>);
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   for (;;) {
-    const up = await fetch(`${api_url}/healthz`).then(
+    // Ready, not only listening: the /v1 routes answer 503 until its database is migrated.
+    const up = await fetch(`${api_url}/readyz`).then(
       (response) => response.ok,
       () => false
     );
@@ -325,6 +326,7 @@ describe('the Kubernetes target', () => {
     expect(log.headers.get('content-type')).toStartWith('text/plain');
     expect(await log.text()).toBe('global-controller: polling every 2s\nall agents up\n');
 
+    // No body: the operator's registry, not the caller, says which workflows the group has.
     const dashboard = await v1(`/${RESTORED_ID}/dashboard`, ALICE, { method: 'PUT' });
     expect(dashboard.status).toBe(200);
     expect(await dashboard.json()).toEqual({ workflows: [] });

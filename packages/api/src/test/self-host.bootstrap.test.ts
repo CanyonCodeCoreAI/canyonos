@@ -10,12 +10,12 @@ import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { workflows } from '@api/db/schema';
+import { registry_repo } from '@api/modules/registry/registry.repo';
 import {
-  bootstrap_canyonos,
+  bootstrap_registry,
   save_controller_workflows,
-} from '@api/modules/canyonos/canyonos.bootstrap';
-import { canyonos_repo } from '@api/modules/canyonos/canyonos.repo';
-import { sync_registered_workflows } from '@api/modules/canyonos/canyonos.sync';
+  sync_listed_workflows,
+} from '@api/modules/registry/registry.service';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
@@ -48,9 +48,12 @@ const WORKFLOW_GROUP_ID = '44444444-4444-4444-8444-444444444444';
 const save_group = (workflow_group_id: string | null, workflows: Record<string, string> = {}) =>
   save_controller_workflows(
     { workflow_group_id, workflows },
-    REDIS_HOST,
-    REDIS_PORT,
-    REDIS_PASSWORD
+    {
+      redis_host: REDIS_HOST,
+      redis_port: REDIS_PORT,
+      redis_password: REDIS_PASSWORD,
+      redis_tls: null,
+    }
   );
 
 const save_workflow = async (workflow_id: string, name = 'workflow_1') =>
@@ -62,7 +65,7 @@ const rejection = (promise: Promise<unknown>) =>
     (error: unknown) => error
   );
 
-describe('canyonos bootstrap', () => {
+describe('registry bootstrap', () => {
   // The suite points the Redis client at a closed port, so boot took the unreachable path.
   test('an unusable identity creates no workflow', async () => {
     const before = await count_workflows();
@@ -70,10 +73,10 @@ describe('canyonos bootstrap', () => {
     for (const identity of ['0', '', '   ', 'not-a-uuid', null]) {
       expect(await rejection(save_group(identity))).toMatchObject({
         status: 422,
-        code: 'canyonos.identity_unusable',
+        code: 'registry.identity_unusable',
       });
     }
-    await bootstrap_canyonos();
+    await bootstrap_registry();
 
     expect(await count_workflows()).toBe(before);
   });
@@ -102,7 +105,7 @@ describe('canyonos bootstrap', () => {
     expect(await count_workflows()).toBe(before);
   });
 
-  // e2e.canyonos-workflows.test.ts stores a listed workflow group's workflows from a real Redis.
+  // e2e.registry.test.ts stores a listed workflow group's workflows from a real Redis.
   test('a listed workflow group whose Redis cannot be read stores nothing, and never itself as a workflow', async () => {
     const workflow_group_id = '77777777-7777-4777-8777-777777777777';
     const dir = mkdtempSync(join(tmpdir(), 'registry-'));
@@ -115,8 +118,8 @@ describe('canyonos bootstrap', () => {
     writeFileSync(path, JSON.stringify({ projects: [entry] }));
     try {
       const before = await count_workflows();
-      await sync_registered_workflows(path);
-      await sync_registered_workflows(path);
+      await sync_listed_workflows(path);
+      await sync_listed_workflows(path);
 
       expect(await read_workflow(workflow_group_id)).toBeUndefined();
       expect(await count_workflows()).toBe(before);
@@ -138,7 +141,7 @@ describe('POST /v1/traces', () => {
   });
 });
 
-describe('canyonos reads', () => {
+describe('registry reads', () => {
   test('the API key lists and reads the controller workflow and its requests', async () => {
     const workflow_id = '33333333-3333-4333-8333-333333333333';
     await save_workflow(workflow_id);
@@ -172,7 +175,7 @@ describe('canyonos reads', () => {
     expect(requests.data?.items.map((item) => item.session_id)).toEqual(['canyonos-user-trace']);
   });
 
-  test('an existing workflow only takes the Redis and its password, encrypted: name and timestamps stay', async () => {
+  test('an existing workflow takes the workflow group, the Redis and its password, encrypted: name and creation time stay', async () => {
     const workflow_id = await seed_workflow('kept-owner');
     const before = await read_workflow(workflow_id);
 
@@ -181,12 +184,16 @@ describe('canyonos reads', () => {
       name: 'kept-owner',
     });
 
-    expect(await read_workflow(workflow_id)).toEqual({
+    const after = await read_workflow(workflow_id);
+    expect(after).toEqual({
       ...before!,
+      workflow_group_id: WORKFLOW_GROUP_ID,
       redis_host: REDIS_HOST,
       redis_port: REDIS_PORT,
       redis_password: expect.not.stringContaining(REDIS_PASSWORD),
+      updated_at: expect.any(String),
     });
-    expect((await canyonos_repo.find_redis(workflow_id))?.redis_password).toBe(REDIS_PASSWORD);
+    expect(Date.parse(after!.updated_at)).toBeGreaterThanOrEqual(Date.parse(before!.updated_at));
+    expect((await registry_repo.find_redis(workflow_id))?.redis_password).toBe(REDIS_PASSWORD);
   });
 });

@@ -11,7 +11,7 @@ import type {
 } from '@canyonos/api/scaling';
 
 import { toast } from '@repo/ui/shadcn/sonner';
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import {
   dashboardPollInterval,
   workflowQueryKeys,
@@ -20,9 +20,9 @@ import {
 const TOAST = { testId: 'app-toast', position: 'top-center' } as const;
 
 const ERROR_MESSAGES: Record<string, string> = {
-  'canyonos.workflow_not_running':
+  'registry.workflow_not_running':
     'This workflow is not running, so its scaling policy cannot be read. Deploy it, then retry.',
-  'canyonos.controller_unreachable':
+  'registry.controller_unreachable':
     'The running controller could not be reached. Check that it is up, then retry.',
   'scaling.config_invalid':
     "The controller's scaling config could not be read. Fix config/scaling.yaml and reload, then retry.",
@@ -40,7 +40,7 @@ export const scalingQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.scaling(workflow_id),
     queryFn: () =>
-      apiCall<ScalingResponse>(() => forgeAuthApi.workflows[workflow_id]!.scaling.get()),
+      apiCall<ScalingResponse>(() => canyonosAuthApi.workflows[workflow_id]!.scaling.get()),
     retry: false,
   });
 
@@ -50,7 +50,7 @@ export const scalingAgentsQueryOptions = (workflow_id: string) =>
     queryKey: workflowQueryKeys.scalingAgents(workflow_id),
     queryFn: () =>
       apiCall<ScalingAgentsResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.scaling.agents.get()
+        canyonosAuthApi.workflows[workflow_id]!.scaling.agents.get()
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -66,7 +66,7 @@ export function useSaveScalingPolicy(workflow_id: string) {
   const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
     mutationFn: (policy: ScalingPolicy) =>
-      apiCall<ScalingPolicy>(() => forgeAuthApi.workflows[workflow_id]!.scaling.put(policy)),
+      apiCall<ScalingPolicy>(() => canyonosAuthApi.workflows[workflow_id]!.scaling.put(policy)),
     // Toasted here: the re-read remounts the card, so a callback on the call site never runs.
     onSuccess: () => {
       toast.success(
@@ -82,7 +82,9 @@ export function useDeleteScalingPolicy(workflow_id: string) {
   const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
     mutationFn: () =>
-      apiCall<ScalingDeleteResponse>(() => forgeAuthApi.workflows[workflow_id]!.scaling.delete()),
+      apiCall<ScalingDeleteResponse>(() =>
+        canyonosAuthApi.workflows[workflow_id]!.scaling.delete()
+      ),
     onSuccess: () => {
       toast.success(
         'Scaling policy deleted. Agents keep their current replicas until the next reload.',

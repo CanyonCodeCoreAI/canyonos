@@ -5,7 +5,6 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig((options) => ({
   entry: {
-    index: 'src/sdk/index.ts',
     client: 'src/sdk/client.ts',
     core: 'src/sdk/core.ts',
     auth: 'src/sdk/auth.ts',

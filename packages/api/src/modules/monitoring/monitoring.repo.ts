@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { sql } from 'drizzle-orm';
-import { z } from 'zod';
 import type { RedisClient } from 'bun';
 import type { SQL } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs, otelMetricRollups, otelMetrics } from '@api/db/schema';
+import { otelLogs, otelMetricRollups, otelMetrics } from '@api/modules/telemetry/telemetry.schema';
 import { timeGrid, withinRange } from '@core/time-range';
 import type { GridQuery, TimeRange } from '@core/time-range';
 
-import { WORKFLOW_GROUP_ID_ATTRIBUTE } from '../metrics/metrics.contract';
 import {
   isModelSpan,
   requestStart,
@@ -30,6 +28,11 @@ import {
   workflowRequestSpans,
   workflowSpans,
 } from '../metrics/metrics.sql';
+import { ENDPOINT_KEY, EndpointAddressSchema } from '../registry/registry.contract';
+import {
+  RESOURCE_WORKFLOW_ATTRIBUTE,
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+} from '../telemetry/telemetry.contract';
 import { bucket_start_of, ROLLUP_SECONDS } from '../telemetry/telemetry.rollup';
 import {
   AGENT_DRAINING_METRIC,
@@ -39,9 +42,9 @@ import {
   REPLICA_UP_SECONDS,
   REQUESTS_COMPLETED_METRIC,
   REQUESTS_STARTED_METRIC,
-  RESOURCE_WORKFLOW_ATTRIBUTE,
   SATURATION_METRIC,
 } from './monitoring.signals';
+import type { EndpointAddress } from '../registry/registry.contract';
 import type {
   MonitoringErrorSummaryResponse,
   MonitoringGrid,
@@ -75,42 +78,6 @@ const UNKNOWN_AGENT = 'unknown';
 const UNKNOWN_HOST = 'unknown';
 
 const GROUP_LIMIT = 10;
-
-export const ENDPOINT_KEY = 'endpoint:address';
-
-const JsonRoutes = z
-  .string()
-  .transform((raw, ctx) => {
-    try {
-      return JSON.parse(raw) as unknown;
-    } catch {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'routes is not JSON' });
-      return z.NEVER;
-    }
-  })
-  .pipe(
-    z
-      .array(
-        z.object({
-          workflow: z.string().min(1),
-          workflow_id: z.string().nullish(),
-          agent: z.string().min(1),
-          method: z.string().min(1),
-          arguments: z.array(z.string()),
-          url: z.string().url(),
-        })
-      )
-      .min(1)
-  );
-
-/** The endpoint:address hash as the GlobalController writes it while the endpoint runs. */
-const EndpointAddressSchema = z.object({
-  public_host: z.string().min(1),
-  api_port: z.string().regex(/^\d+$/),
-  routes: JsonRoutes,
-});
-
-export type EndpointAddress = z.infer<typeof EndpointAddressSchema>;
 
 const REPLICA_ID = `nullif(m.resource_attributes ->> 'service.instance.id', '')`;
 

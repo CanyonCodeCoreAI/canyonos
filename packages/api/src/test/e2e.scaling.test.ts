@@ -127,7 +127,7 @@ describe('workflow scaling policy', () => {
     expect(await read_scaling_config()).toEqual(CONFIG);
   });
 
-  test('a workflow the controller is not running is 404 canyonos.workflow_not_running', async () => {
+  test('a workflow the controller is not running is 404 registry.workflow_not_running', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
     const { workflow_id } = await create_test_workflow({ name: 'Idle Workflow' });
@@ -145,7 +145,7 @@ describe('workflow scaling policy', () => {
 
     for (const res of responses) {
       expect(res.error?.status as number).toBe(404);
-      expect(error_code(res)).toBe('canyonos.workflow_not_running');
+      expect(error_code(res)).toBe('registry.workflow_not_running');
     }
     expect(await read_scaling_config()).toEqual(CONFIG);
   });

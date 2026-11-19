@@ -54,6 +54,8 @@ GC_IMAGE = env.core_image
 # Handed to the container in its environment, never on the command line, so a later
 # Global Controller of the workflow group still opens a Redis that outlived the last.
 REDIS_PASSWORD_ENV = "CANYONOS_REDIS_PASSWORD"
+REDIS_HOST_ENV = "CANYONOS_REDIS_HOST"
+REDIS_PORT_ENV = "CANYONOS_REDIS_PORT"
 
 # The workflow group's workspace volume (`deployment.workspace_volume()`) is mounted here.
 # Files are uploaded through the CanyonOS API, not mounted live, so host-side
@@ -367,9 +369,9 @@ def _create_container(
         f"{deployment.workspace_volume()}:{GC_WORKSPACE_PATH}",
         "--add-host=host.docker.internal:host-gateway",
         "-e",
-        f"CANYONOS_REDIS_HOST={deployment.redis_container_name()}",
+        f"{REDIS_HOST_ENV}={deployment.redis_container_name()}",
         "-e",
-        f"CANYONOS_REDIS_PORT={redis_port}",
+        f"{REDIS_PORT_ENV}={redis_port}",
         *(["-e", f"CANYONOS_LAST_API_PORT={api_port}"] if api_port else []),
         "-e",
         f"{RESERVED_PORTS_ENV}={','.join(map(str, sorted(reserved)))}",
@@ -565,6 +567,29 @@ def _inspect_container(state):
         return json.loads(result.stdout)[0]
     except (ValueError, IndexError, KeyError):
         return None
+
+
+def controller_redis(state):
+    """The Redis the Global Controller container `state` records was created for: the
+    workflow group's Redis container, its port and its password, as `docker create`
+    handed them to it, which the dashboard registers. Raises RuntimeError when Docker
+    can't say."""
+    container = _inspect_container(state) or {}
+    variables = dict(
+        line.partition("=")[::2]
+        for line in (container.get("Config") or {}).get("Env") or []
+    )
+    try:
+        return {
+            "redis_host": variables[REDIS_HOST_ENV],
+            "redis_port": int(variables[REDIS_PORT_ENV]),
+            "redis_password": variables[REDIS_PASSWORD_ENV],
+        }
+    except (KeyError, ValueError):
+        raise RuntimeError(
+            "Could not read the Redis settings of the Global Controller container "
+            f"{state['container_id'][:12]}."
+        ) from None
 
 
 def _can_reuse_container(state, image, auth_env):

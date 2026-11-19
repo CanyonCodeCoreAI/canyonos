@@ -289,10 +289,10 @@ test.describe('screen states', () => {
   for (const failure of [
     {
       status: 404,
-      code: 'canyonos.workflow_not_running',
+      code: 'registry.workflow_not_running',
       message: 'This workflow is not running, so its scaling policy cannot be read.',
     },
-    { status: 502, code: 'canyonos.controller_unreachable', message: UNREACHABLE },
+    { status: 502, code: 'registry.controller_unreachable', message: UNREACHABLE },
     { status: 500, code: 'test.failure', message: 'Controlled test failure' },
   ]) {
     test(`error: a failed read (${failure.status}) shows only the error`, async ({ page }) => {

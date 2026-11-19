@@ -25,9 +25,13 @@ import type {
 } from '@canyonos/api/scaling';
 import type { WorkflowStats, WorkflowSummary } from '@canyonos/api/workflows';
 
-import { load_prompts } from '../modules/prompts/prompts.service';
 import { api, setupE2ETests } from './e2e.setup';
-import { seed_running_workflow, seed_scaling, seed_scaling_agents } from './redis-test.utils';
+import {
+  reconcile_prompts_now,
+  seed_running_workflow,
+  seed_scaling,
+  seed_scaling_agents,
+} from './redis-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
@@ -168,7 +172,7 @@ describe('SDK contract', () => {
         ],
       },
     });
-    await load_prompts(workflow_id);
+    await reconcile_prompts_now(workflow_id);
 
     const v1: SystemPrompt = {
       version: 'app-summarize-abcdef01-v1',

@@ -3,8 +3,9 @@
 
 """
 Logic for `canyonos deploy`: bring up the CanyonOS API, create the Global Controller
-container, and upload the workflow group to its /workspace volume through the API (via
-`canyonos sync`), which then starts the container to build and deploy it. The
+container, register the workflow group with the dashboard, and upload the workflow
+group to its /workspace volume through the API (via `canyonos sync`), which then
+starts the container to build and deploy it. The
 container's `canyonos deploy` handles both the build (stubs, protos, Docker images)
 and the launch -- the CLI just ships files and shows what the API's status says it is
 doing.
@@ -52,7 +53,6 @@ from canyonos.api import ApiError, controller_log, deploy_status
 from canyonos.dashboard_stack import (
     _dashboard_lock,
     dashboard_url,
-    join_deployment_network,
     run_dashboard,
     running_web_port,
     stop_dashboard,
@@ -69,9 +69,9 @@ from canyonos.new_app import deployment_template
 from canyonos.os_support import is_terminal
 from canyonos.resources import configure_resources
 from canyonos.serve import (
-    _register_running_workflows,
     _warn_if_dashboard_port_ignored,
     ensure_api,
+    register_with_dashboard,
     serve_dashboard,
 )
 from canyonos.sync import run_sync
@@ -186,7 +186,10 @@ def run_deploy(
         except (Exception, KeyboardInterrupt):
             _stop_the_stack_it_started(started_api)
             raise
-        _join_the_dashboard()
+        # Before the upload starts the Global Controller, so the dashboard knows its
+        # Redis by the time it publishes there, toy and --serve false deploys included;
+        # a deploy it fails for stops here, as its status could not be read.
+        register_with_dashboard(load_state(), required=True)
 
     # Upload the workflow group into the container before building/deploying.
     if not run_sync(workflows, api_key_hash=hash_api_key(key)):
@@ -210,7 +213,7 @@ def run_deploy(
             )
             serve = False
         else:
-            # Registered later, at ready; a daemon, so a failed deploy exits without waiting.
+            # A daemon, so a failed deploy exits without waiting.
             threading.Thread(
                 target=run_dashboard,
                 args=(None, dashboard_port(config_path), hash_api_key(key)),
@@ -225,15 +228,6 @@ def _stop_the_stack_it_started(started_api):
     when `started_api`, this deploy started it, and no other workflow group needs it."""
     if started_api and not deployment.other_global_controllers_running(None):
         stop_dashboard()
-
-
-def _join_the_dashboard():
-    """Connect the dashboard's API and database to the workflow group's network, where
-    the API reaches its Redis to register it and its telemetry reaches them; one that
-    can't join only warns, since the deploy runs without it."""
-    joined = join_deployment_network(deployment.deployment_group())
-    if joined is not None:
-        ui.warn(f"The dashboard won't show this workflow group: {joined}")
 
 
 def _curl_example(url, body, keyed):
@@ -322,16 +316,15 @@ def _print_deploy_summary(dashboard_url, endpoint, keyed):
 def _start_dashboard(key):
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy.
     Its web app starts unless it runs already, in front of the API that checks `key`,
-    which the deploy brought up; the workflow group is registered with it either way."""
+    which the deploy brought up and registered the workflow group with."""
     try:
         if deployment.configured_target() == "kubernetes":
             return f"http://127.0.0.1:{_open_dashboard()}"
-        # Waits out a background start, so a half-started dashboard is not registered.
+        # Waits out a background start, so a half-started dashboard is not taken as up.
         with ui.status("Starting the dashboard..."), _dashboard_lock():
             port = running_web_port()
         if port is not None:
             _warn_if_dashboard_port_ignored()
-            _register_running_workflows()
             return dashboard_url(port)
         result = serve_dashboard(api_key_hash=hash_api_key(key))
     except Exception as e:

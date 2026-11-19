@@ -3,12 +3,10 @@
 
 """What the CanyonOS API reads from a running Docker workflow group, each run as a
 `canyonos_core.cli` command inside its Global Controller's container against the
-workspace at `/workspace`: the config check before a reload, the endpoint, agents and
-machine errors from Redis, health checks, replica logs, and the Redis credentials the
-dashboard registers. Imports the controller modules, which read `CANYONOS_REDIS_PORT`
-on import, so `canyonos_core.cli` imports it only inside these commands."""
+workspace at `/workspace`: the config check before a reload, health checks and replica
+logs. Imports the controller modules, which read `CANYONOS_REDIS_PORT` on import, so
+`canyonos_core.cli` imports it only inside these commands."""
 
-import base64
 import os
 import re
 import urllib.error
@@ -24,15 +22,10 @@ from canyonos_core.controller.controller_context import (
     list_replicas,
     run_on_machine,
 )
-from canyonos_core.controller.utils import internal_ca, internal_tls
 from canyonos_core.controller.utils.config_env import expand_env_value, read_dotenv
 from canyonos_core.controller.utils.config_specs import read_config_specs
-from canyonos_core.controller.utils.redis_client import PASSWORD_ENV, RedisClient
-from canyonos_core.endpoint import (
-    ENDPOINT_AGENT_NAME,
-    ENDPOINT_PORT,
-    read_endpoint_record,
-)
+from canyonos_core.controller.utils.redis_client import RedisClient
+from canyonos_core.endpoint import ENDPOINT_AGENT_NAME, ENDPOINT_PORT
 from canyonos_core.reconciler import replicas, state
 from canyonos_core.reconciler.parallel import run_in_parallel
 from canyonos_core.schema import DEPLOYMENT_CONFIG, SchemaError, check_deployment
@@ -50,21 +43,6 @@ def check(workspace):
     if violations:
         raise CommandError(str(SchemaError(violations)))
     return {"ok": True}
-
-
-def runtime_status(workspace):
-    """Return the endpoint, each agent's replica counts and launch error, and each
-    machine type's start error the running deploy keeps in Redis; when Redis can't be
-    read, leave them null and say why under `errors`."""
-    status = {"endpoint": None, "agents": None, "machine_errors": None, "errors": []}
-    try:
-        redis_client = _deploy_redis(_deploy_config(workspace))
-        status["endpoint"] = read_endpoint_record(redis_client)
-        status["agents"] = _read_agents(redis_client)
-        status["machine_errors"] = redis_client.hgetall(state.MACHINE_ERRORS_KEY)
-    except _READ_ERRORS as e:
-        status["errors"].append(f"Could not read the deploy's state in Redis: {e}")
-    return status
 
 
 def health(workspace):
@@ -179,27 +157,6 @@ def agent_logs(workspace, name, tail):
         for replica_id, lines, error in run_in_parallel(jobs)
     }
     return {"logs": logs}
-
-
-def dashboard_credentials():
-    """Return the host, port and password of this workflow group's Redis, and when it
-    takes only TLS, a client certificate its CA signs with that CA, for the dashboard
-    to register it with; `redis_tls` is null otherwise."""
-    credentials = {
-        "redis_host": os.environ["CANYONOS_REDIS_HOST"],
-        "redis_port": DEFAULT_REDIS_PORT,
-        "redis_password": os.environ[PASSWORD_ENV],
-        "redis_tls": None,
-    }
-    # Redis takes only TLS clients with a certificate the workflow group's CA signed.
-    if internal_ca.available():
-        cert, key = internal_ca.sign(["dashboard"])
-        credentials["redis_tls"] = {
-            "ca": base64.b64decode(os.environ[internal_tls.CA_CERT_ENV]).decode(),
-            "cert": cert.decode(),
-            "key": key.decode(),
-        }
-    return credentials
 
 
 def _deploy_config(workspace):

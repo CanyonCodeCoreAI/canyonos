@@ -22,6 +22,7 @@ import { target } from './workflow-groups.target';
 import type { CoreReply } from './workflow-groups.core';
 import type { ApplyFailure } from './workflow-groups.target';
 import type {
+  DashboardRegistration,
   DashboardWorkflows,
   Generation,
   Health,
@@ -260,8 +261,11 @@ export async function agent_logs(
   return target.agent_logs(workflow_group_id, row, name, tail);
 }
 
-/** The running deploy's workflows, which this dashboard then reads. */
-export async function register_dashboard(workflow_group_id: string): Promise<DashboardWorkflows> {
+/** Registers the workflow group's workflows, which this dashboard then reads, and returns them. */
+export async function register_dashboard(
+  workflow_group_id: string,
+  registration: DashboardRegistration | undefined
+): Promise<DashboardWorkflows> {
   const row = await workflow_groups_repo.find(workflow_group_id);
-  return target.register_dashboard(workflow_group_id, row);
+  return target.register_dashboard(workflow_group_id, row, registration);
 }

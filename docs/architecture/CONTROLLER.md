@@ -82,7 +82,7 @@ signed by a CA the workflow group has to itself:
 | --- | --- | --- |
 | Redis | TLS only (`--port 0 --tls-port <redis_port>`), a client certificate the CA signed, and the password | Plaintext with the password (Kubernetes: TLS when the operator sets it) |
 | gRPC between controllers | Mutual TLS: the server requires a client certificate, the client checks the server's name | Plaintext |
-| Dashboard API to Redis | TLS with a client certificate the Global Controller signs when it registers the workflow group, stored encrypted like the password | Plaintext with the password |
+| Dashboard API to Redis | TLS with a client certificate the CLI signs with the CA when it registers the workflow group, stored encrypted like the password | Plaintext with the password |
 
 A container reads its certificate in `controller/utils/internal_tls.py` (flat as
 `canyonos_internal_tls.py` in agent images), which writes it to files and sets
@@ -115,13 +115,19 @@ deploy's phase, steps, error and last reload in `/var/lib/canyonos/progress.json
 the API reads with Docker's archive API for the status. The controller log the API
 serves is the container's log.
 
+The API reads the deploy's endpoint, each agent's replicas and the machine errors from
+the workflow group's Redis itself (`workflow-groups.runtime.ts`). `canyonos deploy`
+registers that Redis with it (`PUT /v1/workflow-groups/<workflow_group_id>/dashboard`)
+right after it creates the container, before the upload starts it; a deploy whose
+registration fails stops there, since the API could not read its status.
+
 Everything else the API needs from Core is a `canyonos_core.cli` command that prints one
 JSON object:
 
-| Commands                                                                   | Where they run                                                                                       | What they do                                                                                                                                                              |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `write-group-files`, `put-workflow`, `remove-workflows`                    | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it, remove workflows (`workspace_jobs.py`)                                  |
-| `check`, `runtime-status`, `health`, `agent-logs`, `dashboard-credentials` | `docker exec` in the running container                                                               | The config check before a reload, each agent's replicas, the health checks, a replica's logs, the Redis credentials the dashboard registers with (`controller_status.py`) |
+| Commands                                                | Where they run                                                                                       | What they do                                                                                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `write-group-files`, `put-workflow`, `remove-workflows` | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it, remove workflows (`workspace_jobs.py`) |
+| `check`, `health`, `agent-logs`                         | `docker exec` in the running container                                                               | The config check before a reload, the health checks, a replica's logs (`controller_status.py`)                                           |
 
 Every `/v1/workflow-groups` request needs this machine's control key as
 `Authorization: Bearer <key>`. The CLI makes it once, in `~/.canyonos/control_key`,

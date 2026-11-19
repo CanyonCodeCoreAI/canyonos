@@ -5,7 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { otelLogs } from '@api/db/schema';
+import { otelLogs } from '@api/modules/telemetry/telemetry.schema';
 
 import { setupE2ETests } from './e2e.setup';
 import {

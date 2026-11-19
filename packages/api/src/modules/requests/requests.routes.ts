@@ -4,10 +4,10 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
+import { databasePlugin } from '@api/db/database';
 import { TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import { get_request_trace, list_requests } from './requests.service';
 import { ListRequestsQuerySchema, RequestListSchema, RequestTraceSchema } from './requests.types';
 
@@ -16,8 +16,8 @@ const doc = { tags: ['Requests'], security: [{ bearerAuth: [] }] };
 // Prefix-less: composed into workflows.routes so both live in one `/workflows` tree. Two separate
 // `/workflows` plugins would make Eden type `workflows[:id]` a union and drop `.get` for clients.
 export const requestsRoutes = new Elysia({ name: 'requests.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id/requests', ({ params, query }) => list_requests(params.workflow_id, query), {
     params: z.object({ workflow_id: z.string().uuid() }),
     query: ListRequestsQuerySchema,

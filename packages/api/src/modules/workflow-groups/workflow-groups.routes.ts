@@ -5,6 +5,7 @@ import { Elysia } from 'elysia';
 import { z } from 'zod';
 import type { Context } from 'elysia';
 
+import { databasePlugin } from '@api/db/database';
 import { early_refusal, payloadTooLarge } from '@core/errors';
 
 import { upload_started } from './workflow-groups.apply';
@@ -25,6 +26,7 @@ import {
 } from './workflow-groups.service';
 import {
   AgentParams,
+  DashboardRegistrationSchema,
   LogsQuery,
   TailQuery,
   WORKFLOW_GROUP_MODELS,
@@ -66,6 +68,9 @@ const upload_releases = new WeakMap<Request, () => void>();
 
 export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow-groups.routes' })
   .model(WORKFLOW_GROUP_MODELS)
+  // Every route reads or writes the workflow group's row: 503 `database.unavailable` until the
+  // database is ready, after the control key check.
+  .use(databasePlugin)
   // After the control key check, which the app mounts first: only an accepted PUT counts.
   .onRequest(({ request, set }) => {
     if (request.method !== 'PUT') return;
@@ -300,23 +305,27 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
   )
   .put(
     '/:workflow_group_id/dashboard',
-    (context) => {
-      lift_idle_timeout(context);
-      return register_dashboard(context.params.workflow_group_id);
-    },
+    ({ params, body }) => register_dashboard(params.workflow_group_id, body),
     {
       params: WorkflowGroupParams,
-      response: { 200: 'DashboardWorkflows', ...refusals, 404: refused, 409: refused },
+      // Optional: Docker needs it (422 without), Kubernetes has the operator's registry instead.
+      body: DashboardRegistrationSchema.optional(),
+      response: { 200: 'DashboardWorkflows', ...refusals, 404: refused, 500: refused },
       detail: {
         ...doc,
         operationId: 'putWorkflowGroupDashboard',
         summary: "Register the workflow group's workflows with this dashboard",
         description:
-          "Registers the running deploy's Redis, and a client certificate its CA signs when its " +
-          'Redis takes only TLS, so the dashboard reads its workflows; returns them. Failures ' +
-          'that may pass are retried for a minute; 502 when it is refused or never answers. On ' +
-          "Kubernetes the operator's registry already lists the workflow group: returns the " +
-          'workflows the dashboard knows of it.',
+          "Stores each workflow's name by its workflow_id with the workflow group's Redis: its " +
+          'container name, port and password, and a client certificate its CA signs when it ' +
+          'takes only TLS. `canyonos deploy` sends it once the Global Controller container ' +
+          'exists, before it starts: nothing connects to the Redis here; the status and the ' +
+          'dashboard read it once the deploy runs. Returns the workflows as the dashboard ' +
+          'names them; a workflow registered before keeps its name. On Docker, 404 without ' +
+          "the workflow group's container or upload. On Kubernetes the operator's registry " +
+          'already lists the workflow group: the body is optional and not used, and the ' +
+          'workflows the dashboard knows of it are returned; on Docker a request without it is ' +
+          '422 `workflow_groups.registration_required`.',
       },
     }
   );

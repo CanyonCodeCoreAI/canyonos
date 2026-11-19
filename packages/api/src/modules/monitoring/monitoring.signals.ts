@@ -42,5 +42,3 @@ export const REQUESTS_COMPLETED_METRIC = 'canyonos.agent.requests.completed';
 
 // Replicas report every ~5s; one missing more than this many seconds of samples is not up.
 export const REPLICA_UP_SECONDS = 30;
-
-export const RESOURCE_WORKFLOW_ATTRIBUTE = 'canyonos.workflow.id';

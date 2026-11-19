@@ -16,6 +16,7 @@ CanyonProject. Both answer the same routes and shapes, and an error is
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,8 +33,12 @@ CLEAN_REQUEST_TIMEOUT_SECONDS = 270
 KUBERNETES_CLEAN_REQUEST_TIMEOUT_SECONDS = 905
 # Longer than one log read on a replica's machine, which may take up to 180s over SSH.
 LOGS_REQUEST_TIMEOUT_SECONDS = 200
-# Longer than the API's own wait for the dashboard to take the registration.
-DASHBOARD_REQUEST_TIMEOUT_SECONDS = 90
+# The API stores a registration without reaching the workflow group's Redis.
+DASHBOARD_REQUEST_TIMEOUT_SECONDS = 10
+# How long a just-started API may take to connect to and migrate its database, which
+# it does after it starts listening.
+READY_TIMEOUT_SECONDS = 60
+READY_POLL_SECONDS = 1
 
 PREFIX = "/v1/workflow-groups"
 # The CanyonOS API names its errors `workflow_groups.<code>`.
@@ -275,9 +280,40 @@ def list_workflow_groups(state=None):
     return _request(state, "GET", PREFIX, "List workflow groups")["workflow_groups"]
 
 
+def _wait_until_ready(state=None):
+    """Wait up to READY_TIMEOUT_SECONDS for the API to answer `/readyz`: it listens
+    before its database is ready, and its `/v1` routes answer 503 until then. An older
+    API without `/readyz` is not waited for. Raises ApiError with its last answer when
+    it is still not ready."""
+    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+    while True:
+        try:
+            _open(
+                state,
+                "GET",
+                "/readyz",
+                "Readiness check",
+                timeout=STATUS_TIMEOUT_SECONDS,
+            ).close()
+            return
+        except ApiError as e:
+            if e.status == 404:
+                return
+            if time.monotonic() >= deadline:
+                raise ApiError(
+                    f"The CanyonOS API at {_connection(state)[0]} was not ready within "
+                    f"{READY_TIMEOUT_SECONDS}s. {e}",
+                    status=e.status,
+                    code=e.code,
+                ) from None
+        time.sleep(READY_POLL_SECONDS)
+
+
 def probe(state=None):
-    """Check that the API answers `/v1`, so a command fails at once, naming the fix,
-    when it runs an older image without these routes. Raises ApiError."""
+    """Wait until the API is ready, then check that it answers `/v1`, so a command
+    fails at once, naming the fix, when it runs an older image without these routes.
+    Raises ApiError."""
+    _wait_until_ready(state)
     try:
         list_workflow_groups(state)
     except ApiError as e:
@@ -324,15 +360,17 @@ def put_workflow(state, name, archive):
     )
 
 
-def put_dashboard(state):
-    """Have the API register the workflow group's Redis with the dashboard and return
-    the dashboard's `{workflow_id, name}` of each workflow under `workflows`. Raises
-    ApiError on failure."""
+def put_dashboard(state, registration):
+    """Register the workflow group with the dashboard: `registration` names each of its
+    workflows by workflow_id and the Redis its Global Controller uses, which the
+    dashboard reads them from. Returns the dashboard's `{workflow_id, name}` of each
+    workflow under `workflows`. Raises ApiError on failure."""
     return _request(
         state,
         "PUT",
         _group_path(state, "/dashboard"),
         "Dashboard registration",
+        registration,
         timeout=DASHBOARD_REQUEST_TIMEOUT_SECONDS,
     )
 
@@ -407,11 +445,14 @@ def deployed_endpoint(state):
     """Return the endpoint record the running deploy published (`public_host`,
     `api_port`, and `routes`, each with its `agent`, `method`, `arguments` and `url`);
     raise ApiError when the deploy has none yet."""
-    endpoint = (workflow_group_status(state) or {}).get("endpoint")
+    status = workflow_group_status(state) or {}
+    endpoint = status.get("endpoint")
     if endpoint is None:
+        # The API names why it could not read the endpoint, e.g. its Redis refused it.
+        reasons = "".join(f" {error}." for error in status.get("errors") or [])
         raise ApiError(
-            "The running deploy has no endpoint yet. Run `canyonos status` to see "
-            "when it is up."
+            f"The running deploy has no endpoint yet.{reasons} Run `canyonos status` "
+            "to see when it is up."
         )
     return endpoint
 

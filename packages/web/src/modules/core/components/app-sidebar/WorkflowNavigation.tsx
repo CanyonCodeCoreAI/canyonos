@@ -24,7 +24,7 @@ import type { WorkflowSummary } from '@canyonos/api/workflows';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@repo/ui/shadcn/collapsible';
 import { useSidebar } from '@repo/ui/shadcn/sidebar';
 import { cn } from '@repo/ui/utils';
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import { PALETTE } from '@/modules/core/navigation/navigation';
 import {
   createWorkflowExpansionState,
@@ -301,7 +301,7 @@ function WorkflowRow({ workflow }: { readonly workflow: WorkflowSummary }) {
 export function WorkflowNavigation() {
   const workflows_query = useQuery({
     queryKey: workflowQueryKeys.all,
-    queryFn: () => apiCall<WorkflowSummary[]>(() => forgeAuthApi.workflows.get()),
+    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.workflows.get()),
     retry: false,
   });
 

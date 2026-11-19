@@ -3,14 +3,14 @@
 
 import { Elysia } from 'elysia';
 
+import { databasePlugin } from '@api/db/database';
 import { TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin } from '../auth/auth.middleware';
 import { get_fleet_overview } from './resources.service';
 import { FleetOverviewSchema } from './resources.types';
 
 export const resourcesRoutes = new Elysia({ prefix: '/resources', name: 'resources.routes' })
-  .use(authPlugin)
+  .use(databasePlugin)
   .get('/overview', ({ query }) => get_fleet_overview(query), {
     query: TimeRangeQuerySchema,
     response: { 200: FleetOverviewSchema },

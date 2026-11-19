@@ -7,9 +7,11 @@ import { z } from 'zod';
 import type { RedisClient } from 'bun';
 
 import { db } from '@api/db/client';
-import { badGateway, notFound } from '@core/errors';
+import { badGateway, conflict, notFound } from '@core/errors';
+import { update_json_key } from '@core/redis';
 
-import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
+import { PROMPTS_CONFIG_KEY, PROMPTS_YAML_KEY } from '../registry/registry.contract';
+import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import {
   insert_system_prompts,
   list_system_prompts,
@@ -26,8 +28,7 @@ import type {
   SystemPromptCreate,
 } from './prompts.types';
 
-const CONFIG_KEY = 'prompts:config';
-const YAML_KEY = 'prompts:yaml';
+export const RECONCILE_PROMPTS_FAILED = 'Could not publish the live prompts';
 
 /** A system prompt as prompts.yaml and the stored rows carry it; `live` marks the one agents get. */
 const StoredSystemPromptSchema = SystemPromptSchema.extend({ live: z.boolean().optional() });
@@ -39,9 +40,13 @@ const PromptsConfigSchema = z
 type PromptsConfig = z.infer<typeof PromptsConfigSchema>;
 
 function config_invalid(reason: string, cause: unknown) {
-  return badGateway('prompts.config_invalid', `The running controller's ${YAML_KEY} ${reason}`, {
-    cause,
-  });
+  return badGateway(
+    'prompts.config_invalid',
+    `The running controller's ${PROMPTS_YAML_KEY} ${reason}`,
+    {
+      cause,
+    }
+  );
 }
 
 function parse_config(raw: string | null): PromptsConfig {
@@ -103,6 +108,11 @@ function list_item({ name, live }: Prompt): PromptListItem {
   return { name, live };
 }
 
+/** Each stored prompt's live version, by name: the workflow's part of prompts:config. */
+function live_prompts(stored: PromptsConfig): Record<string, SystemPrompt> {
+  return Object.fromEntries(parse_prompts(stored).map(({ name, live }) => [name, live]));
+}
+
 /** The workflow's stored prompts, shaped like prompts.yaml with `live` on each version. */
 async function stored_config(
   reader: Pick<typeof db, 'select'>,
@@ -125,9 +135,10 @@ async function stored_config(
 
 /**
  * Apply `change` to the workflow's stored prompts, then publish each one's live version to
- * prompts:config beside those of the workflow group's other workflows. The workflow row is locked
+ * prompts:config beside those of the workflow group's other workflows, retrying while another
+ * writer races us; 409 when it kept changing, and nothing is stored. The workflow row is locked
  * so writes to one workflow land in commit order; it exists because every caller resolved the
- * workflow first (the routes) or created it (the boot).
+ * workflow first (the routes) or listed it as registered (the tick).
  */
 async function write_prompts(
   redis: RedisClient,
@@ -139,14 +150,20 @@ async function write_prompts(
     await lock_workflow(tx, workflow_id);
     await change(tx, await stored_config(tx, workflow_id));
     const config = await stored_config(tx, workflow_id);
-    const live = parse_prompts(config).map(({ name, live }) => [name, live]);
-    const others = Object.entries(parse_config(await redis.get(CONFIG_KEY)).prompts).filter(
-      ([name]) => !name.startsWith(`${workflow}.`)
-    );
-    await redis.set(
-      CONFIG_KEY,
-      JSON.stringify({ prompts: Object.fromEntries([...others, ...live]) })
-    );
+    // WATCHed: a write for another workflow of the group, which shares the key, lands between
+    // our read and our write only by making us read again, never by being reverted.
+    const published = await update_json_key(redis, PROMPTS_CONFIG_KEY, (raw) => {
+      const others = Object.entries(parse_config(raw).prompts).filter(
+        ([name]) => !name.startsWith(`${workflow}.`)
+      );
+      return { prompts: { ...Object.fromEntries(others), ...live_prompts(config) } };
+    });
+    if (!published) {
+      throw conflict(
+        'prompts.save_conflict',
+        "The workflow group's prompts kept changing while they were being saved, try again"
+      );
+    }
     return config;
   });
 }
@@ -180,15 +197,31 @@ async function store_new_yaml_prompts(
   );
 }
 
-/** At startup, store prompts.yaml's prompts not stored yet, then publish every live version. */
-export async function load_prompts(workflow_id: string): Promise<void> {
-  await with_redis(workflow_id, async (redis) => {
-    const workflow = await assert_workflow_running(redis, workflow_id);
-    const yaml = parse_config(await redis.get(YAML_KEY));
-    await write_prompts(redis, workflow_id, workflow, (tx, stored) =>
-      store_new_yaml_prompts(tx, workflow_id, workflow, yaml, stored)
-    );
-  });
+/**
+ * A redeployed controller publishes prompts.yaml's versions to prompts:config, so the versions
+ * made live in the dashboard are lost there. This stores the prompts new to prompts.yaml and
+ * republishes the workflow's stored live versions whenever its part of prompts:config differs
+ * from them; a registered-workflows job, run on the workflow group's Redis each tick.
+ */
+export async function reconcile_live_prompts(
+  redis: RedisClient,
+  workflow_id: string,
+  workflow: string
+): Promise<void> {
+  const yaml = parse_config(await redis.get(PROMPTS_YAML_KEY));
+  const stored = await stored_config(db, workflow_id);
+  const published = Object.entries(
+    parse_config(await redis.get(PROMPTS_CONFIG_KEY)).prompts
+  ).filter(([name]) => name.startsWith(`${workflow}.`));
+  if (
+    new_yaml_prompts(yaml, stored, workflow).length === 0 &&
+    Bun.deepEquals(Object.fromEntries(published), live_prompts(stored))
+  ) {
+    return;
+  }
+  await write_prompts(redis, workflow_id, workflow, (tx, current) =>
+    store_new_yaml_prompts(tx, workflow_id, workflow, yaml, current)
+  );
 }
 
 /** A prompt added to prompts.yaml since startup is stored on the next listing, so it shows up. */
@@ -197,7 +230,7 @@ async function store_prompts_added_to_yaml(
   workflow_id: string,
   workflow: string
 ): Promise<void> {
-  const yaml = parse_config(await redis.get(YAML_KEY));
+  const yaml = parse_config(await redis.get(PROMPTS_YAML_KEY));
   if (new_yaml_prompts(yaml, await stored_config(db, workflow_id), workflow).length === 0) return;
   await write_prompts(redis, workflow_id, workflow, (tx, stored) =>
     store_new_yaml_prompts(tx, workflow_id, workflow, yaml, stored)

@@ -4,11 +4,11 @@
 import { withTimeZone } from '@core/time-range';
 import type { GridQuery, TimeRange } from '@core/time-range';
 
-import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
+import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import { monitoring_repo } from './monitoring.repo';
 import { SIGNALS } from './monitoring.signals';
 import { MonitoringSignalSchema } from './monitoring.types';
-import type { EndpointAddress } from './monitoring.repo';
+import type { EndpointAddress } from '../registry/registry.contract';
 import type {
   MonitoringEndpoint,
   MonitoringEndpointResponse,

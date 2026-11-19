@@ -12,8 +12,8 @@ import { db } from '@api/db/client';
 import { workflows } from '@api/db/schema';
 import {
   forget_synced_workflows,
-  sync_registered_workflows,
-} from '@api/modules/canyonos/canyonos.sync';
+  sync_listed_workflows,
+} from '@api/modules/registry/registry.service';
 import { config } from '@core/env';
 
 import { api, setupE2ETests } from './e2e.setup';
@@ -21,7 +21,7 @@ import {
   reset_controller,
   seed_running_workflow,
   seed_workflows,
-  TEST_WORKFLOW_GROUP_ID,
+  seed_workflows_raw,
 } from './redis-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
@@ -44,104 +44,6 @@ async function run_controller(workflow_name: string): Promise<string> {
   await seed_running_workflow(workflow_id, NO_PROMPTS, workflow_name);
   return workflow_id;
 }
-
-const register = (redis_port: number) =>
-  api.canyonos.workflows.post({ redis_port, redis_password: '' });
-
-describe('POST /canyonos/workflows', () => {
-  beforeEach(reset_controller);
-
-  test('registers each workflow of the running controller with the port it was read from', async () => {
-    const workflow_id = await run_controller('helloworld');
-    const other_id = crypto.randomUUID();
-    await seed_workflows({ [workflow_id]: 'helloworld', [other_id]: 'portfolio' });
-
-    const res = await register(config.canyonos.redisPort);
-
-    expect(res.error).toBeNull();
-    expect(res.data).toEqual({
-      workflows: [
-        { workflow_id, name: 'helloworld' },
-        { workflow_id: other_id, name: 'portfolio' },
-      ],
-    });
-    for (const id of [workflow_id, other_id]) {
-      const workflow = await read_workflow(id);
-      expect(workflow?.redis_port).toBe(config.canyonos.redisPort);
-      expect(workflow?.workflow_group_id).toBe(TEST_WORKFLOW_GROUP_ID);
-    }
-  });
-
-  test('an unreachable Redis is 502 and registers nothing', async () => {
-    const workflow_id = await run_controller('unreached');
-
-    const res = await register(CLOSED_PORT);
-
-    expect(res.error?.status as number).toBe(502);
-    expect(error_code(res)).toBe('canyonos.controller_unreachable');
-    expect(await read_workflow(workflow_id)).toBeUndefined();
-  });
-
-  test('a Redis with no controller identity is 422', async () => {
-    const res = await register(config.canyonos.redisPort);
-
-    expect(res.error?.status as number).toBe(422);
-    expect(error_code(res)).toBe('canyonos.identity_unusable');
-  });
-
-  test('an api on loopback reaches a container host on its own Redis host and stores the sent host', async () => {
-    const workflow_id = await run_controller('in-container');
-
-    const res = await api.canyonos.workflows.post({
-      redis_host: CONTAINER_REDIS_HOST,
-      redis_port: config.canyonos.redisPort,
-      redis_password: '',
-    });
-
-    expect(res.error).toBeNull();
-    expect(res.data).toEqual({ workflows: [{ workflow_id, name: 'in-container' }] });
-    expect((await read_workflow(workflow_id))?.redis_host).toBe(CONTAINER_REDIS_HOST);
-  });
-
-  test('a host other than a CanyonOS Redis container is rejected before any connection', async () => {
-    for (const redis_host of ['10.0.0.5', 'example.com', 'canyonos-a-redis-localhost.evil.com']) {
-      const res = await api.canyonos.workflows.post({
-        redis_host,
-        redis_port: 6379,
-        redis_password: '',
-      });
-
-      expect(res.error?.status as number).toBe(422);
-      expect(error_code(res)).toBe('validation_error');
-    }
-  });
-
-  test('a port outside 1..65535 is rejected before any connection', async () => {
-    for (const redis_port of [0, 65536, 6379.5]) {
-      const res = await register(redis_port);
-
-      expect(res.error?.status as number).toBe(422);
-      expect(error_code(res)).toBe('validation_error');
-    }
-  });
-
-  test('registering again takes the new port and keeps the stored name', async () => {
-    const workflow_id = await run_controller('first-name');
-    await register(config.canyonos.redisPort);
-    await db
-      .update(workflows)
-      .set({ redis_port: CLOSED_PORT })
-      .where(eq(workflows.id, workflow_id));
-    await seed_workflows({ [workflow_id]: 'second-name' });
-
-    const res = await register(config.canyonos.redisPort);
-
-    expect(res.data).toEqual({ workflows: [{ workflow_id, name: 'first-name' }] });
-    const workflow = await read_workflow(workflow_id);
-    expect(workflow?.name).toBe('first-name');
-    expect(workflow?.redis_port).toBe(config.canyonos.redisPort);
-  });
-});
 
 describe('Redis-backed routes use the workflow port', () => {
   beforeEach(reset_controller);
@@ -172,6 +74,17 @@ describe('Redis-backed routes use the workflow port', () => {
     expect(res.data).toEqual([]);
   });
 
+  test('a controller identity whose workflows are not JSON runs no workflow: 404, not 500', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'Junk Identity' });
+    await seed_running_workflow(workflow_id, NO_PROMPTS);
+    await seed_workflows_raw('{not json');
+
+    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(TEST_API_KEY) });
+
+    expect(res.error?.status as number).toBe(404);
+    expect(error_code(res)).toBe('registry.workflow_not_running');
+  });
+
   test('a workflow registered on another port is read there, not from the configured Redis', async () => {
     const token = TEST_API_KEY;
     const { workflow_id } = await create_test_workflow({ name: 'Own Port' });
@@ -184,7 +97,7 @@ describe('Redis-backed routes use the workflow port', () => {
     const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
 
     expect(res.error?.status as number).toBe(502);
-    expect(error_code(res)).toBe('canyonos.controller_unreachable');
+    expect(error_code(res)).toBe('registry.controller_unreachable');
   });
 });
 
@@ -219,7 +132,7 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
     await db.insert(workflows).values({ id: workflow_group_id, name: 'hello' });
 
     await listing(workflow_group_id, async () => {
-      await sync_registered_workflows();
+      await sync_listed_workflows();
 
       const stored = await read_workflow(workflow_id);
       expect(stored?.name).toBe('helloworld');
@@ -241,7 +154,7 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
       // A workflow added to the running group shows up at the next sync.
       const added_id = crypto.randomUUID();
       await seed_workflows({ [workflow_id]: 'helloworld', [added_id]: 'portfolio' });
-      await sync_registered_workflows();
+      await sync_listed_workflows();
       expect((await read_workflow(added_id))?.workflow_group_id).toBe(workflow_group_id);
     });
   });
@@ -257,7 +170,7 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
         $headers: bearer(TEST_API_KEY),
       });
       expect(read.error?.status as number).toBe(404);
-      expect(error_code(read)).toBe('canyonos.workflow_not_running');
+      expect(error_code(read)).toBe('registry.workflow_not_running');
     });
   });
 });

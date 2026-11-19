@@ -3,7 +3,7 @@
 
 import { conflict, notFound } from '@core/errors';
 
-import { assert_workflow_running, with_redis } from '../canyonos/canyonos.redis';
+import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import { workflows_repo } from './workflows.repo';
 import type { WorkflowDeleted, WorkflowStats, WorkflowSummary } from './workflows.types';
 

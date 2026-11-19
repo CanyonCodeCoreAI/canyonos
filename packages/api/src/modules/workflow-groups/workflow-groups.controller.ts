@@ -8,6 +8,7 @@ import { AppError, conflict } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 import type { Container } from '@core/docker';
 
+import { CONTROLLER_ROLE, ROLE_LABEL, WORKFLOW_GROUP_LABEL } from '../registry/registry.network';
 import { parse_answer } from './workflow-groups.core';
 import { DEPLOY_ERRORS, DEPLOY_PHASES } from './workflow-groups.types';
 import type { CoreReply } from './workflow-groups.core';
@@ -15,14 +16,12 @@ import type { DeployPhase, SlowestStep } from './workflow-groups.types';
 
 // How /v1 reaches a workflow group's Global Controller container, which the CLI creates: the
 // progress file its `run-deploy` writes, the one-shot job containers that change its /workspace
-// volume, and the `canyonos_core.cli` commands run inside it.
+// volume, and the `canyonos_core.cli` commands run inside it. Finding it by its labels is
+// registry.network.ts's, whose Redis reads need its networks too.
 
 const controller_logger = logger.child({ domain: LOG_DOMAINS.DOCKER });
 
 export const PROJECT_LABEL = 'com.docker.compose.project';
-export const ROLE_LABEL = 'canyonos.role';
-export const WORKFLOW_GROUP_LABEL = 'canyonos.workflow_group_id';
-export const CONTROLLER_ROLE = 'global-controller';
 export const JOB_ROLE = 'job';
 
 const CORE_CLI = ['python', '-m', 'canyonos_core.cli'];
@@ -119,22 +118,6 @@ export async function list_controllers(): Promise<Map<string, string>> {
     if (workflow_group_id) controllers.set(workflow_group_id, id);
   }
   return controllers;
-}
-
-/** The workflow group's Global Controller container, the newest when there are several. */
-export async function find_controller(workflow_group_id: string): Promise<Container | null> {
-  const [found] = await docker.list_containers([
-    `${ROLE_LABEL}=${CONTROLLER_ROLE}`,
-    `${WORKFLOW_GROUP_LABEL}=${workflow_group_id}`,
-  ]);
-  if (!found) return null;
-  try {
-    return await docker.inspect(found.id);
-  } catch (error) {
-    // Removed between the listing and the inspect.
-    if (error instanceof AppError && error.code === 'docker.not_found') return null;
-    throw error;
-  }
 }
 
 async function read_progress_file(container: Container): Promise<ProgressFile | string | null> {
@@ -303,8 +286,12 @@ export async function stop_controller(container: Container): Promise<StopFailure
       code: 'stop_timeout',
     };
   }
-  if (exit_code !== 0) {
+  // 143 is 128 + SIGTERM: this TERM reached `run-deploy` before it set its handlers, which it
+  // does before it starts `deploy`, so nothing had started that needed stopping.
+  if (exit_code !== 0 && exit_code !== EXIT_ON_TERM_BEFORE_HANDLERS) {
     return { error: `Global Controller stopped with exit code ${exit_code}`, code: 'stop_failed' };
   }
   return null;
 }
+
+const EXIT_ON_TERM_BEFORE_HANDLERS = 128 + 15;

@@ -5,7 +5,7 @@
 ```
 CanyonOS API (packages/api), on Docker, through the Docker Engine API:
   start and signal the container, read progress.json and its log, exec
-  check / runtime-status / health / agent-logs / dashboard-credentials,
+  check / health / agent-logs,
   run put-workflow / remove-workflows / write-group-files in a one-off
   container of the core image that mounts only the workspace volume
                                    │

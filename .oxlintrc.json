@@ -25,5 +25,23 @@
     "import/no-duplicates": ["error", { "preferInline": false }],
     "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
     "import/namespace": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/api/src/modules/telemetry/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@api/modules/**", "!@api/modules/telemetry/**", "../**"],
+                "message": "The telemetry module imports only core, the database and itself."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

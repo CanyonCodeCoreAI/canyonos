@@ -3,17 +3,17 @@
 
 import { notFound } from '@core/errors';
 
-import { workflows_repo } from '../workflows/workflows.repo';
+import { workflows_repo } from './workflows.repo';
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Shared `resolve` for every workflow-scoped route (workflows, requests, metrics).
  * The API key covers the whole install, so every verified caller reaches every workflow and only
- * a workflow that does not exist is a 404. It authenticates nothing itself, so mount it after
- * `authPlugin`.
+ * a workflow that does not exist is a 404. It authenticates nothing itself: `apiKeyGuard` has
+ * checked the key before the request got here.
  */
-export async function resolveWorkflowAccess({
+export async function resolve_workflow_access({
   params,
 }: {
   params: { workflow_id?: string } & Record<string, unknown>;

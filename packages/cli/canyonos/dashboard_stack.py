@@ -169,8 +169,23 @@ def join_deployment_network(network: str) -> str | None:
     already or now."""
     for service in NETWORK_SERVICES:
         container = _container_name(service)
-        result = _run(["docker", "network", "connect", network, container])
+        # Lowest gateway priority: a network that sorts before the stack's own would
+        # otherwise take the container's default gateway and its published ports, cutting
+        # every connection through them. A Docker CLI before 28 has no such flag.
+        command = [
+            "docker",
+            "network",
+            "connect",
+            "--gw-priority",
+            "-1",
+            network,
+            container,
+        ]
+        result = _run(command)
         detail = (result.stderr or result.stdout).strip()
+        if result.returncode != 0 and "unknown flag" in detail:
+            result = _run(["docker", "network", "connect", network, container])
+            detail = (result.stderr or result.stdout).strip()
         if result.returncode != 0 and "already exists in network" not in detail:
             return (
                 f"connecting {container} to the network {network} failed: "
@@ -667,9 +682,10 @@ def dashboard_url(port: int) -> str:
 
 
 def _health_urls(host_ports: dict[str, int], services: tuple[str, ...]) -> list[str]:
-    """What answers 200 once `services` are up: the API on its own port, and the web
-    app with the API behind its proxy when the web app is among them."""
-    urls = [f"http://127.0.0.1:{host_ports['api']}/healthz"]
+    """What answers 200 once `services` are up: the API on its own port once its
+    database is ready, and the web app with the API behind its proxy when the web app
+    is among them."""
+    urls = [f"http://127.0.0.1:{host_ports['api']}/readyz"]
     if "web" in services:
         web_url = f"http://127.0.0.1:{host_ports['web']}"
         urls += [f"{web_url}/healthz", f"{web_url}/api/healthz"]
@@ -824,7 +840,11 @@ def run_dashboard(
                 ServeResult(True, "pull", _pull(stack, manifest, managed_env, services))
             )
 
-            _leave_deployment_networks()
+            # Only an api that starts here must start off the workflow groups' networks.
+            # A running one keeps them: it reads each running workflow group's Redis over
+            # them, and a deploy reads its status through it while the web app starts.
+            if "api" in renewed or running_api_port() is None:
+                _leave_deployment_networks()
             _remove(stack, manifest, managed_env, renewed)
             stack, managed_env = _start(
                 stack, manifest, managed_env, services, movable=not configured_port

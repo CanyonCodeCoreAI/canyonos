@@ -4,16 +4,17 @@
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import { files, workflows } from '@api/db/schema';
 import {
-  files,
+  RESOURCE_WORKFLOW_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from '@api/modules/telemetry/telemetry.contract';
+import {
   otelLogs,
   otelMetricRollups,
   otelMetrics,
   otelSpans,
-  workflows,
-} from '@api/db/schema';
-import { WORKFLOW_ID_ATTRIBUTE } from '@api/modules/metrics/metrics.contract';
-import { RESOURCE_WORKFLOW_ATTRIBUTE } from '@api/modules/monitoring/monitoring.signals';
+} from '@api/modules/telemetry/telemetry.schema';
 
 import type { WorkflowSummary } from './workflows.types';
 

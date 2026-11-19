@@ -16,7 +16,7 @@ import type {
   MonitoringUnit,
 } from '@canyonos/api/monitoring';
 
-import { apiCall, forgeAuthApi } from '@/api';
+import { apiCall, canyonosAuthApi } from '@/api';
 import {
   DASHBOARD_POLL_INTERVAL_MS,
   dashboardPollInterval,
@@ -39,7 +39,7 @@ export const monitoringSeriesQueryOptions = (workflow_id: string, query: Buckete
     queryKey: ['workflows', workflow_id, 'monitoring', 'series', query],
     queryFn: () =>
       apiCall<MonitoringSeriesResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.series.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.series.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -49,7 +49,9 @@ export const resourcesQueryOptions = (workflow_id: string, query: BucketedQuery)
     queryKey: ['workflows', workflow_id, 'monitoring', 'resources', query],
     queryFn: () =>
       apiCall<MonitoringResourceUtilizationResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.resources.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.resources.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
   });
@@ -59,7 +61,7 @@ export const tracesQueryOptions = (workflow_id: string, query: ListQuery) =>
     queryKey: ['workflows', workflow_id, 'monitoring', 'traces', query],
     queryFn: () =>
       apiCall<MonitoringTracesResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.traces.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.traces.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -69,7 +71,7 @@ export const llmCallsQueryOptions = (workflow_id: string, query: ListQuery) =>
     queryKey: ['workflows', workflow_id, 'monitoring', 'llm', query],
     queryFn: () =>
       apiCall<MonitoringLlmCallsResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.llm.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.llm.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -79,7 +81,7 @@ export const logsQueryOptions = (workflow_id: string, query: LogsQuery) =>
     queryKey: ['workflows', workflow_id, 'monitoring', 'logs', query],
     queryFn: () =>
       apiCall<MonitoringLogsResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.logs.get({ $query: toParams(query) })
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.logs.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -89,7 +91,7 @@ export const logSourcesQueryOptions = (workflow_id: string, query: RangeQuery) =
     queryKey: ['workflows', workflow_id, 'monitoring', 'log-sources', query],
     queryFn: () =>
       apiCall<MonitoringLogSourcesResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.logs.sources.get({
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.logs.sources.get({
           $query: toParams(query),
         })
       ),
@@ -102,7 +104,7 @@ export const replicasQueryOptions = (workflow_id: string) =>
     queryKey: ['workflows', workflow_id, 'monitoring', 'replicas'],
     queryFn: () =>
       apiCall<MonitoringReplicasResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.replicas.get()
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.replicas.get()
       ),
     refetchInterval: dashboardPollInterval,
     retry: false,
@@ -114,7 +116,7 @@ export const endpointQueryOptions = (workflow_id: string) =>
     queryKey: ['workflows', workflow_id, 'monitoring', 'endpoint'],
     queryFn: () =>
       apiCall<MonitoringEndpointResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.endpoint.get()
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.endpoint.get()
       ),
     refetchInterval: DASHBOARD_POLL_INTERVAL_MS,
     retry: false,
@@ -125,7 +127,7 @@ export const errorSummaryQueryOptions = (workflow_id: string, query: RangeQuery)
     queryKey: ['workflows', workflow_id, 'monitoring', 'errors', 'summary', query],
     queryFn: () =>
       apiCall<MonitoringErrorSummaryResponse>(() =>
-        forgeAuthApi.workflows[workflow_id]!.monitoring.errors.summary.get({
+        canyonosAuthApi.workflows[workflow_id]!.monitoring.errors.summary.get({
           $query: toParams(query),
         })
       ),

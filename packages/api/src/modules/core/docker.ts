@@ -14,6 +14,7 @@ import {
 // The oldest Engine API Docker 29 still serves; Docker 25 and later speak it.
 const DOCKER_API = 'http://docker/v1.44';
 const REQUEST_TIMEOUT_MS = 30_000;
+const PING_TIMEOUT_MS = 1_000;
 const EXEC_POLL_MS = 50;
 const STDOUT_STREAM = 1;
 const STDERR_STREAM = 2;
@@ -41,6 +42,8 @@ export interface Container {
   /** When the container last started, in epoch milliseconds; null when it never started. */
   started_at_ms: number | null;
   mounts: ContainerMount[];
+  /** The name of each network the container is on. */
+  networks: string[];
 }
 
 export interface ExecResult {
@@ -80,6 +83,7 @@ interface DockerContainerDetails {
   Config: { Labels: Record<string, string> | null };
   State: { Status: string; Running: boolean; ExitCode: number; StartedAt: string };
   Mounts: { Type: string; Name?: string; Source: string; Destination: string }[] | null;
+  NetworkSettings: { Networks: Record<string, unknown> | null } | null;
 }
 
 interface DockerExecDetails {
@@ -226,6 +230,11 @@ function demultiplexing(): TransformStream<Uint8Array, Uint8Array> {
 
 const decode = (data: Uint8Array) => Buffer.from(data).toString('utf8');
 
+/** Resolves when the daemon answers `GET /_ping` within PING_TIMEOUT_MS; what /readyz asks. */
+export function ping(): Promise<void> {
+  return docker_request('/_ping', drain, { timeout_ms: PING_TIMEOUT_MS });
+}
+
 /** Every container, running or not, that carries all of `labels` (`key=value`), newest first. */
 export async function list_containers(
   labels: string[]
@@ -239,7 +248,7 @@ export async function list_containers(
 }
 
 export async function inspect(id_or_name: string): Promise<Container> {
-  const { Id, Name, Image, Config, State, Mounts } = await docker_request(
+  const { Id, Name, Image, Config, State, Mounts, NetworkSettings } = await docker_request(
     `${container_path(id_or_name)}/json`,
     json<DockerContainerDetails>
   );
@@ -257,6 +266,7 @@ export async function inspect(id_or_name: string): Promise<Container> {
       source: mount.Type === 'volume' && mount.Name ? mount.Name : mount.Source,
       destination: mount.Destination,
     })),
+    networks: Object.keys(NetworkSettings?.Networks ?? {}),
   };
 }
 
@@ -294,6 +304,55 @@ export async function wait(id: string, timeout_ms: number): Promise<number> {
 
 export function remove(id: string, { force }: { force: boolean }): Promise<void> {
   return docker_request(`${container_path(id)}?force=${force}`, drain, { method: 'DELETE' });
+}
+
+/** Whether Docker refused a connect because the container is on the network already: Docker 29
+ * answers 403 "endpoint with name … already exists in network …" (`docker.error`) on API 1.44,
+ * and an engine may answer 409 (`docker.conflict`) instead. */
+function already_connected(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    (error.code === 'docker.error' || error.code === 'docker.conflict') &&
+    error.message.includes('already exists in network')
+  );
+}
+
+// The gateway priority a joined network gets, below the 0 of the network a container starts on.
+// Docker routes a container's traffic through the network of highest priority, ties going to the
+// name that sorts first; a joined network that took over would also move its published ports,
+// cutting every connection through them, the request that asked for the join included. Docker 28
+// added it, Docker 29 honours it on API 1.44 too, and an engine that predates it ignores it.
+const JOINED_GATEWAY_PRIORITY = -1;
+
+/** Connects the container to the network, at `gateway_priority`; one already on it stays as it
+ * is. */
+export async function connect_network(
+  network: string,
+  container: string,
+  { gateway_priority = 0 }: { gateway_priority?: number } = {}
+): Promise<void> {
+  try {
+    await docker_request(`/networks/${encodeURIComponent(network)}/connect`, drain, {
+      method: 'POST',
+      body: { Container: container, EndpointConfig: { GwPriority: gateway_priority } },
+    });
+  } catch (error) {
+    if (!already_connected(error)) throw error;
+  }
+}
+
+/** Connects the container to each of `networks` it is not on yet, none of them taking its
+ * default gateway; returns those it joined. */
+export async function join_networks(
+  container: string,
+  networks: readonly string[]
+): Promise<string[]> {
+  const { networks: current } = await inspect(container);
+  const missing = networks.filter((network) => !current.includes(network));
+  for (const network of missing) {
+    await connect_network(network, container, { gateway_priority: JOINED_GATEWAY_PRIORITY });
+  }
+  return missing;
 }
 
 /** The tar archive Docker makes of `path` in the container, or null when there is none. */

@@ -1,25 +1,33 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Join the local dashboard to a workflow group's network and have the CanyonOS API tell
-the dashboard which Redis the workflow group's Global Controller uses.
+"""Register a workflow group with the local dashboard as its Global Controller is
+created: join the dashboard to the workflow group's network, then have the CanyonOS API
+store each workflow's name and the Redis the Global Controller uses, which the
+dashboard reaches by name on that network.
 
-Temporary: applied now so a dashboard of several workflow groups works without blocking
-the flow; revisit with the workflow-key design in CAN-521 (the api should not hold
-per-deployment Redis addresses).
+`canyonos deploy` stops when it fails: the status and `canyonos curl` read the workflow
+group's Redis through it. Temporary: revisit with the workflow-key design in CAN-521 (the
+api should not hold per-deployment Redis addresses).
 """
 
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 
-from canyonos import deployment
+from canyonos import deployment, internal_ca
 from canyonos.auth import auth_header
 from canyonos.api import ApiError, put_dashboard
 from canyonos.dashboard_stack import join_deployment_network
+from canyonos.init import controller_redis
 
+# How long a registration the API refuses with a 5xx, or doesn't answer, is tried
+# again: an API that just started answers 503 until its database is ready.
+RETRY_SECONDS = 60
+RETRY_DELAY_SECONDS = 2
 TIMEOUT_SECONDS = 10
 # Replaying a recorded week writes tens of thousands of rows; seconds on a fast
 # machine, longer on a slow one under Docker.
@@ -67,18 +75,40 @@ def _api_port() -> int:
     return service_ports()["api"]
 
 
+def _registration(state: dict) -> dict:
+    """What the dashboard stores for the workflow group `state` records: each workflow's
+    name by its workflow_id, and the Redis its Global Controller was created for, with
+    a client certificate its CA signs when that Redis takes only TLS."""
+    return {
+        "workflows": deployment.workflow_names_by_id(),
+        **controller_redis(state),
+        "redis_tls": internal_ca.client_certificate("dashboard"),
+    }
+
+
 def register_workflows(state: dict) -> list[dict]:
-    """Connect the dashboard api to the workflow group's network, where it reaches the
-    workflow group's Redis by name, then have the CanyonOS API register the workflow
-    group `state` records. Returns the dashboard's `{workflow_id, name}` of each
-    workflow; raises RegistrationError with Docker's or the API's message."""
+    """Connect the dashboard's API to the network of the workflow group `state`
+    records, where it reaches the workflow group's Redis by name, then register the
+    workflow group with it. Its Global Controller need not run. An API that doesn't
+    answer or answers with a 5xx is asked again for up to RETRY_SECONDS; a 4xx answer
+    is final. Returns the dashboard's `{workflow_id, name}` of each workflow; raises
+    RegistrationError with Docker's or the API's message."""
     joined = join_deployment_network(deployment.deployment_group())
     if joined is not None:
         raise RegistrationError(joined)
     try:
-        return put_dashboard(state)["workflows"]
-    except ApiError as e:
+        registration = _registration(state)
+    except RuntimeError as e:
         raise RegistrationError(str(e)) from None
+    deadline = time.monotonic() + RETRY_SECONDS
+    while True:
+        try:
+            return put_dashboard(state, registration)["workflows"]
+        except ApiError as e:
+            final = e.status is not None and e.status < 500
+            if final or time.monotonic() > deadline:
+                raise RegistrationError(str(e)) from None
+        time.sleep(RETRY_DELAY_SECONDS)
 
 
 def add_sample_data(

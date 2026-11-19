@@ -3,8 +3,9 @@
 
 import { Elysia } from 'elysia';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { databasePlugin } from '@api/db/database';
+
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import { WorkflowIdParams } from '../workflows/workflows.types';
 import {
   delete_scaling_policy,
@@ -22,8 +23,8 @@ import {
 const doc = { tags: ['Scaling'], security: [{ bearerAuth: [] }] };
 
 export const scalingRoutes = new Elysia({ name: 'scaling.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id/scaling', ({ params }) => get_scaling(params.workflow_id), {
     params: WorkflowIdParams,
     response: { 200: ScalingResponseSchema },

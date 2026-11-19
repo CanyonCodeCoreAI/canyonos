@@ -4,13 +4,9 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
-import { otelSpans } from '@api/db/schema';
-import {
-  GEN_AI,
-  RUNTIME_ATTRIBUTES,
-  STATUS_CODE,
-  WORKFLOW_ID_ATTRIBUTE,
-} from '@api/modules/metrics/metrics.contract';
+import { GEN_AI, RUNTIME_ATTRIBUTES } from '@api/modules/metrics/metrics.contract';
+import { STATUS_CODE, WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
+import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';

@@ -7,18 +7,20 @@ import type { RedisClient } from 'bun';
 
 import { db } from '@api/db/client';
 import { badGateway, conflict } from '@core/errors';
+import { parse_json } from '@core/json';
+import { update_json_key } from '@core/redis';
 
 import { spanAgentName, spanCost, workflowGroupSpans, workflowSpans } from '../metrics/metrics.sql';
+import {
+  GOVERNANCE_CONFIG_KEY,
+  GOVERNANCE_SPEND_KEY,
+  LLMS_CONFIG_KEY,
+  SCALING_CONFIG_KEY,
+  UP_AGENTS_KEY,
+} from '../registry/registry.contract';
 import { SpendRuleSchema } from './governance.types';
 import type { AgentRules } from './governance.types';
 
-const CONFIG_KEY = 'governance:config';
-const SPEND_KEY = 'governance:spend';
-const LLMS_KEY = 'llms:config';
-const SCALING_KEY = 'scaling:config';
-// Written by the reconciler (on Kubernetes, the operator) from replica health.
-const UP_AGENTS_KEY = 'routing_table:up';
-const SAVE_ATTEMPTS = 5;
 const EDGE_DAYS = 7;
 const DAY_MS = 86_400_000;
 
@@ -52,15 +54,6 @@ export interface LlmEntry {
   readonly agents: readonly string[] | null;
 }
 
-function parse_json(raw: string | null): unknown {
-  if (raw === null) return undefined;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 function config_invalid(key: string, reason: string, cause?: unknown) {
   return badGateway('governance.config_invalid', `The running controller's ${key} ${reason}`, {
     cause,
@@ -69,44 +62,35 @@ function config_invalid(key: string, reason: string, cause?: unknown) {
 
 function parse_config(raw: string | null): GovernanceConfig {
   const document = parse_json(raw ?? '{}');
-  if (document === undefined) throw config_invalid(CONFIG_KEY, 'is not valid JSON');
+  if (document === undefined) throw config_invalid(GOVERNANCE_CONFIG_KEY, 'is not valid JSON');
   const result = GovernanceConfigSchema.safeParse(document);
   if (!result.success) {
-    throw config_invalid(CONFIG_KEY, 'is not a governance document', result.error);
+    throw config_invalid(GOVERNANCE_CONFIG_KEY, 'is not a governance document', result.error);
   }
   return result.data;
 }
 
 export const governance_repo = {
   async read_config(redis: RedisClient): Promise<GovernanceConfig> {
-    return parse_config(await redis.get(CONFIG_KEY));
+    return parse_config(await redis.get(GOVERNANCE_CONFIG_KEY));
   },
 
   /** The gateway reads this every few seconds; one SET so it never sees a partial document. */
   async write_spend(redis: RedisClient, spend: ReadonlyMap<string, number>): Promise<void> {
-    await redis.set(SPEND_KEY, JSON.stringify(Object.fromEntries(spend)));
+    await redis.set(GOVERNANCE_SPEND_KEY, JSON.stringify(Object.fromEntries(spend)));
   },
 
-  /**
-   * Replaces one agent's entry, retrying while another writer races us.
-   * WATCH makes EXEC a no-op (null) when the key changed after our read.
-   */
+  /** Replaces one agent's entry, retrying while another writer races us. */
   async write_agent_rules(
     redis: RedisClient,
     agent: string,
     rules: (stored: StoredAgentRules | undefined) => AgentRules
   ): Promise<void> {
-    for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt += 1) {
-      await redis.send('WATCH', [CONFIG_KEY]);
-      const config = parse_config(await redis.get(CONFIG_KEY));
-      const next = {
-        ...config,
-        agents: { ...config.agents, [agent]: rules(config.agents[agent]) },
-      };
-      await redis.send('MULTI', []);
-      await redis.set(CONFIG_KEY, JSON.stringify(next));
-      if ((await redis.send('EXEC', [])) !== null) return;
-    }
+    const saved = await update_json_key(redis, GOVERNANCE_CONFIG_KEY, (raw) => {
+      const config = parse_config(raw);
+      return { ...config, agents: { ...config.agents, [agent]: rules(config.agents[agent]) } };
+    });
+    if (saved) return;
     throw conflict(
       'governance.save_conflict',
       'The governance rules kept changing while they were being saved, try again'
@@ -115,11 +99,11 @@ export const governance_repo = {
 
   /** Null when no llms.yaml is published, so no model is restricted. */
   async read_llms(redis: RedisClient): Promise<LlmEntry[] | null> {
-    const raw = await redis.get(LLMS_KEY);
+    const raw = await redis.get(LLMS_CONFIG_KEY);
     if (raw === null) return null;
     const result = LlmsSchema.safeParse(parse_json(raw));
     if (!result.success)
-      throw config_invalid(LLMS_KEY, 'is not an llms.yaml document', result.error);
+      throw config_invalid(LLMS_CONFIG_KEY, 'is not an llms.yaml document', result.error);
     return Object.values(result.data).flatMap(({ model_id, agents }) =>
       model_id ? [{ model_id, agents: agents == null ? null : Object.keys(agents) }] : []
     );
@@ -127,7 +111,7 @@ export const governance_repo = {
 
   /** The workflows with a scaling policy stored, from `{workflows: {<workflow>: <policy>}}`. */
   async scaling_workflows(redis: RedisClient): Promise<Set<string>> {
-    const document = parse_json(await redis.get(SCALING_KEY));
+    const document = parse_json(await redis.get(SCALING_CONFIG_KEY));
     const workflows =
       typeof document === 'object' && document !== null && 'workflows' in document
         ? document.workflows

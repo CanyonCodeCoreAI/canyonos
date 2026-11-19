@@ -4,8 +4,9 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { databasePlugin } from '@api/db/database';
+
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import { create_system_prompt, get_prompt, list_prompts, set_live } from './prompts.service';
 import {
   PromptListItemSchema,
@@ -20,8 +21,8 @@ const WorkflowParams = z.object({ workflow_id: z.string().uuid() });
 const PromptParams = WorkflowParams.extend({ name: z.string().min(1) });
 
 export const promptsRoutes = new Elysia({ name: 'prompts.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id/prompts', ({ params }) => list_prompts(params.workflow_id), {
     params: WorkflowParams,
     response: { 200: z.array(PromptListItemSchema) },

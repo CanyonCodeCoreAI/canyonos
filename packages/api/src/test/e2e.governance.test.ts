@@ -12,7 +12,8 @@ import { db } from '@api/db/client';
 import { workflows } from '@api/db/schema';
 import { config } from '@core/env';
 
-import { publish_spend_once } from '../modules/governance/governance.publisher';
+import { publish_spend, PUBLISH_SPEND_FAILED } from '../modules/governance/governance.publisher';
+import { for_each_registered_workflow } from '../modules/registry/registry.service';
 import { api, setupE2ETests } from './e2e.setup';
 import {
   read_desired_replicas,
@@ -82,6 +83,9 @@ const by_name = (agents: readonly GovernanceAgent[], name: string): GovernanceAg
 };
 
 const CLOSED_PORT = 1;
+
+/** One round of the tick's spend job over every registered workflow. */
+const publish_spend_once = () => for_each_registered_workflow(publish_spend, PUBLISH_SPEND_FAILED);
 
 const register_at = (workflow_id: string, redis_port: number) =>
   db.update(workflows).set({ redis_port }).where(eq(workflows.id, workflow_id));
@@ -396,7 +400,7 @@ describe('workflow governance', () => {
 
     for (const res of responses) {
       expect(res.error?.status as number).toBe(404);
-      expect(error_code(res)).toBe('canyonos.workflow_not_running');
+      expect(error_code(res)).toBe('registry.workflow_not_running');
     }
   });
 

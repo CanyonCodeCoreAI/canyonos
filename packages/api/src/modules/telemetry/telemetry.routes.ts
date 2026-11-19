@@ -3,6 +3,8 @@
 
 import { Elysia } from 'elysia';
 
+import { databasePlugin } from '@api/db/database';
+
 import { encode_export_response } from './otlp.decode';
 import { ingest_logs_export, ingest_metric_export, ingest_trace_export } from './telemetry.service';
 
@@ -19,6 +21,7 @@ const rejection_message = (rejected: number) =>
 // OTLP/HTTP is a bare protobuf POST, so the body is taken as bytes and the reply is the encoded
 // `ExportTraceServiceResponse` rather than this API's usual JSON envelope.
 export const telemetryRoutes = new Elysia({ prefix: '/v1', name: 'telemetry.routes' })
+  .use(databasePlugin)
   .post(
     '/traces',
     async ({ body }) => {

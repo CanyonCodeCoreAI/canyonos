@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { STATUS_CODE } from '@api/modules/metrics/metrics.contract';
 import { badRequest } from '@core/errors';
 import { LOG_DOMAINS, logger } from '@core/logger';
 
@@ -10,6 +9,7 @@ import {
   decode_logs_export_request,
   decode_metrics_export_request,
 } from './otlp.decode';
+import { STATUS_CODE } from './telemetry.contract';
 import { insert_logs, insert_metrics, insert_spans } from './telemetry.repo';
 import type {
   OtlpAnyValue,

@@ -4,10 +4,10 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
+import { databasePlugin } from '@api/db/database';
 import { GridQuerySchema, TimeRangeQuerySchema } from '@core/time-range';
 
-import { authPlugin } from '../auth/auth.middleware';
-import { resolveWorkflowAccess } from '../auth/workflow-access';
+import { resolve_workflow_access } from '../workflows/workflows.access';
 import {
   get_agent_details,
   get_blocks,
@@ -33,8 +33,8 @@ const WorkflowAgentParams = WorkflowIdParams.extend({
 
 // Prefix-less: composed into workflows.routes so the whole `/workflows` tree stays one Eden type.
 export const metricsRoutes = new Elysia({ name: 'metrics.routes' })
-  .use(authPlugin)
-  .resolve(resolveWorkflowAccess)
+  .use(databasePlugin)
+  .resolve(resolve_workflow_access)
   .get('/:workflow_id/metrics/kpis', ({ params, query }) => get_kpis(params.workflow_id, query), {
     params: WorkflowIdParams,
     query: TimeRangeQuerySchema,
