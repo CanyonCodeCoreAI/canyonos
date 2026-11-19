@@ -22,12 +22,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 15
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: useblacksmith/checkout@v1
 
       - name: Cache turbo task results
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -74,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [blacksmith-6vcpu-macos-15, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 

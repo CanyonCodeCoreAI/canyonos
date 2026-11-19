@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 20
     # The Go toolchain the operator is developed with, as on a laptop.
     container: golang:1.27.0
@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: useblacksmith/checkout@v1 # v4
 
       # Go modules, build cache, lint cache, and the tools and envtest binaries in bin/.
       - id: go-cache
@@ -71,7 +71,7 @@ jobs:
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   chart:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 5
     # helm 3.17.3, pinned by digest.
     container: alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895
@@ -81,7 +81,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: useblacksmith/checkout@v1 # v4
 
       # Both install modes must render: cluster-wide (with the builder and the
       # dashboard) and limited to some namespaces.
@@ -101,22 +101,21 @@ jobs:
   # The operator image for both platforms, as the release builds it, so a Dockerfile
   # that no longer builds fails here and not in a release. Pushes nothing.
   image:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
 
       # No emulation: the Dockerfile cross-compiles on the runner's own platform.
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
 
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: packages/operator
           file: packages/operator/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
-          cache-from: type=gha,scope=canyonos-operator
           # Only main writes the image cache, as for the other images.
-          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=canyonos-operator' || '' }}

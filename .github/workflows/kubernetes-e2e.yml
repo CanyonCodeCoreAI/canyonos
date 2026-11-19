@@ -48,12 +48,12 @@ env:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 45
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: useblacksmith/checkout@v1 # v4
 
       - name: Install kind
         run: |
@@ -82,15 +82,15 @@ jobs:
           bun-version: 1.3.14
 
       # Fills this builder from main's image caches, so e2e.sh's own builds take seconds.
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:dev
-          cache-from: type=gha,scope=canyonos-core
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -98,14 +98,12 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:dev
-          cache-from: type=gha,scope=canyonos-web
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: packages/operator
           file: packages/operator/Dockerfile
           load: true
           tags: canyonos-operator:dev
-          cache-from: type=gha,scope=canyonos-operator
 
       - name: Cluster
         run: |
