@@ -12,7 +12,18 @@ image:
   tag: ""          # defaults to the chart's appVersion
   digest: ""       # e.g. sha256:...; wins over tag
   pullPolicy: IfNotPresent
+# Logins for a private registry or mirror, e.g. [{name: my-registry-login}]. A pod only
+# reads Secrets in its own namespace, so create each one in the release's namespace, and
+# in the builder's and the dashboard's when they use it (their own lists below fall back
+# to this one).
 imagePullSecrets: []
+
+# Labels added to every pod this chart runs (the operator, builder and dashboard; not
+# the projects' pods), e.g. {team: platform} for a policy that requires one. They never
+# replace the chart's own labels, which select its pods.
+podLabels: {}
+# The PriorityClass of every pod this chart runs; empty: the cluster's default.
+priorityClassName: ""
 
 # The canyonos-core image every project's global controller and endpoint, each build, and
 # the CanyonOS API's core container run; empty: this release's. A project may point at
@@ -84,6 +95,29 @@ dashboard:
   # less) and five-minute rollups (read for longer ranges).
   metricsRawRetentionDays: 3
   metricsRollupRetentionDays: 120
+  # Postgres's, the API's (its api and core containers) and the web front end's CPU and
+  # memory.
+  resources:
+    db:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 512Mi}
+    # Uploads of up to 512 MiB go to /workspace as they arrive, not to memory.
+    api:
+      requests: {cpu: 50m, memory: 256Mi}
+      limits: {memory: 1Gi}
+    core:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 1Gi}
+    web:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 128Mi}
+  # Where its three pods run, and with which registry logins and priority; empty:
+  # imagePullSecrets and priorityClassName above.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  imagePullSecrets: []
+  priorityClassName: ""
 
 # The in-cluster image builder (BuildKit, rootless) that `canyonos deploy --target
 # kubernetes` builds every project's images with. Its namespace gets the one Pod Security
@@ -100,7 +134,13 @@ builder:
     requests: {cpu: 250m, memory: 512Mi}
     limits: {memory: 4Gi}
   cacheSize: 20Gi
+  # Where it runs (e.g. a node pool kept for builds), and with which registry logins and
+  # priority; empty: imagePullSecrets and priorityClassName above.
   nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  imagePullSecrets: []
+  priorityClassName: ""
   # Registries the builder may push to over plain HTTP (a local kind registry only).
   insecureRegistries: []
   # A registry the builder reaches by another name than the nodes pull it by:

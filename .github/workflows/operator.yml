@@ -107,6 +107,52 @@ jobs:
           fi
           grep -q "dashboard.apiKeyHash is required" /tmp/no-key.txt || { cat /tmp/no-key.txt; exit 1; }
 
+      # Each pod setting reaches the pods it is for (the operator, the builder, and the
+      # dashboard's db, api and web), and podLabels never replace the chart's own labels.
+      - name: Pod settings reach their pods
+        run: |
+          helm template t canyonos-operator --set builder.enabled=true --set dashboard.enabled=true \
+            --set dashboard.existingSecret=mine \
+            --set "imagePullSecrets[0].name=main-login" \
+            --set "builder.imagePullSecrets[0].name=build-login" \
+            --set "dashboard.imagePullSecrets[0].name=dash-login" \
+            --set priorityClassName=canyonos-low \
+            --set podLabels.team=platform --set "podLabels.app\.kubernetes\.io/name=taken" \
+            --set "tolerations[0].key=operator-only" --set "tolerations[0].operator=Exists" \
+            --set "builder.tolerations[0].key=build-only" --set "builder.tolerations[0].operator=Exists" \
+            --set "dashboard.tolerations[0].key=dash-only" --set "dashboard.tolerations[0].operator=Exists" \
+            --set dashboard.nodeSelector.pool=system --set builder.nodeSelector.pool=build \
+            --set dashboard.resources.db.limits.memory=2Gi \
+            --set dashboard.resources.core.limits.memory=3Gi > /tmp/set.yaml
+          expect() {  # expect <count> <text>: the text is in the render that many times
+            got="$(grep -cF -- "$2" /tmp/set.yaml || true)"
+            [ "${got}" = "$1" ] || { echo "expected $1 x '$2', found ${got}"; exit 1; }
+          }
+          expect 1 "name: main-login"
+          expect 1 "name: build-login"
+          expect 3 "name: dash-login"
+          expect 5 "priorityClassName: canyonos-low"
+          expect 5 'team: "platform"'
+          expect 0 '"taken"'
+          expect 1 "key: operator-only"
+          expect 1 "key: build-only"
+          expect 3 "key: dash-only"
+          expect 1 "pool: build"
+          expect 3 "pool: system"
+          expect 1 "memory: 2Gi"
+          expect 1 "memory: 3Gi"
+
+      # An upgrade with --reuse-values from a release before dashboard.resources keeps
+      # that release's values, which have none: the templates' own sizes are then used,
+      # and must be the ones values.yaml gives.
+      - name: Dashboard sizes without dashboard.resources
+        run: |
+          helm template t canyonos-operator --set dashboard.existingSecret=mine \
+            --set dashboard.enabled=true > /tmp/sizes.yaml
+          helm template t canyonos-operator --set dashboard.existingSecret=mine \
+            --set dashboard.enabled=true --set dashboard.resources=null > /tmp/no-sizes.yaml
+          diff /tmp/sizes.yaml /tmp/no-sizes.yaml
+
   # The operator image for both platforms, as the release builds it, so a Dockerfile
   # that no longer builds fails here and not in a release. Pushes nothing.
   image:

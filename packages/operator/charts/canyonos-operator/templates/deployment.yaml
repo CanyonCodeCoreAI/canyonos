@@ -20,13 +20,12 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "canyonos.selector" . | nindent 8 }}
+        {{- include "canyonos.podLabels" (list . (include "canyonos.selector" . | fromYaml)) | trim | nindent 8 }}
     spec:
       serviceAccountName: canyonos-controller-manager
       terminationGracePeriodSeconds: 10
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
+      {{- with include "canyonos.podExtras" (list . .Values) | trim }}
+      {{- . | nindent 6 }}
       {{- end }}
       securityContext:
         runAsNonRoot: true
@@ -83,15 +82,3 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}

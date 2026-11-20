@@ -90,7 +90,8 @@ spec:
   persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: canyonos-dashboard-db, app.kubernetes.io/part-of: canyonos}
+      labels:
+        {{- include "canyonos.podLabels" (list . (dict "app.kubernetes.io/name" "canyonos-dashboard-db" "app.kubernetes.io/part-of" "canyonos")) | trim | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -101,6 +102,9 @@ spec:
         fsGroup: 70
         {{- end }}
         seccompProfile: {type: RuntimeDefault}
+      {{- with include "canyonos.podExtras" (list . .Values.dashboard) | trim }}
+      {{- . | nindent 6 }}
+      {{- end }}
       containers:
         - name: postgres
           image: {{ .Values.dashboard.dbImage }}
@@ -119,8 +123,7 @@ spec:
             periodSeconds: 20
             failureThreshold: 6
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            {{- include "canyonos.dashboardResources" (list . "db") | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -206,7 +209,8 @@ spec:
     matchLabels: {app.kubernetes.io/name: canyonos-dashboard-api}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: canyonos-dashboard-api, app.kubernetes.io/part-of: canyonos}
+      labels:
+        {{- include "canyonos.podLabels" (list . (dict "app.kubernetes.io/name" "canyonos-dashboard-api" "app.kubernetes.io/part-of" "canyonos")) | trim | nindent 8 }}
       {{- if $apiKeyVersion }}
       annotations:
         canyonos.canyoncode.ai/api-key: {{ $apiKeyVersion }}
@@ -225,9 +229,8 @@ spec:
         fsGroup: 1000
         {{- end }}
         seccompProfile: {type: RuntimeDefault}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
+      {{- with include "canyonos.podExtras" (list . .Values.dashboard) | trim }}
+      {{- . | nindent 6 }}
       {{- end }}
       initContainers:
         # Runs the canyonos_core.cli commands the API queues in /workspace/.canyonos/jobs
@@ -244,8 +247,7 @@ spec:
             # No home of its own: the image has no such user.
             - {name: HOME, value: /tmp}
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 1Gi}
+            {{- include "canyonos.dashboardResources" (list . "core") | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -286,9 +288,7 @@ spec:
             periodSeconds: 20
             failureThreshold: 6
           resources:
-            # Uploads of up to 512 MiB go to /workspace as they arrive, not to memory.
-            requests: {cpu: 50m, memory: 256Mi}
-            limits: {memory: 1Gi}
+            {{- include "canyonos.dashboardResources" (list . "api") | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -348,7 +348,8 @@ spec:
     matchLabels: {app.kubernetes.io/name: canyonos-dashboard-web}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: canyonos-dashboard-web, app.kubernetes.io/part-of: canyonos}
+      labels:
+        {{- include "canyonos.podLabels" (list . (dict "app.kubernetes.io/name" "canyonos-dashboard-web" "app.kubernetes.io/part-of" "canyonos")) | trim | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -358,9 +359,8 @@ spec:
         runAsGroup: 1000
         {{- end }}
         seccompProfile: {type: RuntimeDefault}
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
+      {{- with include "canyonos.podExtras" (list . .Values.dashboard) | trim }}
+      {{- . | nindent 6 }}
       {{- end }}
       containers:
         - name: web
@@ -373,8 +373,7 @@ spec:
             httpGet: {path: /healthz, port: 8080}
             periodSeconds: 5
           resources:
-            requests: {cpu: 10m, memory: 32Mi}
-            limits: {memory: 128Mi}
+            {{- include "canyonos.dashboardResources" (list . "web") | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
