@@ -17,6 +17,10 @@
 #     auth.invalid_key, a 503 auth.not_ready while the Global Controller has not
 #     published its hash counts as not up, `canyonos test` sends the key and never
 #     shows it, and a deploy with a new key refuses the old one;
+#   - one workflow group runs per namespace: another one, from another folder or from
+#     one of the same name, is refused before anything of it is written, stopping it
+#     leaves the first alone, a CanyonProject applied by hand reports NamespaceInUse,
+#     and the first one's objects stay as they were and it keeps answering;
 #   - the endpoint stays on 127.0.0.1:8080, also once its pod is replaced, and
 #     `canyonos serve` keeps the dashboard on 8081 and returns, and another project's
 #     serve keeps it there;
@@ -247,6 +251,52 @@ EOF
   }
   log "Requests through the endpoint"
   requests || fail "requests"
+
+  log "One workflow group per namespace: another is refused, and the first keeps running"
+  project="$(as_deployer kubectl -n "${NS}" get canyonprojects -o jsonpath='{.items[0].metadata.name}')"
+  first() {  # the first workflow group's CanyonProject and Redis pod, and its config's version
+    as_deployer kubectl -n "${NS}" get "canyonproject/${project}" pod/canyonos-redis-0 \
+      -o jsonpath='{range .items[*]}{.metadata.uid} {end}'
+    as_deployer kubectl -n "${NS}" get "configmap/${project}-config" -o jsonpath='{.metadata.resourceVersion}'
+  }
+  before="$(first)"
+  refused() {  # workflow group folder: its deploy into ${NS} fails at once, naming the one there
+    local start="${SECONDS}" said
+    said="$(canyonos_in "${DEPLOYER}" "$1" deploy helloworld --serve false --yes 2>&1)" \
+      && fail "a second workflow group deployed into ${NS}: ${said}"
+    echo "${said}" | grep -q "already runs the workflow group" || fail "the refusal did not say why: ${said}"
+    [ $((SECONDS - start)) -lt 180 ] || fail "the refusal took $((SECONDS - start)) s"
+  }
+  cp -r /w/examples/helloworld /Second
+  kubernetes_block /Second "${NS}"
+  refused /Second
+  # A folder of the first one's name: its objects would have the first one's names.
+  mkdir -p /other && cp -r /w/examples/helloworld /other/hw
+  kubernetes_block /other/hw "${NS}"
+  refused /other/hw
+  canyonos_in "${DEPLOYER}" /other/hw stop >/dev/null || fail "stop of the refused workflow group"
+  # A CanyonProject applied by hand: the operator gives it NamespaceInUse, and nothing else.
+  as_deployer kubectl -n "${NS}" apply -f - >/dev/null <<EOF
+apiVersion: canyonos.canyoncode.ai/v1alpha1
+kind: CanyonProject
+metadata: {name: e2e-second}
+spec:
+  projectID: 00000000-0000-4000-8000-0000000000e2
+  configRef: e2e-second
+  endpoint: {routes: [{workflow: second, agent: Workflow, method: main}]}
+EOF
+  reason=""
+  for _ in $(seq 30); do
+    reason="$(as_deployer kubectl -n "${NS}" get canyonproject e2e-second \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}')"
+    [ "${reason}" = NamespaceInUse ] && break
+    sleep 2
+  done
+  [ "${reason}" = NamespaceInUse ] || fail "a second CanyonProject reports ${reason:-nothing}, not NamespaceInUse"
+  as_deployer kubectl -n "${NS}" delete canyonproject e2e-second --timeout=60s >/dev/null \
+    || fail "the second CanyonProject was not deleted"
+  [ "$(first)" = "${before}" ] || fail "the first workflow group changed: ${before} -> $(first)"
+  requests || fail "requests after another workflow group was refused"
 
   log "canyonos test sends this machine's API key and never shows it"
   said="$(canyonos test 2>&1)" || fail "canyonos test: ${said}"

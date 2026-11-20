@@ -592,6 +592,40 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		Expect(service.Labels).To(Equal(map[string]string{"team": "payments"}))
 	})
 
+	It("runs one project per namespace: a second one is told why and gets nothing", func() {
+		createProject(nil)
+		reconcileProject()
+		second := validProject("second")
+		second.Namespace = namespace
+		second.Spec.ProjectID = "00000000-0000-4000-8000-000000000002"
+		second.Spec.DisplayName = "second-group"
+		Expect(k8sClient.Create(ctx, second)).To(Succeed())
+
+		_, err := reconciler().Reconcile(ctx, reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "second"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		get(second, "second")
+		for _, kind := range []string{ConditionReady, ConditionRedisReady} {
+			condition := meta.FindStatusCondition(second.Status.Conditions, kind)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("NamespaceInUse"))
+			Expect(condition.Message).To(ContainSubstring("CanyonProject " + testProjectName))
+		}
+		Expect(second.Finalizers).To(BeEmpty())
+
+		// Redis stays the first project's, and the first one still runs.
+		statefulSet := &appsv1.StatefulSet{}
+		get(statefulSet, builders.RedisName)
+		Expect(statefulSet.OwnerReferences[0].Name).To(Equal(testProjectName))
+		reconcileProject()
+		first := &canyonosv1alpha1.CanyonProject{}
+		get(first, testProjectName)
+		Expect(meta.FindStatusCondition(first.Status.Conditions, ConditionRedisReady).Reason).
+			NotTo(Equal("NamespaceInUse"))
+	})
+
 	It("uses a project's own controller image, for a registry mirror", func() {
 		createProject(func(p *canyonosv1alpha1.CanyonProject) {
 			p.Spec.ControllerImage = "mirror.example.internal/canyonos-core:1.2.3"

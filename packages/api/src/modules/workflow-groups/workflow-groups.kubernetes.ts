@@ -62,6 +62,9 @@ const EXPLAINED_FAILURE_EXIT_CODE = 1;
 const ERROR_TEXT_CHARACTERS = 300;
 // Reasons the operator gives for a CanyonAgent that will never start as configured.
 const FATAL_REASONS = ['NameMismatch', 'Unsupported', 'ProjectNotFound'];
+// Reasons the operator gives for a CanyonProject that will never start as it is: another
+// workflow group runs in its namespace.
+const PROJECT_FATAL_REASONS = ['NamespaceInUse'];
 const LABEL_PROJECT = `${k8s.API_GROUP}/project`;
 const LABEL_AGENT = `${k8s.API_GROUP}/agent`;
 // The fingerprints a workflow group runs, kept on its CanyonProject for after a restart.
@@ -133,6 +136,8 @@ type Pod = KubernetesObject<Record<string, unknown>, { podIP?: string }>;
 /** One deploy of a workflow group to the cluster: where it runs, fixed when it starts (or found
  * again by `restore`), and its progress as the status reports it. */
 interface ClusterDeploy {
+  /** The workflow group's id, its CanyonProject's `spec.projectID`. */
+  workflow_group_id: string;
   /** The workflow group's name, the `project` of its CanyonBuilds. */
   name: string;
   /** Null for a deploy whose config named none: it failed before it reached the cluster. */
@@ -167,8 +172,9 @@ class DeployTimeout extends Error {}
 
 const message_of = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-function new_deploy(name: string): ClusterDeploy {
+function new_deploy(workflow_group_id: string, name: string): ClusterDeploy {
   return {
+    workflow_group_id,
     name,
     namespace: null,
     project: null,
@@ -257,6 +263,28 @@ async function project_objects(
     k8s.list<CanyonAgent>(canyon_path(namespace, 'canyonagents'), labels),
   ]);
   return { project: projects[0] ?? null, agents };
+}
+
+/** A CanyonProject in `namespace`, with `labels`, of another workflow group than
+ * `workflow_group_id`; null when there is none. Each namespace runs one workflow group: its
+ * Redis, Global Controller and endpoint have the same names in every namespace. */
+async function other_workflow_group(
+  namespace: string,
+  workflow_group_id: string,
+  labels?: Record<string, string>
+): Promise<CanyonProject | null> {
+  const projects = await k8s.list<CanyonProject>(canyon_path(namespace, 'canyonprojects'), labels);
+  return projects.find((project) => project.spec?.projectID !== workflow_group_id) ?? null;
+}
+
+/** Why a workflow group can't deploy to `namespace`, where `other` runs, and what to do. */
+function runs_there(namespace: string, other: CanyonProject): string {
+  const name = other.spec?.displayName ?? other.metadata.name;
+  return (
+    `Namespace ${namespace} already runs the workflow group ${name} (${other.spec?.projectID}). ` +
+    'Each namespace runs one workflow group: set another namespace in the kubernetes: section ' +
+    `of workflow_group.yaml, or stop ${name} first.`
+  );
 }
 
 /** Splits text into its lines, as Python's str.splitlines does. */
@@ -459,13 +487,16 @@ async function deploy_in_cluster(
     }
     while (deploy.phase === 'starting' && (await poll(deploy, deadline))) {
       const { project, agents } = await project_objects(deploy);
+      const refused = project ? conditions_of(project).Ready : undefined;
       const fatal = agents.flatMap((agent) => {
         const ready = conditions_of(agent).Ready;
         return ready?.reason && FATAL_REASONS.includes(ready.reason)
           ? [`${agent.spec?.agentName}: ${ready.message}`]
           : [];
       });
-      if (fatal.length > 0) {
+      if (refused?.reason && PROJECT_FATAL_REASONS.includes(refused.reason)) {
+        fail(deploy, 'Deploy failed.', 'deploy_failed', refused.message ?? refused.reason);
+      } else if (fatal.length > 0) {
         fail(deploy, 'Deploy failed.', 'deploy_failed', fatal.join('\n'));
       } else if (
         project &&
@@ -502,7 +533,9 @@ async function deploy_in_cluster(
 
 /** Deletes the deploy's CanyonBuilds and CanyonProject, from which the operator removes the
  * rest, until none is left, then the ConfigMaps and Secrets its deploys wrote; fails when the
- * cluster refused, or they were still there after 15 minutes. */
+ * cluster refused, or they were still there after 15 minutes. When another workflow group's
+ * CanyonProject has the same name (a workflow group folder of the same name), everything under
+ * that name is the other workflow group's, and the stop deletes none of it. */
 async function stop(deploy: ClusterDeploy): Promise<ApplyFailure | null> {
   deploy.stopping = true;
   wake(deploy);
@@ -513,6 +546,19 @@ async function stop(deploy: ClusterDeploy): Promise<ApplyFailure | null> {
   const { namespace, project } = placed(deploy);
   const deadline = Date.now() + STOP_TIMEOUT_MINUTES * 60_000;
   try {
+    const other = await other_workflow_group(namespace, deploy.workflow_group_id, {
+      [LABEL_PROJECT]: project,
+    });
+    if (other) {
+      k8s_logger.warn('Left the objects of the workflow group of the same name in place', {
+        workflow_group_id: deploy.workflow_group_id,
+        namespace,
+        project,
+        other_workflow_group_id: other.spec?.projectID,
+      });
+      finish(deploy);
+      return null;
+    }
     for (;;) {
       const found: { path: string; deleting: boolean }[] = [];
       for (const plural of ['canyonbuilds', 'canyonprojects']) {
@@ -553,16 +599,23 @@ async function stop(deploy: ClusterDeploy): Promise<ApplyFailure | null> {
 
 /** Plans the upload and starts building it in the cluster; how the deploy goes then shows in its
  * phase, as on the server it replaces: a config the plan refuses fails the deploy, not the
- * start. */
+ * start, and so does a namespace where another workflow group runs, before anything is written
+ * there. */
 async function start(
   row: WorkflowGroupRow,
   uploaded: DeployedFingerprints
 ): Promise<ApplyFailure | null> {
   const planned = await plan(row.id, row.name);
-  const deploy = new_deploy(row.name);
+  const deploy = new_deploy(row.id, row.name);
   deploys.set(row.id, deploy);
   if ('violations' in planned) {
     fail(deploy, 'Deploy failed.', 'deploy_failed', planned.violations);
+    deploy.finished = true;
+    return null;
+  }
+  const other = await other_workflow_group(planned.plan.namespace, row.id);
+  if (other) {
+    fail(deploy, 'Deploy failed.', 'deploy_failed', runs_there(planned.plan.namespace, other));
     deploy.finished = true;
     return null;
   }
@@ -924,7 +977,7 @@ export const kubernetes_target: WorkflowGroupTarget = {
         api_key_hash: project.spec?.auth?.apiKeyHash ?? null,
         deployed,
       });
-      const deploy = new_deploy(name);
+      const deploy = new_deploy(workflow_group_id, name);
       Object.assign(deploy, {
         namespace,
         project: k8s.resource_name(name),

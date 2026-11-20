@@ -43,6 +43,10 @@ const (
 
 	// reasonStarting: created, its pods not ready yet.
 	reasonStarting = "Starting"
+	// reasonNamespaceInUse: another CanyonProject runs in the namespace, so this one
+	// gets nothing; namespaceInUseRecheck is how often it looks again.
+	reasonNamespaceInUse  = "NamespaceInUse"
+	namespaceInUseRecheck = 30 * time.Second
 	// typeDatabase is a CanyonAgent running a database rather than an agent.
 	typeDatabase = builders.TypeDatabase
 	// redisExternal is a project using a Redis the cluster already has.
@@ -111,6 +115,15 @@ func (r *CanyonProjectReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return result, nil
 	}
+	// Before anything is made for it: a project in a namespace another one runs in gets
+	// nothing, and no finalizer, so deleting it touches nothing of the other's.
+	owner, err := r.namespaceOwner(ctx, project)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if owner != nil {
+		return r.refuse(ctx, project, owner)
+	}
 	if err := addFinalizer(ctx, r.Client, project); err != nil {
 		return retryOnConflict(err)
 	}
@@ -158,6 +171,63 @@ func (r *CanyonProjectReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: next}, nil
+}
+
+// namespaceOwner returns the CanyonProject that runs in project's namespace when it is
+// another one, or nil when project runs there. Each namespace runs one workflow group:
+// its Redis, Global Controller and endpoint have the same names in every namespace. The
+// oldest project keeps the namespace, by name when two were made in the same second.
+func (r *CanyonProjectReconciler) namespaceOwner(
+	ctx context.Context, project *canyonosv1alpha1.CanyonProject,
+) (*canyonosv1alpha1.CanyonProject, error) {
+	projects := &canyonosv1alpha1.CanyonProjectList{}
+	if err := r.List(ctx, projects, client.InNamespace(project.Namespace)); err != nil {
+		return nil, err
+	}
+	owner := project
+	for i := range projects.Items {
+		if other := &projects.Items[i]; olderProject(other, owner) {
+			owner = other
+		}
+	}
+	if owner.Name == project.Name {
+		return nil, nil
+	}
+	return owner, nil
+}
+
+// olderProject reports whether a was made before b, or in the same second with a name
+// that sorts first.
+func olderProject(a, b *canyonosv1alpha1.CanyonProject) bool {
+	if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
+		return a.CreationTimestamp.Before(&b.CreationTimestamp)
+	}
+	return a.Name < b.Name
+}
+
+// refuse reports on project's status why it does not run, with owner running in its
+// namespace, and makes nothing for it. It is looked at again a little later, and runs
+// once owner is gone.
+func (r *CanyonProjectReconciler) refuse(
+	ctx context.Context, project, owner *canyonosv1alpha1.CanyonProject,
+) (ctrl.Result, error) {
+	name := owner.Spec.DisplayName
+	if name == "" {
+		name = owner.Name
+	}
+	message := fmt.Sprintf("namespace %s already runs the workflow group %s (CanyonProject %s): "+
+		"each namespace runs one workflow group", project.Namespace, name, owner.Name)
+	project.Status.ObservedGeneration = project.Generation
+	for _, kind := range []string{
+		ConditionRedisReady, ConditionControllerReady, ConditionEndpointReady, ConditionReady,
+	} {
+		setCondition(&project.Status.Conditions, project.Generation, kind, false, reasonNamespaceInUse, message)
+	}
+	if err := r.Status().Update(ctx, project); err != nil {
+		return retryOnConflict(err)
+	}
+	logf.FromContext(ctx).Info("not run: another workflow group runs in its namespace", "owner", owner.Name)
+	return ctrl.Result{RequeueAfter: namespaceInUseRecheck}, nil
 }
 
 // retryOnConflict turns a write made from a stale copy (someone, often Kubernetes
