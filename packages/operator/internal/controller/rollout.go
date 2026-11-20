@@ -135,15 +135,24 @@ func replaceNext(ctx context.Context, c client.Client, plan rollout) error {
 // ConditionUpdated says whether every replica of a CanyonAgent runs its current spec.
 const ConditionUpdated = "Updated"
 
-// setUpdated reports a surge update in progress, or that none is.
-func setUpdated(conditions *[]metav1.Condition, generation int64, plan rollout) {
+// setUpdated reports a surge update in progress, or that none is. statefulSet is the
+// agent's StatefulSet as just written: one whose spec changed then has not worked out its
+// revisions yet, so the plan could not see its pods as old, and none is known to run the
+// new spec.
+func setUpdated(conditions *[]metav1.Condition, generation int64, plan rollout, statefulSet *appsv1.StatefulSet) {
 	condition := metav1.Condition{
 		Type: ConditionUpdated, Status: metav1.ConditionTrue, Reason: "UpToDate", ObservedGeneration: generation,
 	}
-	if plan.pending > 0 {
+	observed := statefulSet.Status.ObservedGeneration
+	switch {
+	case plan.pending > 0:
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "RollingOut"
 		condition.Message = fmt.Sprintf("%d replica(s) still to replace; one extra replica serves meanwhile", plan.pending)
+	case observed > 0 && observed < statefulSet.Generation:
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "RollingOut"
+		condition.Message = "the StatefulSet has not taken the new spec yet"
 	}
 	meta.SetStatusCondition(conditions, condition)
 }

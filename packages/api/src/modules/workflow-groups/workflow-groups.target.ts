@@ -20,7 +20,7 @@ import type {
 
 // Where /v1/workflow-groups runs workflow groups. The routes, the models, the rows, the apply loop's decisions
 // and the status shape are the same on every target; a target only says how its deploys start,
-// stop, reload and report. One per API process, from CANYONOS_TARGET: Docker, a Global Controller container per workflow group (workflow-groups.docker.ts), or
+// stop, update and report. One per API process, from CANYONOS_TARGET: Docker, a Global Controller container per workflow group (workflow-groups.docker.ts), or
 // Kubernetes, a CanyonBuild and the CanyonProject it applies (workflow-groups.kubernetes.ts).
 
 export interface ApplyFailure {
@@ -32,12 +32,19 @@ export interface ApplyFailure {
 export interface ApplyPass {
   /** The row as the target takes it now: on Docker a new container's starts from nothing. */
   row: WorkflowGroupRow;
-  /** Whether a deploy runs, so a stop or a reload has something to act on. */
+  /** Whether a deploy runs, so a stop or an update has something to act on. */
   running: boolean;
   start(uploaded: DeployedFingerprints): Promise<ApplyFailure | null>;
   stop(): Promise<ApplyFailure | null>;
-  reload(uploaded: DeployedFingerprints): Promise<ApplyFailure | null>;
+  /** Brings the running deploy in line with the upload. A `config` change keeps its agents
+   * running; a `code` change needs new images, which Docker gets by stopping the deploy and
+   * starting it again, and Kubernetes by rolling them out while the deploy keeps serving. */
+  update(uploaded: DeployedFingerprints, change: DeployChange): Promise<ApplyFailure | null>;
 }
+
+/** What changed since the deploy was applied: `config`, its workflow_group.yaml, `.env` files or
+ * workflows' `config/` files; `code`, any other file, or its API key. */
+export type DeployChange = 'config' | 'code';
 
 /** The deploy's part of a workflow group's status. */
 export type DeployReport = Pick<

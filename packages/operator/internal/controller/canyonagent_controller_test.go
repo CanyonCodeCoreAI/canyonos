@@ -201,6 +201,29 @@ var _ = Describe("CanyonAgent controller", func() {
 		Expect(template()).To(HaveKeyWithValue(builders.RedisLoginAnnotation, "rotated"))
 	})
 
+	It("reports a new image as rolling out until its StatefulSet takes it", func() {
+		createProject(true)
+		createAgent(nil)
+		reconcileAgent(testAgentName)
+		// The StatefulSet controller has taken the first spec, and its pod is ready.
+		statefulSet := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testAgentName}, statefulSet)).To(Succeed())
+		statefulSet.Status.ObservedGeneration = statefulSet.Generation
+		statefulSet.Status.Replicas = 1
+		statefulSet.Status.ReadyReplicas = 1
+		Expect(k8sClient.Status().Update(ctx, statefulSet)).To(Succeed())
+		agent := reconcileAgent(testAgentName)
+		Expect(meta.IsStatusConditionTrue(agent.Status.Conditions, ConditionUpdated)).To(BeTrue())
+
+		agent.Spec.Image = "localhost:5001/canyonos-helloworld-helloagent:new-code"
+		Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+		agent = reconcileAgent(testAgentName)
+		updated := meta.FindStatusCondition(agent.Status.Conditions, ConditionUpdated)
+		Expect(updated.Status).To(Equal(metav1.ConditionFalse))
+		Expect(updated.Reason).To(Equal("RollingOut"))
+		Expect(updated.ObservedGeneration).To(Equal(agent.Generation))
+	})
+
 	It("follows a new replica count, as /scale sets it", func() {
 		createProject(true)
 		createAgent(nil)

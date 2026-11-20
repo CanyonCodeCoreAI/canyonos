@@ -260,7 +260,12 @@ export const docker_target: WorkflowGroupTarget = {
       running: controller?.running ?? false,
       start: (uploaded) => start(row, controller, uploaded),
       stop: async () => (controller ? stop_controller(controller) : null),
-      reload: async (uploaded) => (controller ? reload(row, controller, uploaded) : null),
+      update: async (uploaded, change) => {
+        if (change === 'config') return controller ? reload(row, controller, uploaded) : null;
+        // The Global Controller builds the new images as it starts again.
+        const stopped = controller ? await stop_controller(controller) : null;
+        return stopped ?? start(row, controller, uploaded);
+      },
     };
   },
 

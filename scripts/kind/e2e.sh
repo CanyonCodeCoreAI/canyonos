@@ -27,6 +27,11 @@
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
 #   - requests through the endpoint complete;
+#   - in a workflow group of two workflows, a code change in one rolls only its agents
+#     out, while the other keeps its pods and answers every request, and the
+#     CanyonProject and Redis stay; the rollout runs after the deploy hands it over, so
+#     `deploy --detach` returns while it rolls; deploying one of them alone takes the other's agents
+#     and .env Secret out, and nothing else;
 #   - the CanyonOS API, restarted, still knows the running workflow group;
 #   - the dashboard lists the project's workflow by its own id, never the workflow
 #     group's, reads its Redis and receives its telemetry; its API takes the key whose
@@ -517,6 +522,92 @@ EOF
   done
   [ -z "${left}" ] || fail "left behind: ${left}"
   as_admin kubectl get namespace "${NS}" >/dev/null || fail "clean deleted the namespace"
+
+  log "Two workflows in a workflow group: a code change rolls out only the changed one's agents"
+  mkdir -p /multi && cp /w/examples/helloworld/workflow_group.yaml /multi/ && kubernetes_block /multi "${NS}"
+  cp -r /w/examples/helloworld/helloworld /alpha
+  cp -r /w/examples/helloworld/helloworld /beta
+  multi() {  # workflow folders: deploy the workflow group /multi with them, with the API key
+    (cd /multi && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" COLUMNS=200 timeout 600 \
+      /w/.venv/bin/canyonos deploy "$@" --serve false --yes </dev/null)
+  }
+  multi ../alpha ../beta || fail "the deploy of two workflows"
+  named() {  # folder name: the workflow the deploy named after that folder
+    /w/.venv/bin/python -c 'import sys, yaml
+print(*[n for n in yaml.safe_load(open("/multi/workflow_group.yaml"))["workflows"] if n.startswith(sys.argv[1] + "-")])' "$1"
+  }
+  alpha="$(named alpha)"
+  beta="$(named beta)"
+  [ -n "${alpha}" ] && [ -n "${beta}" ] || fail "the deploy named no workflows: $(cat /multi/workflow_group.yaml)"
+  pods_of() {  # workflow: its pods, as name=uid
+    as_deployer kubectl -n "${NS}" get pods \
+      -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.uid}{"\n"}{end}' | grep "^$1-" | sort
+  }
+  shared() {  # the workflow group's CanyonProject and Redis pod, which a code change keeps
+    as_deployer kubectl -n "${NS}" get canyonproject/multi pod/canyonos-redis-0 \
+      -o jsonpath='{range .items[*]}{.metadata.uid} {end}'
+  }
+  KUBECONFIG="${DEPLOYER}" kubectl -n "${NS}" port-forward svc/canyonos-endpoint 18090:8080 >/dev/null 2>&1 &
+  multi_forward=$!
+  endpoint_up http://127.0.0.1:18090 "${api_key}" >/dev/null || fail "the workflow group's endpoint is not up"
+  (
+    ok=0 failed=0
+    while [ ! -f /tmp/stop-poll ]; do
+      code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:18090/${beta}/Workflow/main" \
+        -H "Authorization: Bearer ${api_key}" -H 'Content-Type: application/json' -d '{"query": "beta"}' || true)"
+      if [ "${code}" = 202 ]; then ok=$((ok + 1)); else failed=$((failed + 1)); fi
+      sleep 1
+    done
+    echo "${ok} ${failed}" > /tmp/poll.txt
+  ) &
+  poller=$!
+  shared_before="$(shared)"
+  alpha_before="$(pods_of "${alpha}")"
+  beta_before="$(pods_of "${beta}")"
+  echo "# a code change" >> /alpha/agents/hello_agent.py
+  multi ../alpha ../beta || fail "the redeploy of a code change in ${alpha}"
+  touch /tmp/stop-poll
+  wait "${poller}" || true
+  rm -f /tmp/stop-poll
+  read -r ok failed < /tmp/poll.txt
+  [ "$(shared)" = "${shared_before}" ] || fail "a code change replaced the CanyonProject or Redis"
+  [ "$(pods_of "${beta}")" = "${beta_before}" ] || fail "a code change in ${alpha} replaced ${beta}'s pods"
+  [ "$(pods_of "${alpha}")" != "${alpha_before}" ] || fail "${alpha}'s new code did not replace its pods"
+  [ "${failed}" = 0 ] && [ "${ok}" -gt 0 ] \
+    || fail "${beta} failed ${failed} of $((ok + failed)) requests while ${alpha} rolled out"
+  echo "${beta} answered all ${ok} requests while ${alpha} rolled out"
+
+  log "A code change rolls out after the deploy hands it over: --detach returns while it rolls"
+  multi_phase() {
+    canyonos_in "${DEPLOYER}" /multi status --json 2>/dev/null \
+      | /w/.venv/bin/python -c 'import sys, json; print(json.load(sys.stdin).get("phase"))' || true
+  }
+  echo "# another code change" >> /beta/agents/hello_agent.py
+  multi ../alpha ../beta --detach || fail "the detached redeploy of a code change in ${beta}"
+  phase="$(multi_phase)"
+  [ "${phase}" = starting ] || fail "deploy --detach returned once the rollout was ${phase}, not while it ran"
+  for _ in $(seq 150); do
+    phase="$(multi_phase)"
+    [ "${phase}" = up ] || [ "${phase}" = failed ] && break
+    sleep 2
+  done
+  [ "${phase}" = up ] || fail "the detached rollout ended ${phase}: $(canyonos_in "${DEPLOYER}" /multi status 2>&1)"
+
+  log "Deploying one of the two workflows takes the other out, and nothing else"
+  alpha_before="$(pods_of "${alpha}")"
+  multi ../alpha || fail "the deploy of ${alpha} alone"
+  [ "$(shared)" = "${shared_before}" ] || fail "taking ${beta} out replaced the CanyonProject or Redis"
+  [ "$(pods_of "${alpha}")" = "${alpha_before}" ] || fail "taking ${beta} out replaced ${alpha}'s pods"
+  for _ in $(seq 120); do
+    left="$(as_deployer kubectl -n "${NS}" get canyonagents,pods -o name | grep "/${beta}-" || true)"
+    [ -z "${left}" ] && break
+    sleep 2
+  done
+  [ -z "${left}" ] || fail "${beta} is still running: ${left}"
+  as_deployer kubectl -n "${NS}" get secrets -l canyonos.canyoncode.ai/project=multi -o name | grep -q "${beta}" \
+    && fail "${beta}'s .env Secret is left behind"
+  kill "${multi_forward}" 2>/dev/null || true
+  canyonos_in "${DEPLOYER}" /multi stop >/dev/null || fail "stop of the workflow group of two workflows"
 
   log "deploy_mode: toy runs the project as one agent StatefulSet, which answers"
   cp -r /w/examples/helloworld /toy

@@ -219,12 +219,10 @@ async function apply_once(workflow_group_id: string): Promise<void> {
     state.applying = action === 'none' ? null : action;
     let failure: ApplyFailure | null = null;
     try {
-      if (action === 'stop' || action === 'restart') failure = await pass.stop();
-      if (action === 'start' || (action === 'restart' && !failure)) {
-        failure = await pass.start(uploaded);
-      } else if (action === 'reload') {
-        failure = await pass.reload(uploaded);
-      }
+      if (action === 'start') failure = await pass.start(uploaded);
+      else if (action === 'stop') failure = await pass.stop();
+      else if (action === 'reload') failure = await pass.update(uploaded, 'config');
+      else if (action === 'restart') failure = await pass.update(uploaded, 'code');
     } catch (error) {
       apply_logger.error('Applying the upload failed', { workflow_group_id, action, error });
       failure = { error: message_of(error), code: FAILURE_OF_ACTION[action] };

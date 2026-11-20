@@ -188,7 +188,7 @@ func (r *CanyonAgentReconciler) reconcileAgent(
 	if err := replaceNext(ctx, r.Client, plan); err != nil {
 		return false, "", "", err
 	}
-	setUpdated(&agent.Status.Conditions, agent.Generation, plan)
+	setUpdated(&agent.Status.Conditions, agent.Generation, plan, statefulSet)
 	// Why pods cannot run, read once: it explains both a stalled update and missing
 	// ready replicas.
 	problem := ""

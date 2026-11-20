@@ -30,6 +30,8 @@ export interface ObjectMeta {
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
   deletionTimestamp?: string;
+  /** The spec's version, which a status's observedGeneration says it describes. */
+  generation?: number;
 }
 
 export interface KubernetesObject<
@@ -209,9 +211,16 @@ export function remove(path: string): Promise<unknown> {
   return request('DELETE', path);
 }
 
-/** Deletes every object at collection `path` that carries all of `labels`. */
-export function remove_all(path: string, labels: Record<string, string>): Promise<unknown> {
-  return request('DELETE', `${path}?labelSelector=${label_selector(labels)}`);
+/** Deletes every object at collection `path` that carries all of `labels`, and is named `name`
+ * when that is given. */
+export function remove_all(
+  path: string,
+  labels: Record<string, string>,
+  name?: string
+): Promise<unknown> {
+  const only =
+    name === undefined ? '' : `&fieldSelector=${encodeURIComponent(`metadata.name=${name}`)}`;
+  return request('DELETE', `${path}?labelSelector=${label_selector(labels)}${only}`);
 }
 
 export interface PodLogOptions {

@@ -125,7 +125,12 @@ type CanyonProject = KubernetesObject<
 >;
 type CanyonAgent = KubernetesObject<
   { agentName: string; replicas: number },
-  { conditions?: Condition[]; readyReplicas?: number }
+  {
+    conditions?: Condition[];
+    replicas?: number;
+    readyReplicas?: number;
+    observedGeneration?: number;
+  }
 >;
 type CanyonBuild = KubernetesObject<
   Record<string, unknown>,
@@ -263,6 +268,16 @@ async function project_objects(
     k8s.list<CanyonAgent>(canyon_path(namespace, 'canyonagents'), labels),
   ]);
   return { project: projects[0] ?? null, agents };
+}
+
+/** Why each of `agents` will never start as configured, as the operator reports it. */
+function never_starting(agents: CanyonAgent[]): string[] {
+  return agents.flatMap((agent) => {
+    const ready = conditions_of(agent).Ready;
+    return ready?.reason && FATAL_REASONS.includes(ready.reason)
+      ? [`${agent.spec?.agentName}: ${ready.message}`]
+      : [];
+  });
 }
 
 /** A CanyonProject in `namespace`, with `labels`, of another workflow group than
@@ -488,12 +503,7 @@ async function deploy_in_cluster(
     while (deploy.phase === 'starting' && (await poll(deploy, deadline))) {
       const { project, agents } = await project_objects(deploy);
       const refused = project ? conditions_of(project).Ready : undefined;
-      const fatal = agents.flatMap((agent) => {
-        const ready = conditions_of(agent).Ready;
-        return ready?.reason && FATAL_REASONS.includes(ready.reason)
-          ? [`${agent.spec?.agentName}: ${ready.message}`]
-          : [];
-      });
+      const fatal = never_starting(agents);
       if (refused?.reason && PROJECT_FATAL_REASONS.includes(refused.reason)) {
         fail(deploy, 'Deploy failed.', 'deploy_failed', refused.message ?? refused.reason);
       } else if (fatal.length > 0) {
@@ -664,6 +674,136 @@ async function reload(
   const { project } = await project_objects(deploy);
   if (project) await record_deployed(row.id, deploy, project);
   return null;
+}
+
+/** Waits until the operator runs what the deploy last applied: its CanyonProject ready, and each
+ * CanyonAgent's pods on its current spec and ready. Returns why that will never happen when the
+ * operator says so, or that the deploy was stopped; throws DeployTimeout past `deadline`. */
+async function rolled_out(deploy: ClusterDeploy, deadline: number): Promise<string | null> {
+  while (await poll(deploy, deadline)) {
+    const { project, agents } = await project_objects(deploy);
+    const fatal = never_starting(agents);
+    if (fatal.length > 0) return fatal.join('\n');
+    // An agent the workflow group no longer has is draining out of it: nothing to wait for.
+    const staying = agents.filter((agent) => agent.metadata.deletionTimestamp === undefined);
+    const current = staying.every((agent) => {
+      const conditions = conditions_of(agent);
+      // Back to its own count, all ready: a surge update's extra replica is gone, and the last
+      // replica it replaced serves.
+      // A count of 0 is left out of the status.
+      const settled =
+        (agent.status?.replicas ?? 0) === agent.spec?.replicas &&
+        (agent.status?.readyReplicas ?? 0) === agent.spec?.replicas;
+      return (
+        agent.status?.observedGeneration === agent.metadata.generation &&
+        conditions.Updated?.status === 'True' &&
+        conditions.Ready?.status === 'True' &&
+        settled
+      );
+    });
+    if (project && conditions_of(project).Ready?.status === 'True' && current) return null;
+  }
+  return 'The deploy was stopped.';
+}
+
+/** The workflows whose agents the deploy runs, from its CanyonAgents (`<workflow>.<agent>`). */
+async function running_workflows(deploy: ClusterDeploy): Promise<Set<string>> {
+  const { agents } = await project_objects(deploy);
+  return new Set(
+    agents.map((agent) => (agent.spec?.agentName ?? '').split('.')[0] ?? '').filter(Boolean)
+  );
+}
+
+/** Deletes the `.env` Secret a deploy wrote for each of `workflows`, which the workflow group no
+ * longer has. One Secret at a time, by its name: the API may not list Secrets. */
+async function remove_env_secrets(deploy: ClusterDeploy, workflows: string[]): Promise<void> {
+  const { namespace, project } = placed(deploy);
+  const written = { [LABEL_PROJECT]: project, [k8s.MANAGED_BY_LABEL]: k8s.FIELD_MANAGER };
+  for (const workflow of workflows) {
+    // The name kubernetes-plan gives the workflow's Secret.
+    const name = `${project}-${k8s.resource_name(workflow)}-env`;
+    await k8s.remove_all(core_path(namespace, 'secrets'), written, name);
+  }
+}
+
+/** Plans a change of code or API key and starts rolling it out while the deploy keeps serving;
+ * how it goes then shows in the deploy's phase, as for a start, so a stop need not wait for it.
+ * A change of namespace stops the deploy and starts it in the new one instead. */
+async function roll_out(
+  row: WorkflowGroupRow,
+  deploy: ClusterDeploy,
+  uploaded: DeployedFingerprints
+): Promise<ApplyFailure | null> {
+  const planned = await plan(row.id, deploy.name);
+  if ('violations' in planned) return { error: planned.violations, code: 'config_invalid' };
+  if (planned.plan.namespace !== deploy.namespace) {
+    return (await stop(deploy)) ?? start(row, uploaded);
+  }
+  Object.assign(deploy, {
+    phase: 'starting',
+    message: null,
+    steps: [],
+    error: null,
+    error_code: null,
+    root_cause: null,
+  });
+  wake(deploy);
+  void roll_out_in_cluster(row.id, deploy, planned.plan, uploaded);
+  k8s_logger.info('Rollout started', { workflow_group_id: row.id, namespace: deploy.namespace });
+  return null;
+}
+
+/** Builds the new images as the running pods serve, applies the workflow group, and waits until
+ * the operator has replaced the pods of each agent whose image changed (an agent whose code did
+ * not keeps its pods); then deletes the `.env` Secrets of workflows the workflow group no longer
+ * has and keeps the upload's fingerprints as deployed. A failure fails the deploy but leaves the
+ * pods that serve in place, and the fingerprints they run, so the same upload rolls out again.
+ * Runs on its own, after `roll_out` returned. */
+async function roll_out_in_cluster(
+  workflow_group_id: string,
+  deploy: ClusterDeploy,
+  planned: Plan,
+  uploaded: DeployedFingerprints
+): Promise<void> {
+  const deadline = Date.now() + STARTUP_TIMEOUT_MINUTES * 60_000;
+  try {
+    const before = await running_workflows(deploy);
+    deploy.message = 'Building the new images in the cluster...';
+    let failure = await build(workflow_group_id, deploy, planned, uploaded.auth, deadline);
+    if (!failure) {
+      deploy.steps.push('Build complete');
+      deploy.message = 'Rolling the new images out...';
+      failure = await rolled_out(deploy, deadline);
+    }
+    if (failure) {
+      fail(deploy, 'Deploy failed.', 'deploy_failed', failure);
+    } else {
+      const kept = new Set(planned.workflows);
+      await remove_env_secrets(
+        deploy,
+        [...before].filter((workflow) => !kept.has(workflow))
+      );
+      await workflow_groups_repo.save_deployed(workflow_group_id, uploaded, null);
+      const { project, agents } = await project_objects(deploy);
+      if (project) await record_deployed(workflow_group_id, deploy, project);
+      const staying = agents.filter((agent) => agent.metadata.deletionTimestamp === undefined);
+      deploy.phase = 'up';
+      deploy.message = null;
+      deploy.steps.push(`${staying.length} agent(s) ready`);
+      wake(deploy);
+    }
+  } catch (error) {
+    if (error instanceof DeployTimeout) {
+      fail(
+        deploy,
+        `The new images were not rolled out within ${STARTUP_TIMEOUT_MINUTES} minutes.`,
+        'deploy_timeout'
+      );
+    } else {
+      fail(deploy, 'Deploy failed.', 'deploy_failed', message_of(error));
+    }
+  }
+  k8s_logger.info('Rollout settled', { workflow_group_id, phase: deploy.phase });
 }
 
 /** The workflow ids the uploaded workflow_group.yaml gives its workflows, by name. */
@@ -1012,7 +1152,10 @@ export const kubernetes_target: WorkflowGroupTarget = {
       running,
       start: (uploaded) => start(row, uploaded),
       stop: async () => (is_running(deploy) ? stop(deploy) : null),
-      reload: async (uploaded) => (is_running(deploy) ? reload(row, deploy, uploaded) : null),
+      update: async (uploaded, change) => {
+        if (!is_running(deploy)) return change === 'code' ? start(row, uploaded) : null;
+        return change === 'code' ? roll_out(row, deploy, uploaded) : reload(row, deploy, uploaded);
+      },
     };
   },
 
