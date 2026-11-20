@@ -15,7 +15,7 @@ folder is `.canyon/config`.
 | `policy.yaml`                                                   | Which agents a request may reach                                                                     | [Policy](RUNTIME_CONTRACT.md#policy)                     |
 | `governance.yaml`                                               | Per agent: refuse calls while an agent it needs is down, and switch model or refuse past a spend     | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
 | `.env`, in the workflow folder (beside `.canyon` after convert)  | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
-| `workflow_group.yaml`, in the workflow group folder                     | Where every workflow's agents run, the ports, Redis and telemetry, for the whole workflow group           | [Top-level keys](WORKFLOW_CONFIG.md#top-level-keys)      |
+| `workflow_group.yaml`, in the workflow group's record, `~/.canyonos/workflows/<workflow group>/` | Where every workflow's agents run, the ports, Redis and telemetry, for the whole workflow group           | [Top-level keys](WORKFLOW_CONFIG.md#top-level-keys)      |
 
 ## Apply a change
 

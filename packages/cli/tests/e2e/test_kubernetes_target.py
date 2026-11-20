@@ -279,3 +279,30 @@ def test_stop_deletes_the_workflow_group_and_closes_the_forward(cli_case: CliCas
     ]
     forwards = cli_case.home / ".canyonos" / "forwards"
     assert not list(forwards.glob("api.*")), list(forwards.iterdir())
+
+
+def test_stop_in_a_workflow_folder_reaches_its_workflow_group_s_cluster(
+    cli_case: CliCase,
+):
+    """Run from the workflow folder of a recorded `target: kubernetes` workflow group,
+    `stop` reads the record's target and stops it on the cluster, not on Docker."""
+    environment, records = _kubernetes_group(
+        cli_case, {"DELETE": [200, {"workflow_group_id": WORKFLOW_GROUP_ID}]}
+    )
+    seed = cli_case.cwd / "workflow_group.yaml"
+    folder = cli_case.cwd / "echo"
+    folder.mkdir()
+    record = (
+        cli_case.home / ".canyonos" / "workflows" / f"group-{WORKFLOW_GROUP_ID[:8]}"
+    )
+    record.mkdir(parents=True)
+    workflows = f"workflows:\n  echo-1a2b3c4d:\n    path: {folder}\n"
+    (record / "workflow_group.yaml").write_text(seed.read_text() + workflows)
+    seed.unlink()
+
+    result = cli_case.run_cli(["stop"], env=environment, cwd=folder, timeout=60)
+
+    assert result.returncode == 0, _said(result)
+    assert [request["method"] for request in _lines(records / "requests.jsonl")] == [
+        "DELETE"
+    ], _said(result)

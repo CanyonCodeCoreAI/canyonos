@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos stop` removes the workflow group's containers, its workspace volume and its
-records under `~/.canyonos`; a second stop is a no-op, and `canyonos status` and
-`canyonos logs` then exit 3 for nothing running. `canyonos clean` removes the agents' images and keeps a
-port, the workflow's `.canyon`: it cleans the workflow group, not its workflows. This runs last; the container logs are collected first, because
+"""`canyonos stop` removes the workflow group's containers, its workspace volume and the
+state of its deploy in its record under `~/.canyonos/workflows/`, keeping the
+record's `workflow_group.yaml`; a second stop is a no-op, and `canyonos status` and
+`canyonos logs` then exit 3 for nothing running. `canyonos clean` removes the agents'
+images and the whole record and keeps a port, the workflow's `.canyon`: it cleans the
+workflow group, not its workflows. This runs last; the container logs are collected first, because
 stop removes them. What stop does to the shared dashboard is
 scenarios/test_shared_dashboard.py's.
 
@@ -58,6 +60,7 @@ def test_stop_removes_the_workflow_group_and_its_records(
     assert not _volume_exists(recorder, volume), f"{volume} is still there"
     kept = [path for path in records if path.exists()]
     assert not kept, kept
+    assert (deployed.record / "workflow_group.yaml").is_file(), deployed.record
     again = canyonos(recorder, ["stop", "--json"], cwd=deployed.dir, timeout=600)
     expected = {"ok": True, "code": None, "errors": [], "workflow_groups": []}
     assert again.json() == expected, again.stdout
@@ -92,5 +95,6 @@ def test_clean_removes_the_agent_images_and_keeps_the_port(recorder, deployed):
 
     left = sorted(built & _images(recorder))
     assert not left, left
+    assert not deployed.record.exists(), f"clean kept {deployed.record}"
     if deployed.workflow.port is not None:
         assert canyon.is_dir(), canyon

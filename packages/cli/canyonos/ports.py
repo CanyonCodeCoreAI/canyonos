@@ -30,7 +30,7 @@ DASHBOARD = "the dashboard"
 @contextlib.contextmanager
 def held():
     """Hold the lock every command picks a port under, waiting for one that has it."""
-    # Beside `deployments/`, not in it: every entry there is read as a workflow group.
+    # Beside `workflows/`, not in it: every entry there is read as a workflow group.
     home = os.path.dirname(deployment.deployments_dir())
     os.makedirs(home, exist_ok=True)
     lock = os.path.join(home, "ports.lock")

@@ -72,16 +72,20 @@ out and everything the build writes on top.
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `canyonos new-app`                   | The starter files, into an empty folder                                                                                                                                                                     |
 | `canyonos convert`                   | `.canyon`, through your coding agent, including `.canyon/.env.example` with the names of the keys your code needs. In a git repository, it also adds `.canyon/` to `.gitignore` unless it is already there. |
-| `canyonos deploy`                    | `workflow_group.yaml` and its `workflow_group_id` on the first deploy. On Docker, also each agent's `resources` and `replicas`, with defaults filled in and any change you make in the deploy's menu.               |
+| `canyonos deploy`                    | On Docker, each agent's `resources` and `replicas`, with defaults filled in and any change you make in the deploy's menu. The workflow group's `workflow_group.yaml` and its `workflow_group_id` go in its record, `~/.canyonos/workflows/<workflow group>/`, not in your folders. |
 | `canyonos config`                    | The keys you change                                                                                                                                                                                         |
 
 `deploy` writes `resources` and `replicas` to `config/workflow_config.yaml` in each
-workflow's root; `config` writes to `workflow_group.yaml` in the workflow group folder.
+workflow's root; `config` writes to `workflow_group.yaml` in the workflow group's
+record.
 
-Every later deploy reuses `workflow_group_id`, so the workflow group stays one workflow group on the
-dashboard and keeps its Docker names. Deleting that line starts a new workflow group.
+Every later deploy reuses the record's `workflow_group_id`, so the workflow group stays
+one workflow group on the dashboard and keeps its Docker names. `canyonos clean` deletes
+the record; the next deploy then starts a new workflow group, unless the
+`workflow_group.yaml` it starts from has a `workflow_group_id`.
 
-Nothing in CanyonOS writes or deletes `.env`: it is only read.
+Nothing in CanyonOS writes `.env`: it is only read. `canyonos clean` deletes the
+workflow group's record, the `.env` in it included.
 
 ## What `.env` is for
 
@@ -93,7 +97,8 @@ Controller reads it for `${VAR}` references in the workflow's config files. On D
 it passes the file to each of the workflow's agent replicas with `--env-file`;
 the endpoint, Redis and metrics-collector containers don't get it. On Kubernetes,
 `.env` becomes a Secret; see [Kubernetes workflow group](KUBERNETES.md). The `${VAR}`s in
-`workflow_group.yaml` come from the `.env` beside it.
+`workflow_group.yaml` come from the `.env` beside it in the record: the first deploy
+copies the one beside the `workflow_group.yaml` it starts from, readable only by you.
 
 Before it builds anything, `canyonos deploy` warns about keys that `.env.example` in the
 root lists but `.env` leaves out or empty.
@@ -110,10 +115,11 @@ written into a Python string or a JSON file.
 ## Names
 
 On Docker, CanyonOS names everything it starts after the workflow group: the name of the
-workflow group folder, lowercased, with characters Docker doesn't allow replaced by `-` and
+folder that held the `workflow_group.yaml` it started from, else of its first workflow
+folder, lowercased, with characters Docker doesn't allow replaced by `-` and
 cut to 24 characters, then the first 8 characters of `workflow_group_id`. A workflow's name
-is its folder's name, made Docker-safe the same way. For a workflow group folder `prod` and
-a workflow folder `myapp`:
+is its folder's name, made Docker-safe the same way. For a workflow group named after a
+folder `prod` and a workflow folder `myapp`:
 
 | What                   | Name                                                 | Example                                             |
 | ---------------------- | ---------------------------------------------------- | --------------------------------------------------- |

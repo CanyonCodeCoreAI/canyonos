@@ -195,7 +195,7 @@ def test_a_paused_redis_is_a_quick_503_not_a_hang(deployed_workflow):
     redis = docker(
         "ps",
         "--filter",
-        f"name={workflow_group_id(folder)[:8]}-redis-localhost",
+        f"name={workflow_group_id(case, folder)[:8]}-redis-localhost",
         "--format",
         "{{.Names}}",
     )

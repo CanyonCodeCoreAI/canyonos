@@ -538,18 +538,48 @@ def workflow_dir(deployment: Path) -> Path:
     return deployment / deployment.name
 
 
-def workflow_name(workspace: Path, deployment: Path | None = None) -> str:
-    """The name the workflow group in `deployment`, by default the folder holding
-    `workspace`, gives the workflow folder `workspace`: its `workflows:` entry's, its
-    folder's name and the start of its workflow_id, which the deploy writes."""
-    deployment = deployment or workspace.parent
-    config = yaml.safe_load((deployment / "workflow_group.yaml").read_text())
-    for name, entry in (config.get("workflows") or {}).items():
-        if (deployment / entry["path"]).resolve() == workspace.resolve():
+def record(workspace: Path, *, missing_ok: bool = False) -> Path | None:
+    """The record `canyonos deploy` keeps under `~/.canyonos/workflows/` for the
+    workflow group of `workspace`: the one whose `workflow_group.yaml` lists a
+    workflow folder that is `workspace`, inside it or holds it, as the CLI picks the
+    workflow group a command run from `workspace` acts on. Fails unless there is one,
+    or with `missing_ok` returns None when there is none, before the first deploy."""
+    found = _records_of(workspace)
+    assert len(found) <= 1, f"{workspace} belongs to several workflow groups: {found}"
+    assert found or missing_ok, f"no workflow group record lists {workspace}"
+    return found[0] if found else None
+
+
+def _records_of(workspace: Path) -> list[Path]:
+    here = workspace.resolve()
+    found = []
+    for config in sorted(
+        (Path.home() / ".canyonos" / "workflows").glob("*/workflow_group.yaml")
+    ):
+        workflows = (yaml.safe_load(config.read_text()) or {}).get("workflows") or {}
+        paths = [Path(entry["path"]).resolve() for entry in workflows.values()]
+        if any(
+            here == path or path in here.parents or here in path.parents
+            for path in paths
+        ):
+            found.append(config.parent)
+    return found
+
+
+def group_settings(workspace: Path) -> dict:
+    """The parsed `workflow_group.yaml` of the workflow group of `workspace`, from its
+    record."""
+    return yaml.safe_load((record(workspace) / "workflow_group.yaml").read_text())
+
+
+def workflow_name(workspace: Path) -> str:
+    """The name the workflow group gives the workflow folder `workspace`: its
+    `workflows:` entry's, its folder's name and the start of its workflow_id, which
+    the deploy writes in the record."""
+    for name, entry in (group_settings(workspace).get("workflows") or {}).items():
+        if Path(entry["path"]).resolve() == workspace.resolve():
             return name
-    raise AssertionError(
-        f"{deployment}/workflow_group.yaml has no workflow for {workspace}"
-    )
+    raise AssertionError(f"{record(workspace)} has no workflow for {workspace}")
 
 
 def qualified(workspace: Path, name: str) -> str:
@@ -566,8 +596,10 @@ def docker_name(agent: str) -> str:
 
 def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -> Path:
     """Copy `workflow` into `parent/<name>/<name>` and return `parent/<name>`, the
-    workflow group folder to run `canyonos` from, named as the dashboard names the
-    workflow group, and note it on `recorder` for the traces. In order: its source from
+    workflow group folder to run `canyonos` from, whose `workflow_group.yaml` the
+    first deploy copies into the workflow group's record and whose name the record is
+    named after, as the dashboard names the workflow group, and note it on `recorder`
+    for the traces. In order: its source from
     this repo, without any `.car`, `.canyon` or `.env` at any depth, or cloned whole
     at its pinned commit, with the `workflow_group.yaml` of the workflow group folder a
     source from this repo sits in; then its committed port as `.canyon`; then its
@@ -579,6 +611,7 @@ def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -
     deployment = parent / workflow.name
     staged = workflow_dir(deployment)
     recorder.staged.append((len(recorder.calls), deployment))
+    _forget_stale_record(deployment)
     if isinstance(workflow.source, Git):
         clone = parent / f"{workflow.name}-clone"
         git = ["git", "-c", "advice.detachedHead=false"]
@@ -605,6 +638,16 @@ def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -
         {**workflow.env, **secrets, "BEDROCK_UPSTREAM_URL": fake_bedrock.url()},
     )
     return deployment
+
+
+def _forget_stale_record(deployment: Path) -> None:
+    """Remove the record of a workflow group an earlier run deployed from the same
+    folder and stopped: pytest numbers its temp folders from 0 again once they are all
+    gone, and a deploy would reuse that record, and its settings, by the folder's
+    path."""
+    for stale in _records_of(deployment):
+        if not (stale / "state.json").exists():
+            shutil.rmtree(stale)
 
 
 def _stale(directory, names):
@@ -685,9 +728,10 @@ class Endpoint:
 
 
 def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
-    """Run `script` with the checkout's CLI modules from the workflow group folder, the
-    way the CLI itself would see the workflow group. Python runs isolated (`-I`), so a workflow
-    file such as `json.py` never shadows a module the script imports."""
+    """Run `script` with the checkout's CLI modules from the record of the workflow
+    group of `workspace` (from `workspace` before its first deploy), the way a CLI
+    command run from `workspace` sees the workflow group. Python runs isolated (`-I`),
+    so a workflow file such as `json.py` never shadows a module the script imports."""
     argv = [
         "uv",
         "run",
@@ -699,7 +743,8 @@ def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
         "-c",
         script,
     ]
-    return run(recorder, argv, cwd=workspace, env=cli_env(recorder.api_key))
+    cwd = record(workspace, missing_ok=True) or workspace
+    return run(recorder, argv, cwd=cwd, env=cli_env(recorder.api_key))
 
 
 def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str):
@@ -723,31 +768,27 @@ def deployment_group(recorder: Recorder, workspace: Path) -> str:
 def stop_workflow_group(
     recorder: Recorder, workspace: Path, *, timeout: int = 600, clean: bool = False
 ) -> Call | None:
-    """`canyonos stop <name>` for the workflow group in `workspace`, or with `clean`
-    `canyonos clean <name>`, which also removes its agents' images; named so the
-    command never has to ask which workflow group when others run too. None when the
-    folder has no deploy record, so there is nothing to stop."""
-    name = cli_value(
-        recorder,
-        workspace,
-        "deployment_name() if os.path.isfile(state_path()) else None",
-        "import os; from canyonos.deployment import deployment_name, state_path",
-    )
-    if name is None:
+    """`canyonos stop <name>` for the workflow group of `workspace`, or with `clean`
+    `canyonos clean <name>`, which also removes its agents' images and its record;
+    named so the command never has to ask which workflow group when others run too.
+    None when there is nothing to do: no record, or for a stop, no deploy state in
+    it."""
+    found = record(workspace, missing_ok=True)
+    if found is None or (not clean and not (found / "state.json").is_file()):
         return None
     command = "clean" if clean else "stop"
     return canyonos(
-        recorder, [command, name], cwd=workspace, timeout=timeout, check=False
+        recorder, [command, found.name], cwd=workspace, timeout=timeout, check=False
     )
 
 
 def deployed_workflow_id(api: Api, workspace: Path) -> str:
     """The dashboard id of the workflow in the workflow group folder `workspace`: the
-    `workflow_id` `canyonos deploy` saved for it in `workflow_group.yaml`, which the
-    dashboard registers it under. Fail unless the dashboard lists it by its name."""
+    `workflow_id` `canyonos deploy` saved for it in its record's `workflow_group.yaml`,
+    which the dashboard registers it under. Fail unless the dashboard lists it by its
+    name."""
     name = workflow_name(workflow_dir(workspace))
-    config = yaml.safe_load((workspace / "workflow_group.yaml").read_text())
-    workflow_id = config["workflows"][name]["workflow_id"]
+    workflow_id = group_settings(workspace)["workflows"][name]["workflow_id"]
     workflows = api.get("/v1/workflows").json()
     names = {workflow["id"]: workflow["name"] for workflow in workflows}
     assert names.get(workflow_id) == name, (
@@ -841,10 +882,9 @@ def workflow_group_redis(recorder: Recorder, workspace: Path) -> redis.Redis:
 
 
 def workflow_group_id(workspace: Path) -> str:
-    """The `workflow_group_id` `canyonos deploy` saved in the workflow group folder
-    `workspace`, which the CanyonOS API keys the workflow group by."""
-    config = yaml.safe_load((workspace / "workflow_group.yaml").read_text())
-    return config["workflow_group_id"]
+    """The `workflow_group_id` `canyonos deploy` saved in the record of the workflow
+    group of `workspace`, which the CanyonOS API keys the workflow group by."""
+    return group_settings(workspace)["workflow_group_id"]
 
 
 def deployed_endpoint(

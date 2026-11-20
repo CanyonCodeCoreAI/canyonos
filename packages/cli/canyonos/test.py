@@ -227,15 +227,15 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
 
 
 def _run_test(run, timeout=REQUEST_TIMEOUT):
-    """Query each workflow of the workflow group running from this folder, with this
+    """Query each workflow of the workflow group this command acts on, with this
     machine's API key when one is set; on Kubernetes, through a port-forward to its
     endpoint."""
     existing_config_path()
     existing = existing_deploy()
     if existing is None:
         raise NoDeployError(
-            "No workflow group is running from this folder. Run it from the workflow "
-            "group's folder, the one `canyonos deploy --workflow-group` made."
+            "No workflow group of this folder is running. Run it from one of the "
+            "workflow group's folders, or pick it with `canyonos select-context`."
         )
     endpoint = deployed_endpoint(existing)
     if deployment.configured_target() == "kubernetes":

@@ -41,10 +41,13 @@ export CANYONOS_ENV=development
 export CANYONOS_CORE_IMAGE=local
 ARTIFACTS_DIR="${E2E_ARTIFACTS_DIR:-$(mktemp -d)}"
 mkdir -p "$ARTIFACTS_DIR"
-# The pool app is the workflow `ec2pool`, deployed from a deployment folder beside it.
+# The pool app is the workflow `ec2pool`, deployed as the workflow group whose record
+# this run writes under ~/.canyonos/workflows: a deploy reads the group's
+# workflow_group.yaml and .env there, not in the folder it runs from.
 STAGE_DIR="$(mktemp -d)"
 WORKFLOW_DIR="$STAGE_DIR/ec2pool"
-DEPLOYMENT_DIR="$STAGE_DIR/deployment"
+WORKFLOW_GROUP_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+RECORD_DIR="$HOME/.canyonos/workflows/ec2pool-${WORKFLOW_GROUP_ID:0:8}"
 # Its own API key, which wins over ~/.canyonos/api_key and is never written to it.
 CANYONOS_API_KEY="e2e-$(openssl rand -hex 24)"
 export CANYONOS_API_KEY
@@ -59,7 +62,9 @@ finish() {
   for name in $(docker ps -a --filter name=canyonos --format '{{.Names}}'); do
     docker logs "$name" >"$ARTIFACTS_DIR/$name.log" 2>&1 || true
   done
-  (cd "$DEPLOYMENT_DIR" && canyonos stop) || true
+  canyonos stop "$WORKFLOW_GROUP_ID" || true
+  # Kept while the state of a deploy is in it, which a later stop needs.
+  [ -f "$RECORD_DIR/state.json" ] || rm -rf "$RECORD_DIR"
   if [ "$status" -eq 0 ]; then
     step "PASS: ec2_pool"
   else
@@ -75,16 +80,20 @@ trap finish EXIT
 step "Staging the pool app in $WORKFLOW_DIR"
 cp -R "$FIXTURE_DIR" "$WORKFLOW_DIR"
 rm "$WORKFLOW_DIR/pool.py"
-mkdir "$DEPLOYMENT_DIR"
-mv "$WORKFLOW_DIR/workflow_group.yaml" "$DEPLOYMENT_DIR/workflow_group.yaml"
+mkdir -p "$RECORD_DIR"
+{
+  echo "workflow_group_id: $WORKFLOW_GROUP_ID"
+  cat "$WORKFLOW_DIR/workflow_group.yaml"
+} >"$RECORD_DIR/workflow_group.yaml"
+rm "$WORKFLOW_DIR/workflow_group.yaml"
 # The controller reads the ec2-pool: block's ${EC2_*} values, and keys when given, from
-# the deployment's .env; without keys it uses this machine's role.
+# the workflow group's .env; without keys it uses this machine's role.
 printf 'EC2_REGION=%s\nEC2_SUBNET_ID=%s\nEC2_SECURITY_GROUP_ID=%s\nEC2_POOL_SMALL_TYPE=t3.small\n' \
-  "$EC2_REGION" "$EC2_SUBNET_ID" "$EC2_SECURITY_GROUP_ID" >"$DEPLOYMENT_DIR/.env"
-chmod 600 "$DEPLOYMENT_DIR/.env"
+  "$EC2_REGION" "$EC2_SUBNET_ID" "$EC2_SECURITY_GROUP_ID" >"$RECORD_DIR/.env"
+chmod 600 "$RECORD_DIR/.env"
 if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
   printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
-    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >>"$DEPLOYMENT_DIR/.env"
+    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >>"$RECORD_DIR/.env"
 fi
 
 step "Building canyonos-core:dev"
@@ -97,7 +106,7 @@ while IFS='|' read -r case expected; do
   # The deployment as the Global Controller's workspace holds it: workflow_group.yaml and
   # a folder per workflow.
   workspace="$(mktemp -d)"
-  cp "$DEPLOYMENT_DIR/workflow_group.yaml" "$workspace/workflow_group.yaml"
+  cp "$RECORD_DIR/workflow_group.yaml" "$workspace/workflow_group.yaml"
   cp -R "$WORKFLOW_DIR" "$workspace/ec2pool"
   out="$ARTIFACTS_DIR/check-${case// /-}.txt"
   uv run --project "$REPO_ROOT" python - "$workspace" "$case" >"$out" <<'PY'
@@ -149,12 +158,11 @@ provider in lowercase|
 provider left out|
 CASES
 
-cd "$DEPLOYMENT_DIR"
-canyonos stop || true
+cd "$WORKFLOW_DIR"
 
 step "canyonos deploy starts every machine of the pool"
-canyonos deploy ../ec2pool --serve false </dev/null
-redis="$(uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_container_name())')"
+canyonos deploy --workflow-group "$WORKFLOW_GROUP_ID" . --serve false </dev/null
+redis="$(cd "$RECORD_DIR" && uv run --project "$REPO_ROOT" python -c 'from canyonos import deployment; print(deployment.redis_container_name())')"
 CANYONOS_REDIS_PASSWORD="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$redis" | sed -n 's/^CANYONOS_REDIS_PASSWORD=//p')"
 export CANYONOS_REDIS_PASSWORD
 pool check-pool
@@ -189,7 +197,7 @@ pool oversubscribe ec2pool.SlowAgent 6 600
 
 step "canyonos stop terminates every machine, even with one just gone"
 pool kill ec2pool.Big >/dev/null
-canyonos stop
+canyonos stop "$WORKFLOW_GROUP_ID"
 sleep 30
 # A pass between the kill and the stop may have started a replacement.
 pool instances "$START" any shutting-down terminated

@@ -14,6 +14,7 @@ reuse it.
 
 import os
 import shutil
+from dataclasses import replace
 
 from canyonos import deployment, selection, ui
 from canyonos.api import (
@@ -587,13 +588,26 @@ def stop_deployments(choice):
     return stop_unused_dashboard(choice.deployments) and all(stopped)
 
 
-def run_stop(all_deployments=False, refs=()):
+def run_stop(all_deployments=False, refs=(), from_folder=False):
     """Run `canyonos stop`: `stop_deployments` on the workflow groups `refs` name or
     `selection.choose` picks, or `stop_all` with `all_deployments`. Returns True when
-    each was found and nothing of it is left running."""
+    each was found and nothing of it is left running. A workflow group named that is
+    not deployed is a failure, unless `from_folder`: it is the one of the folder the
+    command runs from, which has nothing to stop."""
     if all_deployments:
         return stop_all()
-    choice = selection.choose("stop", refs, selection.recorded_deployments())
+    recorded = selection.recorded_deployments()
+    deployed = [p for p in recorded if p.state is not None]
+    choice = selection.choose("stop", refs, recorded if refs else deployed)
+    idle = [p for p in choice.deployments if p.state is None]
+    for target in idle:
+        report = ui.say if from_folder else ui.fail
+        report(f"{target.name} is not deployed, so there is nothing to stop.")
+    choice = replace(
+        choice,
+        deployments=[p for p in choice.deployments if p.state],
+        ok=choice.ok and (from_folder or not idle),
+    )
     ui.json_result["workflow_groups"] = [p.name for p in choice.deployments]
     if not choice.deployments:
         if choice.ok:

@@ -12,8 +12,10 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 
 ## What's in it
 
-This folder is the workflow group folder: its `workflow_group.yaml` configures the workflow group,
-and the workflow, `helloworld/`, holds the agent code.
+This folder's `workflow_group.yaml` configures the workflow group, and the workflow,
+`helloworld/`, holds the agent code. The first deploy copies `workflow_group.yaml` into the
+workflow group's record, `~/.canyonos/workflows/<workflow group>/`, and later deploys read
+only that copy.
 
 | File | What it does |
 |---|---|
@@ -28,7 +30,7 @@ and the workflow, `helloworld/`, holds the agent code.
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
 - It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
-- Work on a copy. Deploying writes into this folder: it adds a `workflow_group_id` to `workflow_group.yaml` and fills default resources into `helloworld/config/workflow_config.yaml`.
+- Work on a copy. Deploying fills default resources into `helloworld/config/workflow_config.yaml`.
 
 ## 1. Deploy
 
@@ -40,8 +42,8 @@ run the other commands from here too. The CLI saves the key, so later deploys re
 canyonos deploy helloworld --api-key <your api key>
 ```
 
-From anywhere else, name both folders: `canyonos deploy examples/helloworld/helloworld --workflow-group examples/helloworld`.
-The dashboard names your workflow group after the workflow group folder, `helloworld`.
+After the first deploy, `canyonos deploy --workflow-group <workflow group>` redeploys it from anywhere else; `canyonos list` shows its name.
+The dashboard names your workflow group after this folder, `helloworld`.
 
 The first run takes about a minute while it builds the images. It ends with:
 
@@ -100,7 +102,7 @@ curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<req
 ```
 
 - The JSON body is passed to `main` as arguments, so `{"query": "Ada"}` returns `Hello, Ada! ...`, and `{}` falls back to `World`.
-- The path is `/<workflow_id>`, the ID the deploy gave the `helloworld` folder; `canyonos deploy` prints it and keeps it in `workflow_group.yaml`. Only the `endpoint` route is served, so `POST /<name>/HelloAgent/hello` returns `404`.
+- The path is `/<workflow_id>`, the ID the deploy gave the `helloworld` folder; `canyonos deploy` prints it and keeps it in the record's `workflow_group.yaml`. Only the `endpoint` route is served, so `POST /<name>/HelloAgent/hello` returns `404`.
 - A body that isn't JSON returns `{"error": "Invalid JSON in request body"}`.
 - A request without the key returns `401`; see
   [Refusals](../../docs/guides/AUTHORIZATION.md#refusals).
@@ -147,5 +149,5 @@ canyonos clean   # also remove the agents' images
 
 ## If something goes wrong
 
-- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old workflow group still holds the port, remove `api_port` under `endpoint` in `workflow_group.yaml` to restore automatic selection, or choose a free fixed port.
+- A port conflict on an explicitly configured `api_port` stops the deploy. Run `canyonos stop` if an old workflow group still holds the port, remove `api_port` under `endpoint` in the record's `workflow_group.yaml` to restore automatic selection, or choose a free fixed port.
 - More symptoms and causes: [Troubleshooting](../../docs/guides/TROUBLESHOOTING.md).

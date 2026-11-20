@@ -113,8 +113,9 @@ scp -i ~/.ssh/<key>.pem -r examples/helloworld-ec2-assign ubuntu@<address>:~/
 ssh -i ~/.ssh/<key>.pem ubuntu@<address>
 ```
 
-On the deploying machine, wait for the install, check Docker, and stay in the workflow group
-folder for the remaining steps:
+On the deploying machine, wait for the install, check Docker, and stay in the example's
+folder, which holds the workflow folder and `workflow_group.yaml`, for the remaining
+steps:
 
 ```bash
 cloud-init status --wait
@@ -125,7 +126,9 @@ cd ~/helloworld-ec2-assign
 ### 2. Choose how agents get machines
 
 Set `provider` and its section in `workflow_group.yaml`. `machine_type` is the only
-required key.
+required key. The first deploy copies this folder's `workflow_group.yaml` into the
+workflow group's record, `~/.canyonos/workflows/<workflow group>/`; after that, change
+the record's copy, or use `canyonos config`.
 
 <div class="tabs" markdown>
 

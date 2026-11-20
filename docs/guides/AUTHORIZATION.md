@@ -31,7 +31,7 @@ Pick a key, for example with `openssl rand -hex 32`, and pass it to a deploy or 
 `serve`:
 
 ```bash
-canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>
+canyonos deploy my-workflow --api-key <your api key>
 canyonos serve --api-key <your api key>
 ```
 

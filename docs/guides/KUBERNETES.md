@@ -10,10 +10,11 @@ CanyonOS API, which `canyonos deploy` uploads the workflow to; the cluster then 
 the agents' images, pushes them to your registry and starts them. Nothing else on the
 cluster changes. How the operator works is in [Operator](../architecture/OPERATOR.md).
 
-A workflow group is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` runs from
-the workflow group folder, which holds `workflow_group.yaml`, and takes the workflow folders to
-deploy. The whole workflow group is one CanyonProject. With `deploy_mode: toy`, each
-workflow's agents build into one image and run as one CanyonAgent.
+A workflow group is laid out as for a [Docker deploy](LOCAL.md): `canyonos deploy` takes
+the workflow folders to deploy, and keeps the workflow group's `workflow_group.yaml` in
+its record, `~/.canyonos/workflows/<workflow group>/`. The whole workflow group is one
+CanyonProject. With `deploy_mode: toy`, each workflow's agents build into one image and
+run as one CanyonAgent.
 
 ## What you need
 
@@ -159,13 +160,15 @@ What CanyonOS asks of your cluster:
 
 ## Point a workflow at the cluster
 
-Put `target: kubernetes` at the top of the workflow group folder's `workflow_group.yaml`, and a
-`kubernetes:` block under it, as [Configuration](#configuration) shows.
+Put `target: kubernetes` at the top of the workflow group's `workflow_group.yaml`, in
+its record, and a `kubernetes:` block under it, as [Configuration](#configuration)
+shows. Before the first deploy, put them in a `workflow_group.yaml` in the folder you
+deploy from: the first deploy copies it into the record.
 
 ## Deploy and run
 
 ```bash
-canyonos deploy      # build in the cluster, start, wait until ready
+canyonos deploy .    # build in the cluster, start, wait until ready
 canyonos status      # the workflow and each agent's replicas (--json for scripts)
 canyonos test "hi"   # send one query to the deployed workflow and show the result
 canyonos logs        # the Global Controller's logs (or: HelloAgent, HelloAgent-0)
@@ -198,10 +201,12 @@ port-forward, signed in with your kubectl login. `.git`, `.venv`, `node_modules`
 5. The API waits until the operator reports the workflow and every agent ready; the CLI
    then forwards the endpoint to this machine and opens the dashboard.
 
-The first deploy writes a `workflow_group_id` into `workflow_group.yaml`; commit it, so telemetry
-stays under one workflow across deploys and targets. The workflow's CanyonProject is
-named after its folder and the start of that ID (`helloworld-4eeed6f3`), so two folders
-of the same name never share one in a namespace.
+The first deploy writes a `workflow_group_id` into the record's `workflow_group.yaml`,
+and later deploys keep it, so telemetry stays under one workflow across deploys and
+targets. A `workflow_group.yaml` with a `workflow_group_id` that a new record starts
+from keeps that ID. The workflow's CanyonProject is named after its workflow group, its
+folder's name and the start of that ID (`helloworld-4eeed6f3`), so two folders of the
+same name never share one in a namespace.
 
 ### Reach the endpoint
 

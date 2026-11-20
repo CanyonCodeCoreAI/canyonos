@@ -14,7 +14,7 @@ import os
 import signal
 import sys
 
-from canyonos import context, env, ui
+from canyonos import context, env, records, ui
 from canyonos.chat import run_chat
 from canyonos.clean import run_clean
 from canyonos.config import run_config
@@ -116,40 +116,49 @@ def main():
         sys.exit(130)
 
 
-def _enter_deployment_folder(args):
-    """Deploy from the workflow group's folder `args.folder` (--workflow-group), made when
-    it is missing, as if the command were typed there; the workflow folders it names stay
-    relative to where it was typed."""
-    args.folders = [os.path.abspath(folder) for folder in args.folders]
-    os.makedirs(args.folder, exist_ok=True)
-    os.chdir(args.folder)
-
-
 def _uses_the_selected_deployment(args):
     """True when `args` is a command that acts on one workflow group of this machine and
-    names none: `stop`, `clean`, `status`, `logs`, `test`, `sync` and `curl`."""
+    names none: `stop`, `clean`, `status`, `logs`, `test`, `sync`, `curl`, `config`,
+    `doctor`, `chat` and `serve`."""
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
-    return args.command in ("status", "logs", "test", "sync", "curl")
+    return args.command in (
+        "status",
+        "logs",
+        "test",
+        "sync",
+        "curl",
+        "config",
+        "doctor",
+        "chat",
+        "serve",
+    )
 
 
-def _enter_selected_deployment(args):
-    """Act on the workflow group `canyonos select-context` picked when the command names
-    none and runs outside a workflow group folder: `stop` and `clean` name it, the others
-    run from its folder, with the paths they were given kept relative to where they
-    were typed."""
+def _enter_workflow_group(args):
+    """Act on the workflow group a command that names none acts on: the one the folder
+    it runs from belongs to, else the one `canyonos select-context` picked. `stop` and
+    `clean` name it; the others run from its record (see records.py), with the paths
+    they were given made absolute first."""
     if not _uses_the_selected_deployment(args):
-        return
-    selected = context.selected_deployment()
-    if selected is None:
-        return
-    ui.note(f"Acting on {selected.name}, the selected workflow group")
-    if args.command in ("stop", "clean"):
-        args.deployments = [selected.name]
         return
     if getattr(args, "folders", None):
         args.folders = [os.path.abspath(folder) for folder in args.folders]
-    context.enter_selected_folder(selected)
+    here = records.matching_cwd()
+    selected = context.selected_deployment() if len(here) != 1 else None
+    if args.command in ("stop", "clean"):
+        picked = records.pick(here, selected.name if selected else None)
+        if picked in here:
+            # From its record, so its own `target` picks this machine or the cluster.
+            records.enter(picked)
+            args.deployments, args.from_folder = [picked], True
+        elif picked is not None:
+            ui.note(f"Acting on {picked}, the selected workflow group")
+            args.deployments = [picked]
+        return
+    entered = records.enter_for_command(selected.name if selected else None)
+    if entered is not None and entered not in here:
+        ui.note(f"Acting on {entered}, the selected workflow group")
 
 
 def _run_command(settings_at_start):
@@ -210,8 +219,14 @@ def _run_command(settings_at_start):
 
     def deploy_to_target(args):
         """Deploy to the target; with --json, add what `status --json` then prints."""
+        folders = records.enter_for_deploy(
+            args.folders, args.workflow_group, yes=args.yes
+        )
+        if folders is False:
+            ui.say("Deploy cancelled.")
+            return False
         deployed = run_deploy(
-            args.folders,
+            folders,
             serve=args.serve,
             verbose=args.verbose,
             yes=args.yes or args.json,
@@ -229,18 +244,18 @@ def _run_command(settings_at_start):
     )
     deploy.add_argument(
         "--workflow-group",
-        dest="folder",
-        metavar="PATH",
-        help="The workflow group's folder, which holds its workflow_group.yaml, made "
-        "when missing (default: the current folder)",
+        metavar="NAME",
+        help="The workflow group's name: a recorded one, by name or ID, deploys its "
+        "workflows, or the folders given in their place after asking; a new one is made "
+        "with the folders given (default: the one that has exactly these folders, else "
+        "a new one named after them)",
     )
     deploy.add_argument(
         "folders",
-        nargs="+",
+        nargs="*",
         metavar="folder",
-        help="A workflow's folder, with its config/workflow_config.yaml; the workflow "
-        "group is named after its own folder (--workflow-group) and set by its "
-        "workflow_group.yaml",
+        help="A workflow's folder, with its config/workflow_config.yaml; a workflow_group.yaml "
+        "in the folder this runs from starts a new workflow group",
     )
     deploy.add_argument(
         "--serve",
@@ -260,7 +275,8 @@ def _run_command(settings_at_start):
         "-y",
         "--yes",
         action="store_true",
-        help="Deploy the resources the config sets, without the resource picker",
+        help="Deploy the resources the config sets, without the resource picker, and "
+        "replace a workflow group's workflows without asking",
     )
     deploy.add_argument(
         "--detach",
@@ -307,14 +323,15 @@ def _run_command(settings_at_start):
 
     def this_machine_or_cluster(local, cluster):
         """Run `local(args)`, or `cluster()` on Kubernetes: the workflow group of this
-        folder only. --all and workflow group names mean workflow groups on this machine,
-        so they always run `local`, whatever this folder's target."""
+        folder only. --all and workflow group names typed mean workflow groups on this
+        machine, so they always run `local`, whatever this folder's target."""
 
         def run(args):
             if args.all and args.deployments:
                 ui.fail("Name workflow groups or pass --all, not both")
                 return False
-            if args.all or args.deployments:
+            typed = args.deployments and not getattr(args, "from_folder", False)
+            if args.all or typed:
                 return local(args)
             return cluster() if configured_target() == "kubernetes" else local(args)
 
@@ -350,7 +367,11 @@ def _run_command(settings_at_start):
     stop = add(
         "stop",
         this_machine_or_cluster(
-            lambda args: run_stop(all_deployments=args.all, refs=args.deployments),
+            lambda args: run_stop(
+                all_deployments=args.all,
+                refs=args.deployments,
+                from_folder=getattr(args, "from_folder", False),
+            ),
             kubernetes_target.run_kubernetes_stop,
         ),
     )
@@ -596,9 +617,7 @@ def _run_command(settings_at_start):
         notify_if_outdated()
 
     try:
-        if getattr(args, "folder", None):
-            _enter_deployment_folder(args)
-        _enter_selected_deployment(args)
+        _enter_workflow_group(args)
         with recording_usage(args.command):
             args.func(args)
     except RuntimeError as e:

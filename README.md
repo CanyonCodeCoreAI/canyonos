@@ -104,11 +104,10 @@ class Workflow:
         return {"answer": MyAgent().run(query=query)}
 ```
 
-Deploy it, giving the workflow group a folder of its own beside it:
+Deploy it from its folder:
 
 ```bash
-cd ..
-canyonos deploy my-proj --workflow-group my-group
+canyonos deploy .
 ```
 
 For details on new workflows, read: [building a new workflow](docs/guides/FROM_SCRATCH.md).
@@ -125,9 +124,7 @@ all.
 ```bash
 cd your-workflow
 canyonos convert
-cd ..
-canyonos deploy your-workflow --workflow-group my-group --api-key <your api key>
-cd my-group
+canyonos deploy . --api-key <your api key>
 canyonos test "your query"
 ```
 

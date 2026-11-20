@@ -41,7 +41,6 @@ from ..harness import (
     workflow_dir,
     workflow_group_redis,
     workflow_root,
-    qualified,
     stage,
     submit,
     stop_workflow_group,
@@ -260,7 +259,8 @@ def governed(recorder, images, tmp_path_factory):
     settings = yaml.safe_load(group_config.read_text())
     settings["workflows"] = {NAME: {"workflow_id": WORKFLOW_ID, "path": FOLDER}}
     group_config.write_text(yaml.safe_dump(settings))
-    agents = {qualified(folder, spec["name"]) for spec in manifest(folder)["agents"]}
+    # Not deployed yet, so no record: the workflow's name is the one set above.
+    agents = {f"{NAME}.{spec['name']}" for spec in manifest(folder)["agents"]}
     deployed_at = time.time()
     try:
         canyonos(

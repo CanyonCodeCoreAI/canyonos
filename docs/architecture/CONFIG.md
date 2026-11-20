@@ -17,10 +17,14 @@ CLI paths below are under `packages/cli/canyonos/`, and Core paths under
 
 ## Where the files are
 
-The CLI reads `workflow_group.yaml` in the workflow group folder, the folder it runs from
-(`deployment_config_path` in `constants.py`), and `config/workflow_config.yaml` in each
-workflow folder it is given: in its `.canyon/` when it has one, else in the folder
-itself (`workflow_folder` and `workflow_config_path`).
+The CLI reads `workflow_group.yaml` in the workflow group's record,
+`~/.canyonos/workflows/<workflow group>/`, which every command runs from
+(`deployment_config_path` in `constants.py`, `records.py`), and
+`config/workflow_config.yaml` in each workflow folder it is given: in its `.canyon/`
+when it has one, else in the folder itself (`workflow_folder` and
+`workflow_config_path`). A `workflow_group.yaml` in the folder `canyonos deploy` runs
+from is copied into a new record once, and not read after; see
+[CLI](CLI.md#which-workflow-group-a-command-acts-on).
 
 On Docker, `canyonos deploy` uploads `workflow_group.yaml` and the `.env` beside it to the
 Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, with
@@ -42,7 +46,7 @@ Every reader goes through `load_deployment_config` in `schema/manifest.py`:
 
 1. Parse `workflow_group.yaml` and each workflow's `config/workflow_config.yaml`.
 2. Replace every `${VAR}` with the variable's text, from the process environment, else
-   from the `.env` beside the file: the workflow group folder's for `workflow_group.yaml`, the
+   from the `.env` beside the file: the record's for `workflow_group.yaml`, the
    workflow's for its config. Unset references stay as written.
 3. Name each agent `<workflow>.<agent>`, give each route its workflow, and put every
    workflow's agents and routes in one config.

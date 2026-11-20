@@ -8,8 +8,9 @@ from.
 Every Docker resource a workflow group starts (its Global Controller, Redis, agent
 replicas and images, its workspace volume) carries the workflow group in its name and
 in the `com.docker.compose.project` label, so two workflow groups run side by side on
-one machine and Docker Desktop shows each as its own group. The CLI's own
-records for a workflow group live under `~/.canyonos/deployments/<workflow group>/`.
+one machine and Docker Desktop shows each as its own group. Its settings and
+the CLI's own records for it live in `~/.canyonos/workflows/<workflow group>/` (see
+records.py).
 
 Where the workflow group runs is its `target`: Docker on this machine, or the Kubernetes
 cluster `kubectl` points at. Its `workflow_group.yaml` says it once, so every command
@@ -61,8 +62,18 @@ WORKFLOW_NAME_LENGTH = MAX_NAME_LENGTH - 9
 
 
 def folder_name():
-    """Return the name of the folder the command runs from, as typed."""
-    return os.path.basename(os.getcwd())
+    """Return the workflow group's name as the user knows it: its record's name without
+    the start of its workflow_group_id in a record, else the name of the folder the
+    command runs from, as typed."""
+    name = os.path.basename(os.getcwd())
+    return name.rsplit("-", 1)[0] if in_record() else name
+
+
+def in_record():
+    """True when the command runs from a workflow group's record (see records.py)."""
+    return os.path.dirname(os.path.realpath(os.getcwd())) == os.path.realpath(
+        deployments_dir()
+    )
 
 
 def _docker_safe(name):
@@ -82,8 +93,11 @@ def normalise(name):
 
 
 def deployment_name():
-    """Return the workflow group for the folder the command runs from: the folder's name and
-    the start of its `workflow_group_id`, so two folders with the same name never share one."""
+    """Return the workflow group the command acts on: its record's name, which is its
+    folder's name and the start of its `workflow_group_id`, so two folders with the same
+    name never share one; outside a record, the name this folder's would have."""
+    if in_record():
+        return os.path.basename(os.getcwd())
     name = normalise(folder_name())
     deployment_id = read_config(deployment_config_path()).get("workflow_group_id")
     return f"{name}-{deployment_id[:8]}" if deployment_id else name
@@ -122,14 +136,8 @@ def workflow_ids(folders, new=True):
 def workflow_folders(folders, ids):
     """Map each workflow of the workflow group to its folder, named after the folder as
     Docker accepts names and the start of its workflow_id in `ids` (see workflow_ids),
-    so two folders of the same name are two workflows. Raises when the workflow group's own
-    folder is a workflow, so that workflows can join and leave it, when a folder holds
+    so two folders of the same name are two workflows. Raises when a folder holds
     no `config/workflow_config.yaml`, or when a folder is given twice."""
-    if os.path.isfile(workflow_config_path(workflow_folder())):
-        raise RuntimeError(
-            "This folder is a workflow. Give the workflow group a folder of its own, which "
-            "holds its workflow_group.yaml: `cd .. && canyonos deploy <workflow> --workflow-group <group>`."
-        )
     named = {}
     for folder in folders:
         if not os.path.isfile(workflow_config_path(workflow_folder(folder))):
@@ -146,19 +154,19 @@ def workflow_folders(folders, ids):
 
 
 def save_workflows(config_path, folders, ids):
-    """Keep each workflow's workflow_id in the workflow group's `workflows:`, by its name,
-    with its folder's path from the workflow group's own folder."""
+    """Make the workflow group's `workflows:` the workflows `folders` names, each with
+    its folder's absolute path and its workflow_id, by its name."""
     yaml_rt = round_trip_yaml()
     data = load_yaml(config_path, yaml_rt.load)
     if not isinstance(data, dict):
         return
-    workflows = data.setdefault("workflows", {})
-    for name, folder in folders.items():
-        path = os.path.abspath(folder)
-        workflows[name] = {
-            "path": os.path.relpath(path).replace(os.sep, "/"),
-            "workflow_id": ids[path],
+    data["workflows"] = {
+        name: {
+            "path": os.path.abspath(folder),
+            "workflow_id": ids[os.path.abspath(folder)],
         }
+        for name, folder in folders.items()
+    }
     write_config(config_path, data, yaml_rt)
 
 
@@ -253,7 +261,13 @@ def image_name(agent):
 
 
 def deployments_dir():
-    """Return the folder under `~/.canyonos` that holds every workflow group's records."""
+    """Return the folder under `~/.canyonos` that holds every workflow group's record."""
+    return os.path.join(os.path.expanduser("~/.canyonos"), "workflows")
+
+
+def legacy_deployments_dir():
+    """Return where an older CLI kept each workflow group's records: a deploy moves them
+    into the workflow group's record (see records.py)."""
     return os.path.join(os.path.expanduser("~/.canyonos"), "deployments")
 
 

@@ -38,6 +38,7 @@ from .harness import (
     workflow_dir,
     qualified,
     query_for,
+    record,
     result_of,
     stage,
     stop_workflow_group,
@@ -208,14 +209,17 @@ def workspace(request, workflow, recorder, tmp_path_factory) -> Path:
 @dataclass(frozen=True)
 class Deployed:
     """A workflow that `canyonos deploy` brought up, with the handles cases need.
-    `dir` is the workflow group folder every command runs from and `workflow_dir` the
-    workflow folder in it. `agents` names every agent in the manifest as the
-    workflow group does, `<workflow>.<agent>`; a `type: database` agent runs replicas
-    named the same way, from its stock image."""
+    `dir` is the workflow group folder every command runs from, `workflow_dir` the
+    workflow folder in it, and `record` the workflow group's record under
+    `~/.canyonos/workflows/`, which holds its `workflow_group.yaml` and `.env`.
+    `agents` names every agent in the manifest as the workflow group does,
+    `<workflow>.<agent>`; a `type: database` agent runs replicas named the same way,
+    from its stock image."""
 
     workflow: Workflow
     dir: Path
     workflow_dir: Path
+    record: Path
     group: str
     endpoint: Endpoint
     api: Api
@@ -248,11 +252,12 @@ def deployed(
     succeeded = False
     folder = workflow_dir(workspace)
     try:
-        # From the workflow folder, naming the workflow group's folder, as a user would.
+        # From the workflow group folder, naming the workflow, as the quickstart
+        # does: the group's record starts from the folder's workflow_group.yaml.
         deploy = canyonos(
             recorder,
-            ["deploy", ".", "--workflow-group", str(workspace)],
-            cwd=folder,
+            ["deploy", folder.name],
+            cwd=workspace,
             timeout=DEPLOY_TIMEOUT,
         )
         assert (
@@ -263,6 +268,7 @@ def deployed(
             workflow=workflow,
             dir=workspace,
             workflow_dir=folder,
+            record=record(workspace),
             group=deployment_group(recorder, workspace),
             endpoint=deployed_endpoint(recorder, workspace),
             api=api,

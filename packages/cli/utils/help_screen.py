@@ -45,7 +45,7 @@ UTIL_COMMANDS = (
     ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
     (
         "select-context",
-        "Pick the workflow group commands act on outside a workflow group folder",
+        "Pick the workflow group commands act on outside a workflow group's folders",
     ),
     ("serve", "Start local CanyonOS dashboard"),
     ("status", "Check whether a workflow group is running and where it answers"),
@@ -106,11 +106,12 @@ def print_custom_help():
         "first (opens coding agent).[/dim]"
     )
     ui.console.print(
-        f"  [dim]1.[/dim] cd [{GREEN}]into-the-folder-above-your-workflow[/]"
+        f"  [dim]1.[/dim] canyonos deploy [{GREEN}]path/to/my-workflow[/] "
+        "(from any folder; UI automatically starts)"
     )
     ui.console.print(
-        "  [dim]2.[/dim] canyonos deploy my-workflow --workflow-group my-group "
-        "(UI automatically starts)"
+        "  [dim]2.[/dim] canyonos deploy --workflow-group my-workflow "
+        "(redeploy it by name, from anywhere)"
     )
 
     ui.console.print(

@@ -255,8 +255,8 @@ def _free_container_name():
     if running:
         raise RuntimeError(
             f"The container name {deployment.gc_container_name()} is held by a running "
-            f"Global Controller ({container_id[:12]}). Run `canyonos stop` from the "
-            f"`{deployment.folder_name()}` folder to tear it down first."
+            f"Global Controller ({container_id[:12]}). Run "
+            f"`canyonos stop {deployment.deployment_name()}` to tear it down first."
         )
     failure = cleanup_docker(
         ["docker", "rm", "-f", container_id],
@@ -477,7 +477,7 @@ def _save_state(
 
 def load_state(state_path=None):
     """Read this workflow group's Global Controller container and ports from its state
-    file under `~/.canyonos/deployments`, or from the state file at `state_path`. On
+    file in its record under `~/.canyonos/workflows`, or from the state file at `state_path`. On
     Kubernetes, return this folder's state from `kubernetes_state` instead."""
     if state_path is None and deployment.configured_target() == "kubernetes":
         # Imported here: kubernetes_target imports api, which imports this module.

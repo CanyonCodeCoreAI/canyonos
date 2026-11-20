@@ -9,13 +9,15 @@ neither, and the shared folder name is refused as ambiguous. In a terminal, `cle
 lists both and cleans only the one ticked with space and confirmed with enter.
 `canyonos list` shows both running; once one is selected, `status` and `test`
 outside every folder act on it, while a folder's own workflow group still wins, and a
-selected workflow group that is gone makes `stop` fail rather than stop the other.
+selected workflow group whose record is gone makes `stop` fail rather than stop the
+other.
 `canyonos dashboard` prints a link whose fragment carries the API key that signs
 the dashboard in. Once
 the other's Global Controller is gone, a stop with one workflow left acts without
-asking, reports it already gone and removes the Redis and replicas it left. Naming
-a workflow group that is no longer deployed fails, and `clean` in its folder still finds
-it by ID. The cases are steps on one fleet: once one fails, the rest are skipped."""
+asking, reports it already gone and removes the Redis and replicas it left, keeping its
+record. Naming a workflow group that is no longer deployed to `stop` fails, and `clean`
+in its folder still finds it by ID and removes its record. The cases are steps on one
+fleet: once one fails, the rest are skipped."""
 
 import json
 import re
@@ -36,6 +38,8 @@ from ..harness import (
     docker,
     http,
     poll,
+    record,
+    stop_workflow_group,
     workflow_group_containers,
     workflow_dir,
     stage,
@@ -106,10 +110,15 @@ def _all_replicas_up(recorder, directory: Path) -> bool:
     )
 
 
-def _records() -> list[str]:
-    """The workflow groups with a deploy record, in the order the CLI lists them."""
-    deployments = Path.home() / ".canyonos" / "deployments"
-    return sorted(path.parent.name for path in deployments.glob("*/state.json"))
+def _records(*, deployed: bool = True) -> list[str]:
+    """The workflow groups recorded under `~/.canyonos/workflows/`, in the order the
+    CLI lists them: those deployed, whose record holds the state of a deploy, or with
+    `deployed` False every one, as `canyonos clean` lists them."""
+    workflows = Path.home() / ".canyonos" / "workflows"
+    files = ("state.json",) if deployed else ("state.json", "workflow_group.yaml")
+    return sorted(
+        {path.parent.name for file in files for path in workflows.glob(f"*/{file}")}
+    )
 
 
 def _images(recorder, name: str) -> list[str]:
@@ -127,12 +136,13 @@ def _images(recorder, name: str) -> list[str]:
 
 
 def _tear_down(recorder, fleet_dirs: dict[str, Path], parent: Path) -> None:
-    """Stop every workflow, then clean each copy's folder, whether the steps passed."""
+    """Stop every workflow, then clean each copy, its record included, whether the
+    steps passed."""
     stopped = canyonos(
         recorder, ["stop", "--all"], cwd=parent, timeout=600, check=False
     )
     for directory in fleet_dirs.values():
-        canyonos(recorder, ["clean"], cwd=directory, timeout=600, check=False)
+        stop_workflow_group(recorder, directory, clean=True)
     assert stopped.code == 0, stopped.output[-3000:]
 
 
@@ -207,7 +217,7 @@ def test_without_a_terminal_stop_names_both_and_stops_neither(recorder, fleet):
     assert call.code == 1, call.output
     for copy in COPIES:
         assert fleet.ids[copy] in call.output, call.output
-        assert str(fleet.dirs[copy]) in call.output, call.output
+        assert str(record(fleet.dirs[copy])) in call.output, call.output
     assert "canyonos stop <name or ID>" in call.output, call.output
     assert set(fleet.names.values()) <= _running_workflow_groups(recorder)
 
@@ -277,11 +287,11 @@ def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_with_the_key(
 
 def test_clean_in_a_terminal_cleans_only_the_ticked_workflow_group(recorder, fleet):
     second, first = fleet.names["second"], fleet.names["first"]
-    skill = fleet.dirs["second"] / SKILL
+    skill = workflow_dir(fleet.dirs["second"]) / SKILL
     skill.parent.mkdir(parents=True)
     skill.write_text("skill")
     assert _images(recorder, second), f"{second} has no agent images"
-    keys = DOWN * _records().index(second) + " " + "\r"
+    keys = DOWN * _records(deployed=False).index(second) + " " + "\r"
 
     call = canyonos_in_terminal(
         recorder,
@@ -295,8 +305,8 @@ def test_clean_in_a_terminal_cleans_only_the_ticked_workflow_group(recorder, fle
     assert f"{second} torn down" in call.output, call.output
     assert not workflow_group_containers(recorder, f"canyonos-{second}", every=True)
     assert not _images(recorder, second)
-    assert not (fleet.dirs["second"] / ".claude").exists()
-    assert second not in _records()
+    assert not (workflow_dir(fleet.dirs["second"]) / ".claude").exists()
+    assert second not in _records(deployed=False)
     assert first in _running_workflow_groups(recorder)
     assert _images(recorder, first)
     assert len(dashboard_containers(recorder)) == DASHBOARD_CONTAINERS
@@ -313,7 +323,7 @@ def test_stop_refuses_a_selected_deployment_that_is_gone_and_leaves_the_other(
         CONTEXT.unlink()
 
     assert call.code == 1, call.output
-    assert f"`{second}` is no longer deployed" in call.output, call.output
+    assert f"`{second}` is no longer recorded" in call.output, call.output
     assert "canyonos list" in call.output, call.output
     assert "Traceback" not in call.output, call.output
     assert first in _running_workflow_groups(recorder)
@@ -347,11 +357,12 @@ def test_naming_a_workflow_group_whose_controller_is_down_forces_its_stop(
     assert call.json() == expected, call.output
     assert not workflow_group_containers(recorder, f"canyonos-{first}", every=True)
     assert first not in _records()
+    assert first in _records(deployed=False)
     assert not dashboard_containers(recorder)
     assert len(dashboard_containers(recorder, every=True)) == DASHBOARD_CONTAINERS
 
 
-def test_a_workflow_group_no_longer_deployed_is_found_only_in_its_folder(
+def test_stopping_a_workflow_group_no_longer_deployed_fails_and_clean_removes_it(
     recorder, fleet
 ):
     first_id = fleet.ids["first"][:12]
@@ -360,5 +371,6 @@ def test_a_workflow_group_no_longer_deployed_is_found_only_in_its_folder(
     canyonos(recorder, ["clean", first_id], cwd=fleet.dirs["first"])
 
     assert missing.code == 1, missing.output
-    assert f"No workflow group is named `{first_id}`" in missing.output, missing.output
+    assert f"{fleet.names['first']} is not deployed" in missing.output, missing.output
     assert not _images(recorder, fleet.names["first"])
+    assert fleet.names["first"] not in _records(deployed=False)

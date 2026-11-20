@@ -5,22 +5,24 @@ Every `canyonos` command and its options. `canyonos -h` lists the commands, and
 [CLI architecture](../architecture/CLI.md).
 
 Run `new-app`, `convert` and `validate` from the workflow folder, the folder that holds
-`config/` or `.canyon/`. Run `deploy` from the folder above it; `--workflow-group` names the workflow group's own folder, which
-holds `workflow_group.yaml`; run the others from there. A typical session:
+`config/` or `.canyon/`. Run `deploy` from any folder, that one included. Each workflow
+group's settings (`workflow_group.yaml` and its `.env`) and the CLI's state for it live
+in its record, `~/.canyonos/workflows/<workflow group>/`, never in your folders. Run the
+other commands from one of its workflow folders. A typical session:
 
 ```bash
+cd my-workflow
 canyonos doctor                       # can this machine deploy?
 # build the images, start the workflow, save the machine's API key, open the dashboard
-canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>
-cd my-group
+canyonos deploy . --api-key <your api key>
 canyonos test "hello"                 # send one query end to end
 canyonos logs my-workflow.MyAgent     # print one agent's logs
 canyonos dashboard                    # open the dashboard, signed in
 canyonos stop                         # take the deploy down, keeping its images
 ```
 
-From any other folder, `canyonos select-context my-group` picks the workflow group
-those commands act on; see [Pick a workflow group](#pick-a-deployment).
+From any other folder, `canyonos select-context <workflow group>` picks the workflow
+group those commands act on; see [Pick a workflow group](#pick-a-workflow-group).
 
 ## Start a workflow
 
@@ -57,11 +59,25 @@ those commands act on; see [Pick a workflow group](#pick-a-deployment).
 | `serve`     | Start the local dashboard on its own                                 |
 | `dashboard` | Open the running dashboard, signed in with this machine's API key    |
 
-- `deploy <folder>... --workflow-group PATH` deploys the workflow folders it names as one
-  workflow group, named after the workflow group folder `PATH`, made when missing. It writes
-  `workflow_group.yaml` there when there is none. To redeploy from inside the workflow group
-  folder, leave out `--workflow-group`: `canyonos deploy ../my-workflow`. It refuses to run
-  from inside a workflow folder.
+- `deploy <folder>...` deploys the workflow folders it names as one workflow group: the
+  recorded one that has exactly those folders, by absolute path, else a new one. Two
+  folders with the same name are two workflow groups.
+- A new workflow group starts from the `workflow_group.yaml` of the folder `deploy` runs
+  from when there is one, as in the examples, copied into its record once, its
+  `workflow_group_id` and settings kept, and is named after that folder. Else it starts
+  from the starter `workflow_group.yaml` and is named after its first workflow folder.
+  After that the folder's copy is not read, and the CLI says so: edit the record's, or
+  use `config`. The `.env` beside it is copied in with it, readable only by you, and
+  is not read after that either.
+- A workflow group is a name. `deploy <folder>... --workflow-group <name>` makes the
+  workflow group of that name when there is none, from any folder.
+  `deploy --workflow-group <name or ID>` deploys a recorded one from any folder: with no
+  folders, the ones it records; with other folders, it replaces its workflows, stopping
+  the ones left out, after asking. `-y` skips the question; without a terminal and
+  without `-y`, it refuses. `canyonos list` shows each one's name and ID, deployed or
+  not.
+- An older CLI's records, `~/.canyonos/deployments/<workflow group>/`, move into the
+  workflow group's record on its first deploy.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
 - `deploy --api-key <key>` and `serve --api-key <key>` save the machine's API key to
@@ -70,12 +86,13 @@ those commands act on; see [Pick a workflow group](#pick-a-deployment).
   deletes it and runs open. Without a key, they warn that anyone who reaches the
   endpoint and the dashboard can use them. See [API key](AUTHORIZATION.md).
 - `test` sends the saved API key with each request.
-- `deploy -y` deploys the resources the config sets, without the resource picker.
+- `deploy -y` deploys the resources the config sets, without the resource picker, and
+  replaces a workflow group's workflows without asking.
   `--detach` returns once the deploy has started, without the dashboard; `status`
   says when it is up and `logs` follows it.
 - `test "your query"` sends that query to every route. Without one, each route gets its
   workflow's `config/test_query.txt`, else `hello`.
-- `test` queries every route of the workflow group running from this folder. It never
+- `test` queries every route of this folder's workflow group. It never
   deploys, and fails when none runs.
 - `test` on Kubernetes queries the workflow already deployed there.
 - `test --timeout SECONDS` sets the wait (default 300), which restarts after each answer
@@ -127,52 +144,59 @@ those commands act on; see [Pick a workflow group](#pick-a-deployment).
 ## Pick a workflow group
 
 ```bash
-canyonos list                          # every workflow group on this machine
-canyonos select-context my-group  # act on it from any other folder
-canyonos select-context --clear        # forget it
+canyonos list                                 # every workflow group on this machine
+canyonos select-context my-workflow-1a2b3c4d  # act on it from any other folder
+canyonos select-context --clear               # forget it
 ```
 
 | Command          | What it does                                                         |
 | ---------------- | -------------------------------------------------------------------- |
 | `list`           | One line per workflow group: name, `workflow_group_id`, whether it runs      |
-| `select-context` | Pick the workflow group commands act on outside a workflow group folder      |
+| `select-context` | Pick the workflow group commands act on outside its workflow folders         |
 
-- `list` marks a workflow group deployed without an API key `(unauthenticated)`, and the
-  selected one `(selected)`. It lists the workflow groups recorded in
-  `~/.canyonos/deployments/`, the Docker ones on this machine.
-- `select-context` takes a name, folder name, ID or the start of an ID, as `stop` does.
-- Outside a workflow group folder, `stop`, `clean`, `status`, `logs`, `test`, `sync` and
-  `curl` act on the selected workflow group when you name none. A name, or running from a
-  workflow group folder, always wins.
-- A selected workflow group that is no longer deployed is an error until you pick another
-  or `--clear` it.
+- `list` marks a workflow group deployed without an API key `(unauthenticated)`, one
+  recorded but not deployed `not deployed`, and the selected one `(selected)`. It lists
+  the workflow groups recorded in `~/.canyonos/workflows/`, the Docker ones on this
+  machine.
+- `select-context` takes a name, ID or the start of an ID, as `stop` does.
+- Without a name, `stop`, `clean`, `status`, `logs`, `test`, `sync`, `curl`, `config`
+  and `doctor` act on the workflow group of the folder they run from: one of its
+  workflow folders, a folder inside one, or a folder that holds one. Else they act on
+  the selected workflow group. A folder that belongs to several workflow groups, with
+  none selected, is an error.
+- A selected workflow group that is no longer recorded is an error until you pick
+  another or `--clear` it.
 
 ## Stop and clean up
 
 ```bash
-canyonos stop                  # the only workflow group, or pick from a list
-canyonos stop my-group    # a workflow group by name, folder name or ID, from any folder
-canyonos stop --all            # every workflow group on this machine
+canyonos stop                       # this folder's workflow group, or pick from a list
+canyonos stop my-workflow-1a2b3c4d  # a workflow group by name or ID, from any folder
+canyonos stop --all                 # every workflow group on this machine
 ```
 
 | Command | What it does                                                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `stop`  | Remove the workflow group's containers, workspace and network, keeping its images and `.canyon`                                          |
-| `clean` | Stop the workflow group, then remove the agents' images and the workflow group's records; each workflow's `.canyon` stays                 |
+| `clean` | Stop the workflow group, then remove the agents' images and the workflow group's record, its settings included                    |
 
-- Both work from any folder. Name workflow groups by name, folder name, ID or the start of
-  an ID; a name two workflow groups share is refused, so use the ID. Names and `--all` don't
-  mix.
-- Without a name, outside a workflow group folder, they act on the selected workflow group
-  (`canyonos select-context`). Else they act on the only workflow group. With more than
-  one, they list them: tick the ones you want with space, then press enter. Without a
-  terminal they list them and act on none, so pass the names. `clean` also offers this
-  folder's workflow group.
+- Both work from any folder. Name workflow groups by name (with or without the start of
+  its ID), ID or the start of an ID; a name two workflow groups share is refused, so use
+  the ID. Names and `--all` don't mix.
+- Without a name, they act on this folder's workflow group, else the selected one
+  (`canyonos select-context`), else the only workflow group. With more than one, they
+  list them: tick the ones you want with space, then press enter. Without a terminal
+  they list them and act on none, so pass the names. `stop` lists only the deployed
+  ones.
 - `stop` also stops the dashboard, keeping its history, when no other workflow group runs.
-- `clean` removes the workflow group's records in `~/.canyonos/deployments/<workflow group>/`,
-  its Redis password among them. It leaves a skill that `convert --scope global`
-  installed. When the stop fails or is refused, `clean` removes nothing.
-- `stop --all` stops every workflow group on this machine, even one whose folder is deleted.
+- `clean` removes the workflow group's record, `~/.canyonos/workflows/<workflow
+  group>/`, its `workflow_group.yaml` and Redis password among them, and the skills
+  `convert` installed in its workflow folders, keeping their `.canyon`. Run from a folder
+  that is not deployed, it also offers to remove that folder's `.canyon` and the skills
+  `convert` installed there. It leaves a skill that `convert --scope global` installed.
+  When the stop fails or is refused, `clean` removes nothing.
+- `stop --all` stops every workflow group on this machine, even one whose workflow
+  folders are deleted.
 - `clean --all` removes everything CanyonOS put on this machine, for before you
   uninstall: every workflow group, the dashboard and its data, CanyonOS's images and
   `~/.canyonos`, the API key included. It asks first; `-y` skips the question.
@@ -191,7 +215,7 @@ canyonos stop --all            # every workflow group on this machine
   again keeps the cluster and upgrades CanyonOS on it to the CLI's release.
   `cluster down --all` also removes the local registry and its images.
 - `deploy`, `status`, `test`, `logs`, `serve`, `doctor`, `stop` and `clean` use the
-  `target` in `workflow_group.yaml`, else `docker`. See
+  `target` in the workflow group's `workflow_group.yaml`, else `docker`. See
   [Kubernetes workflow group](KUBERNETES.md) and [EC2 workflow group](EC2.md).
 
 ## Other commands

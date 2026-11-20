@@ -76,8 +76,8 @@ def existing_config_path():
     config_path = deployment_config_path()
     if not os.path.isfile(config_path):
         raise RuntimeError(
-            f"No {config_path} here. Run `canyonos deploy <workflow folder>...` from "
-            "the folder that holds the workflow group."
+            "No workflow group here. Deploy one with `canyonos deploy <workflow "
+            "folder>...`, or pick one with `canyonos select-context <workflow group>`."
         )
     return config_path
 

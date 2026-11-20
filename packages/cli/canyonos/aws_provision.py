@@ -1326,10 +1326,7 @@ class _AwsProvision:
         ui.command(f"scp -i {key} -r <workflow folder> {SSH_USER}@{address}:~/")
         ui.say("Then sign in, wait for the install, and deploy:")
         ui.command(f"ssh -i {key} {SSH_USER}@{address}")
-        ui.command(
-            "cloud-init status --wait && "
-            "canyonos deploy <workflow folder> --workflow-group group"
-        )
+        ui.command("cloud-init status --wait && canyonos deploy <workflow folder>")
         ui.blank()
         ui.hint(
             "To run agents on EC2, set `provider: ec2-assign` and give each agent a "

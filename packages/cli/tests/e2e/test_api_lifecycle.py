@@ -54,10 +54,10 @@ def _api_container() -> tuple[str, str]:
     return container_id, image_id
 
 
-def _containers_of(folder: Path) -> list[str]:
+def _containers_of(case, folder: Path) -> list[str]:
     """Every container, running or not, of the workflow group deployed from `folder`:
     each one's name holds the start of its workflow_group_id."""
-    prefix = workflow_group_id(folder)[:8]
+    prefix = workflow_group_id(case, folder)[:8]
     names = docker("ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}")
     return names.split()
 
@@ -66,7 +66,7 @@ def _said(result) -> str:
     return " ".join((result.stdout + result.stderr).split())
 
 
-def _controller_view(folder: Path, workflow: str) -> str:
+def _controller_view(case, folder: Path, workflow: str) -> str:
     """What the Global Controller of the workflow group deployed from `folder` holds of
     `workflow`'s config, with its files' times, and the end of its log: for a case that
     finds the deploy not as it synced it."""
@@ -76,7 +76,7 @@ def _controller_view(folder: Path, workflow: str) -> str:
         "--filter",
         "label=canyonos.role=global-controller",
         "--filter",
-        f"label=canyonos.workflow_group_id={workflow_group_id(folder)}",
+        f"label=canyonos.workflow_group_id={workflow_group_id(case, folder)}",
     ).split()
     config = f"/workspace/{workflow}/config"
     held = docker(
@@ -141,7 +141,7 @@ def test_stop_brings_back_a_removed_api_and_stops_the_deploy(deployed_workflow):
     group's stop."""
     case, folder = deployed_workflow
     deploy_starter(case, folder)
-    assert _containers_of(folder), "the deploy started no container"
+    assert _containers_of(case, folder), "the deploy started no container"
     docker("rm", "--force", API_CONTAINER)
 
     stopped = run_ok(
@@ -152,7 +152,7 @@ def test_stop_brings_back_a_removed_api_and_stops_the_deploy(deployed_workflow):
     assert docker("ps", "-a", "--filter", f"name=^{API_CONTAINER}$", "-q"), (
         f"stop did not make the API's container again: {stopped}"
     )
-    left = _containers_of(folder)
+    left = _containers_of(case, folder)
     assert not left, f"stop left {left}"
     status = _status(case, folder)
     assert status["code"] == 3 and status["running"] is False, status
@@ -187,7 +187,7 @@ def test_sync_goes_through_a_recreated_api(deployed_workflow):
     hello = [agent for agent in agents if agent["name"].endswith(".HelloAgent")]
     [workflow] = {route["workflow"] for route in status["endpoint"]["routes"]}
     assert [agent["desired_replicas"] for agent in hello] == [2], (
-        f"{synced}\n{json.dumps(status)}\n{_controller_view(folder, workflow)}"
+        f"{synced}\n{json.dumps(status)}\n{_controller_view(case, folder, workflow)}"
     )
 
 
@@ -256,7 +256,7 @@ def test_status_names_the_control_key_until_stop_restarts_the_api(deployed_workf
     run_ok(
         case, ["stop"], timeout=DEPLOY_TIMEOUT, env=runtime_environment(), cwd=folder
     )
-    left = _containers_of(folder)
+    left = _containers_of(case, folder)
     assert not left, f"stop left {left}"
 
 
@@ -280,4 +280,4 @@ def test_a_missing_api_image_stops_the_deploy_naming_it(deployed_workflow):
     assert f"{MISSING_API_IMAGE} is not on this machine" in said, said
     assert "CANYONOS_API_IMAGE" in said, said
     assert "Traceback" not in said, said
-    assert not _containers_of(folder), "the deploy started a container"
+    assert not _containers_of(case, folder), "the deploy started a container"

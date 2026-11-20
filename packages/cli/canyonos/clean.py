@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Logic for canyonos clean: stop each workflow group it is given or picks (see
-selection.py) if it is deployed, then remove its `.canyon`, CanyonOS skills, records
-under `~/.canyonos/deployments/` and agent images; with --all, everything CanyonOS put
+selection.py) if it is deployed, then remove its record under `~/.canyonos/workflows/`,
+its settings included, and agent images, and the `.canyon` and CanyonOS skills of the
+folder it runs from; with --all, everything CanyonOS put
 on this machine."""
 
 import os
 import shutil
 
-from canyonos import convert, deployment, selection, ui
-from canyonos.constants import CANYON_DIR, deployment_config_path
+from canyonos import convert, deployment, records, selection, ui
+from canyonos.constants import CANYON_DIR
 from canyonos.stop import (
     agent_images,
     confirm_clean_all,
@@ -23,15 +24,13 @@ from canyonos.stop import (
 
 # What `canyonos clean` removes from a workflow's folder: its port and the skill
 # `canyonos convert` installs there for each coding agent, leaving global installs.
-_LOCAL_FILES = (
-    CANYON_DIR,
-    *(spec["skill_dirs"]["local"] for spec in convert.AGENTS.values()),
-)
+_SKILL_DIRS = tuple(spec["skill_dirs"]["local"] for spec in convert.AGENTS.values())
+_LOCAL_FILES = (CANYON_DIR, *_SKILL_DIRS)
 
 
-def _local_files(folder):
-    """The paths under `folder` that `canyonos clean` removes and that exist."""
-    paths = (os.path.join(os.path.abspath(folder), path) for path in _LOCAL_FILES)
+def _local_files(folder, names=_LOCAL_FILES):
+    """The paths of `names` under `folder` that exist."""
+    paths = (os.path.join(os.path.abspath(folder), path) for path in names)
     return [path for path in paths if os.path.lexists(path)]
 
 
@@ -44,10 +43,10 @@ def _remove_emptied_parents(path, root):
         parent = os.path.dirname(parent)
 
 
-def _remove_local_files(folder):
-    """Remove the local files of the workflow in `folder`; False when one stayed."""
+def _remove_local_files(folder, names=_LOCAL_FILES):
+    """Remove the `names` of the workflow in `folder`; False when one stayed."""
     removed_all = True
-    for path in _local_files(folder):
+    for path in _local_files(folder, names):
         try:
             if os.path.islink(path):
                 os.unlink(path)
@@ -63,9 +62,13 @@ def _remove_local_files(folder):
 
 
 def _remove_records(name):
-    """Delete the folder under `~/.canyonos/deployments/` that holds workflow group `name`'s
-    records, its Redis password among them; False when it stayed."""
+    """Delete workflow group `name`'s record under `~/.canyonos/workflows/`, its
+    `workflow_group.yaml` and its Redis password among them; False when it stayed."""
     records = deployment.state_dir(name)
+    if os.path.realpath(os.getcwd()) == os.path.realpath(records):
+        # Run from it (see records.enter): what runs after, `docker compose` among
+        # it, needs a folder that is still there.
+        os.chdir(deployment.deployments_dir())
     try:
         shutil.rmtree(records)
     except FileNotFoundError:
@@ -78,18 +81,26 @@ def _remove_records(name):
 
 
 def _clean_deployment(target, stop):
-    """Stop `target` with `stop` if it is deployed, then remove its local files, its
-    records under `~/.canyonos` and its agents' images; False when any of it stayed."""
+    """Stop `target` with `stop` if it is deployed, then remove the skills `convert`
+    installed in its workflow folders (or, for a folder no workflow group records, its
+    `.canyon` too), its record under `~/.canyonos` and its agents' images; False when
+    any of it stayed."""
     # Docker won't remove the image of a container that still runs.
     if target.state is not None and stop(target.state, target.name):
         ui.fail(f"{target.name} could not be stopped, so nothing of it was cleaned.")
         return False
-    removed = True
-    if target.folder is not None and os.path.isdir(target.folder):
-        removed = _remove_local_files(target.folder)
+    if target.name in records.names():
+        # A recorded workflow group's workflows keep their `.canyon`.
+        folders = [
+            path for path in records.workflow_paths(target.name) if os.path.isdir(path)
+        ]
+        removed = all([_remove_local_files(folder, _SKILL_DIRS) for folder in folders])
     else:
+        folders = [target.folder] if os.path.isdir(target.folder or "") else []
+        removed = all([_remove_local_files(folder) for folder in folders])
+    if not folders:
         ui.hint(
-            f"{target.name}'s folder is not on this machine any more, so only its "
+            f"{target.name}'s folders are not on this machine any more, so only its "
             "deploy, records and images were removed."
         )
     records_removed = _remove_records(target.name)
@@ -104,8 +115,7 @@ def _candidates():
     clean and isn't deployed."""
     deployed = selection.recorded_deployments()
     here = selection.current_deployment()
-    holds_files = _local_files(here.folder) or os.path.isfile(deployment_config_path())
-    if holds_files and here.name not in {p.name for p in deployed}:
+    if _local_files(here.folder) and here.name not in {p.name for p in deployed}:
         return [*deployed, here]
     return deployed
 

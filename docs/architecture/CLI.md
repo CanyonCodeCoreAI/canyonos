@@ -2,7 +2,7 @@
 
 The `canyonos` command never builds or runs a workflow. It asks the CanyonOS API to have the Global Controller do it, and shows you what happened.
 
-On Docker, it creates a workflow group's Global Controller container and uploads the workflow group's workflows to the CanyonOS API over HTTP, and the API runs the container. A workflow group is the folder `canyonos deploy` runs from, set by its `workflow_group.yaml`. On Kubernetes, it hands the workflow to the CanyonOS operator through `kubectl`. Between commands, it keeps its state in `~/.canyonos`.
+On Docker, it creates a workflow group's Global Controller container and uploads the workflow group's workflows to the CanyonOS API over HTTP, and the API runs the container. Each workflow group has a record on this machine, `~/.canyonos/workflows/<workflow group>/`, set by the `workflow_group.yaml` in it; deploy never writes a `workflow_group.yaml` into the user's folders. On Kubernetes, it hands the workflow to the CanyonOS operator through `kubectl`. Between commands, it keeps its state in `~/.canyonos`.
 
 Every command, from a user's side, is in the [CLI guide](../guides/CLI.md).
 
@@ -28,7 +28,7 @@ The Global Controller talks to the host's Docker engine, so the Redis, replica a
 
 ## What a deploy does
 
-1. CLI: checks Docker and each workflow, writes `workflow_group.yaml` and its `workflow_group_id` when missing, then picks the ports.
+1. CLI: finds the workflow group's record or makes one (see [below](#which-workflow-group-a-command-acts-on)), checks Docker and each workflow, writes the record's `workflow_group.yaml` and its `workflow_group_id` when missing, then picks the ports.
    Before any of that touches Docker, it saves or removes the machine's API key for `--api-key` or `--no-api-key`, and warns when no key is set. See [API key](../guides/AUTHORIZATION.md).
 2. CLI: starts the CanyonOS API if it is down, then keeps the last Global Controller container when it runs or waits with the same image, Redis port and key, or creates a fresh one with `docker create`, handing it the key's SHA-256 in `CANYONOS_API_KEY_HASH` (empty for no key). The key itself never leaves this machine.
 3. CLI: uploads `workflow_group.yaml` and each workflow to the CanyonOS API, which writes them into the container's `/workspace` and starts it.
@@ -61,7 +61,9 @@ The workflow group is uploaded, so it is a copy, not a live mount. Edits reach t
 
 ## Which workflow group a command acts on
 
-A command that acts on one workflow group takes, in order: the workflow group it is given by name, the workflow group of the folder it runs from (its `workflow_group.yaml`), then the one `canyonos select-context` picked. `stop` and `clean` get the selected workflow group as a name; `status`, `logs`, `test`, `sync` and `curl` run from its folder, as if typed there (`_enter_selected_deployment` in `cli.py`). A selected workflow group whose record is gone is an error, never a fallback to another one.
+`canyonos deploy <workflow folder>...` acts on the record whose `workflows:` lists exactly those folders, by absolute path, so it runs from any folder and two folders of the same name are two workflow groups. `--workflow-group <name>` names the workflow group instead, as it is a name, not a folder: a recorded one (by name, with or without the start of its ID, or by ID) with no folders redeploys the ones it records, and with other folders replaces its workflows, stopping the ones left out, after asking (`-y` skips the question; without a terminal and without `-y` it refuses); a name no record has, with folders, makes the workflow group of that name. With no record and no name, it makes one named after the folder, from the `workflow_group.yaml` of the folder it runs from when there is one, copied in once with its `workflow_group_id` and the `.env` beside it (`0600`), else from the starter. After that, the folder's `workflow_group.yaml` and `.env` are not read. An older CLI's `~/.canyonos/deployments/<workflow group>/` moves into the new record. See `canyonos/records.py`.
+
+Every other command that acts on one workflow group takes, in order: the workflow group it is given by name, the workflow group the folder it runs from belongs to (one of its workflow folders, a folder inside one, or a folder that holds one), then the one `canyonos select-context` picked. A folder that belongs to several workflow groups, with none selected, is an error. `stop` and `clean` get the workflow group as a name; `status`, `logs`, `test`, `sync`, `curl`, `config`, `doctor`, `chat` and `serve` run from its record, as if typed there (`_enter_workflow_group` in `cli.py`). A selected workflow group whose record is gone is an error, never a fallback to another one.
 
 ## Code
 
@@ -73,6 +75,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `canyonos/api.py`, `sdk/` | Every request to the CanyonOS API, and its answers' types (`sdk/models.py`, written by `bun run sdk:generate`) |
 | `canyonos/auth.py` | The machine's API key: saving, replacing and removing it for `deploy` and `serve`, and its hash for the Global Controller and the dashboard API; the control key |
 | `canyonos/init.py`, `deploy.py`, `sync.py`, `test.py`, `verify.py` | Creating the container, deploying, syncing, testing |
+| `canyonos/records.py` | Each workflow group's record: finding, making and entering it |
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which workflow groups they act on |
 | `canyonos/context.py` | `list`, `select-context`, and the selected workflow group other commands act on |
 | `canyonos/dashboard.py` | `dashboard`: opening the dashboard with the API key in the URL fragment |
@@ -91,13 +94,15 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 
 ## State on this machine
 
-`<workflow group>` is the workflow group folder's name, lowercased and trimmed, plus the first 8 characters of `workflow_group.yaml`'s `workflow_group_id` (`deployment_name` in `canyonos/deployment.py`).
+`<workflow group>` is the name of the folder that held the `workflow_group.yaml` the record started from, else of its first workflow folder, lowercased and trimmed, plus the first 8 characters of its `workflow_group_id` (`_create` in `canyonos/records.py`).
 
 | Path | Holds |
 | --- | --- |
-| `~/.canyonos/deployments/<workflow group>/state.json` | The container and the ports of the last deploy, its folder and `workflow_group_id`, and whether it was deployed without an API key |
-| `~/.canyonos/deployments/<workflow group>/sync-manifest.json` | What the last sync copied |
-| `~/.canyonos/deployments/<workflow group>/ca/ca.crt`, `ca.key` | The workflow group's CA for internal mutual TLS, made on its first `provider: local` deploy and reused after (`0600`, folder `0700`); see [Internal TLS](CONTROLLER.md#internal-tls) |
+| `~/.canyonos/workflows/<workflow group>/workflow_group.yaml` | The workflow group's settings; its `workflows:` lists each deployed workflow's absolute `path` and `workflow_id` |
+| `~/.canyonos/workflows/<workflow group>/.env` | The values `workflow_group.yaml` reads, copied (`0600`) from beside the `workflow_group.yaml` the record started from, if there was one |
+| `~/.canyonos/workflows/<workflow group>/state.json` | The container and the ports of the last deploy, its folder and `workflow_group_id`, and whether it was deployed without an API key |
+| `~/.canyonos/workflows/<workflow group>/sync-manifest.json` | What the last sync copied |
+| `~/.canyonos/workflows/<workflow group>/ca/ca.crt`, `ca.key` | The workflow group's CA for internal mutual TLS, made on its first `provider: local` deploy and reused after (`0600`, folder `0700`); see [Internal TLS](CONTROLLER.md#internal-tls) |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
 | `~/.canyonos/api_key` | The machine's API key (`0600`); it never leaves this machine. `CANYONOS_API_KEY` overrides it for one command |
 | `~/.canyonos/control_key` | The key every `/v1` request to the CanyonOS API on Docker sends (`0600`), made on first use |
@@ -109,7 +114,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/usage/` | The usage choice and the events waiting to be sent |
 | `~/.canyonos/supported-versions.json` | Cached supported CLI versions |
 
-`clean --all` deletes all of `~/.canyonos`, the API key included; its confirmation says so. The CLI also edits `workflow_group.yaml` (`workflow_group_id`, `target`) and each workflow's workflow config (agent resources), keeping comments and key order.
+`clean` deletes a workflow group's whole record, its settings included, and the skills `convert` installed in its workflow folders; `clean --all` deletes all of `~/.canyonos`, the API key included; its confirmation says so. The CLI also edits the record's `workflow_group.yaml` (`workflow_group_id`, `workflows`, `target`) and each workflow's workflow config (agent resources), keeping comments and key order.
 
 ## Developer overrides
 

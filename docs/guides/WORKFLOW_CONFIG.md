@@ -12,18 +12,21 @@ The file is `config/workflow_config.yaml` in the [workflow root](BUILD_ARTIFACT.
 `.canyon/config/workflow_config.yaml` after `canyonos convert`. `canyonos new-app` and
 `canyonos convert` write it for you.
 
-`workflow_group.yaml` is in the workflow group folder, the one `--workflow-group` names in
-`canyonos deploy <workflow folder>... --workflow-group <workflow group folder>`. The first deploy
-writes it when there is none, with the group's `workflow_group_id`.
+`workflow_group.yaml` is in the workflow group's record,
+`~/.canyonos/workflows/<workflow group>/`, with the `.env` it reads. The first deploy
+writes it, with the group's `workflow_group_id`, starting from the `workflow_group.yaml`
+in the folder it runs from when there is one; after that, that folder's copy is not
+read.
 
 The deploy also gives each workflow folder a random `workflow_id` the first time it
 deploys it, and keeps it in `workflows:`, keyed by the workflow's name in the group, its
-folder's name and the start of its ID (`portfolio-3f9a2c1b`), with the folder's path:
+folder's name and the start of its ID (`portfolio-3f9a2c1b`), with the folder's absolute
+path. `workflows:` lists exactly the workflows deployed:
 
 ```yaml
 workflows:
   portfolio-3f9a2c1b:
-    path: ../testing/portfolio
+    path: /home/me/testing/portfolio
     workflow_id: 3f9a2c1b-...
 ```
 
@@ -126,9 +129,9 @@ Keys of `type: database`:
 | `volume_path` | none     | A folder inside it whose data survives a redeploy. Required on Kubernetes.                                                          |
 
 On Docker, `volume_path` is kept on the volume
-`canyonos-<folder>-<id>-<workflow>--<name>-data`: the workflow group folder's name, the
-first 8 characters of `workflow_group_id`, the workflow folder's name, and the entry's name
-in lowercase.
+`canyonos-<folder>-<id>-<workflow>--<name>-data`: the name the workflow group is named
+after, the first 8 characters of `workflow_group_id`, the workflow folder's name, and
+the entry's name in lowercase.
 
 A database needs no code. Other agents find it in the routing table, the Redis hash
 `routing_table:addresses`, which maps the entry's name, `<workflow>.<name>`, to a JSON list of `host:port`
@@ -336,9 +339,10 @@ ec2-pool:
 ```
 
 - The value comes from the workflow's `.env`: the one beside `config/`, or, after
-  `canyonos convert`, the one beside `.canyon` when there is one. In `workflow_group.yaml`,
-  it comes from the `.env` beside it. A variable already set
-  in the environment the config is read in keeps its own value.
+  `canyonos convert`, the one beside `.canyon` when there is one. In
+  `workflow_group.yaml`, it comes from the `.env` beside it in the workflow group's
+  record. A variable already set in the environment the config is read in keeps its own
+  value.
 - Numbers, such as `replicas` and ports, and booleans can't use a variable.
 - A variable that isn't set stays as written, which is an error in a required key.
 

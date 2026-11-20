@@ -66,6 +66,7 @@ from ..harness import (
     workflow_dir,
     workflow_root,
     qualified,
+    record,
     redis_password,
     redis_port,
     redis_tls_context,
@@ -164,13 +165,20 @@ def _port_of(url: str) -> int:
     return port
 
 
+def _settings_path(directory: Path) -> Path:
+    """The `workflow_group.yaml` that sets the workflow group of the folder
+    `directory`: its record's once it is deployed, else the folder's own, which the
+    first deploy copies into the record."""
+    return (record(directory, missing_ok=True) or directory) / "workflow_group.yaml"
+
+
 def _settings(directory: Path) -> dict:
     """The workflow group's parsed `workflow_group.yaml`."""
-    return yaml.safe_load((directory / "workflow_group.yaml").read_text())
+    return yaml.safe_load(_settings_path(directory).read_text())
 
 
 def _edit_settings(directory: Path, edit) -> None:
-    path = directory / "workflow_group.yaml"
+    path = _settings_path(directory)
     path.write_text(edit(path.read_text()))
 
 
@@ -316,7 +324,7 @@ def _unreadable_records(recorder, directory: Path, port: int):
     """Leave, while the block runs, what an earlier CanyonOS left behind and must
     claim no port: a workflow group record whose `state.json` is not JSON, and the
     record of a port-forward on `port` that no process has touched since 1970."""
-    deployments, forwards = cli_value(
+    workflows, forwards = cli_value(
         recorder,
         directory,
         "[deployments_dir(), forwards_dir()]",
@@ -324,9 +332,9 @@ def _unreadable_records(recorder, directory: Path, port: int):
         "from canyonos.forwards import forwards_dir",
     )
     name = f"e2e-left-{secrets.token_hex(4)}"
-    record = Path(deployments) / name
-    record.mkdir(parents=True)
-    (record / "state.json").write_text("{not json")
+    left = Path(workflows) / name
+    left.mkdir(parents=True)
+    (left / "state.json").write_text("{not json")
     forward = Path(forwards) / f"{name}.json"
     forward.parent.mkdir(parents=True, exist_ok=True)
     forward.write_text(json.dumps({"port": port}))
@@ -335,8 +343,8 @@ def _unreadable_records(recorder, directory: Path, port: int):
         yield
     finally:
         forward.unlink(missing_ok=True)
-        (record / "state.json").unlink(missing_ok=True)
-        record.rmdir()
+        (left / "state.json").unlink(missing_ok=True)
+        left.rmdir()
 
 
 def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
@@ -432,8 +440,8 @@ def test_each_workflow_group_has_its_own_docker_group_and_one_dashboard(
 ):
     for name in WORKFLOWS:
         group = fleet.groups[name]
-        config = yaml.safe_load((fleet.dirs[name] / "workflow_group.yaml").read_text())
-        expected = rf"canyonos-{name}-{re.escape(config['workflow_group_id'][:8])}"
+        workflow_group = workflow_group_id(fleet.dirs[name])
+        expected = rf"canyonos-{name}-{re.escape(workflow_group[:8])}"
         assert re.fullmatch(expected, group), group
         _all_running(recorder, fleet, name)
     assert fleet.groups["helloworld"] != fleet.groups["portfolio"]
@@ -535,7 +543,7 @@ def test_test_in_another_folder_of_the_same_name_refuses(recorder, fleet):
     call = canyonos(recorder, ["test", "twin", "--json"], cwd=twin, check=False)
     assert call.code != 0, call.output
     assert call.json()["error"].startswith(
-        "No workflow group is running from this folder."
+        "No workflow group of this folder is running."
     ), call.stdout
     greets(recorder, fleet.dirs["helloworld"], "still-here")
 

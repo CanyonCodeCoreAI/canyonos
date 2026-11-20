@@ -5,8 +5,7 @@ part works inside, see [Architecture](architecture/README.md).
 
 ## The big picture
 
-You run `canyonos deploy <workflow folder>... --workflow-group <workflow group folder>` from the folder
-that holds your workflows. It starts the
+You run `canyonos deploy <workflow folder>...` from any folder. It starts the
 Global Controller and the dashboard, and the Global Controller starts everything else:
 your agents, the endpoint that takes requests, and Redis to keep track of them. A
 request comes in through the endpoint, your agents call each other to answer it, and the
@@ -15,7 +14,8 @@ these parts instead; see [Where it runs](#where-it-runs).
 
 The CLI and the dashboard call what one `canyonos deploy` starts a *workflow group*: one
 Global Controller, Redis and endpoint for every workflow folder it names. Its ID is the
-`workflow_group_id` the first deploy writes into its `workflow_group.yaml`.
+`workflow_group_id` the first deploy writes into its `workflow_group.yaml`, which the
+CLI keeps in the workflow group's record, `~/.canyonos/workflows/<workflow group>/`.
 
 ![canyonos deploy starts the Global Controller, which builds and starts your workflow's agent replicas, sends telemetry to the Dashboard and keeps shared state in Redis. Your app sends a request to the Endpoint, which routes it to Agent A; Agent A calls Agent B, and each agent's LLM Gateway sends its model calls to the model providers.](images/how-it-works.svg)
 

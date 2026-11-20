@@ -183,18 +183,17 @@ Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ```bash
 canyonos validate                         # check the layout and the workflow config
-cd ..
-canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>   # deploy and keep it running
-cd my-group
+canyonos deploy . --api-key <your api key>  # deploy and keep it running
 canyonos test "your query"                # send one request
 ```
 
-`canyonos deploy` writes `workflow_group.yaml` in `my-group` when there is none. It
-first shows each agent's CPU, memory, GPU and replicas. Choose
-**1. Deploy**, or **2. Configure an agent** to change them first. What it deploys with,
-defaults included, is saved in the workflow config. `--api-key` sets the key every
-request must carry; later deploys reuse it (see [API key](AUTHORIZATION.md)). When it's
-up, send a request with it, to the `workflow_id` the deploy wrote into `workflow_group.yaml`:
+`canyonos deploy` keeps the workflow group's `workflow_group.yaml` in its record,
+`~/.canyonos/workflows/my-workflow-<id>/`, not in `my-workflow/`. It first shows each
+agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or **2. Configure an
+agent** to change them first. What it deploys with, defaults included, is saved in the
+workflow config. `--api-key` sets the key every request must carry; later deploys reuse
+it (see [API key](AUTHORIZATION.md)). When it's up, send a request with it, to the
+`workflow_id` the deploy prints and keeps in the record's `workflow_group.yaml`:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/<workflow_id> \

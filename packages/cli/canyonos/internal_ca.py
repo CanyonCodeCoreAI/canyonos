@@ -4,7 +4,7 @@
 """The certificate authority of a workflow group on Docker, which secures its internal
 traffic with mutual TLS.
 
-The first deploy makes it under `~/.canyonos/deployments/<workflow group>/ca/`, readable
+The first deploy makes it under `~/.canyonos/workflows/<workflow group>/ca/`, readable
 only by you, and every later deploy reuses it. The deploy hands it to the Global
 Controller container, which signs a certificate for every container it starts:
 Redis takes only TLS clients whose certificate this CA signed, and the controllers'

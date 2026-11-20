@@ -53,9 +53,6 @@ def run_new_app():
         with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(content)
 
-    name = os.path.basename(os.getcwd())
     ui.ok("Created new CanyonOS workflow.")
-    ui.hint(
-        f"Deploy it with `cd .. && canyonos deploy {name} --workflow-group {name}-group`."
-    )
+    ui.hint("Deploy it with `canyonos deploy .`.")
     return True

@@ -2,14 +2,14 @@
 
 We have 4 example workflows listed below. All of these workflows would work immediately with canyonos, following our design philosophy.
 
-Each example is a workflow group folder: its `workflow_group.yaml`, and the workflow inside it, a folder of agent code named after the example. Deploy one from its folder, for example:
+Each example is a folder with a `workflow_group.yaml` and the workflow inside it, a folder of agent code named after the example. Deploy one from its folder, so the new workflow group starts from that `workflow_group.yaml`, for example:
 
 ```bash
 cd examples/portfolio
 canyonos deploy portfolio
 ```
 
-Each workflow answers at `POST /<workflow_id>`, the ID `canyonos deploy` prints and keeps in `workflow_group.yaml`. From anywhere else, name both folders: `canyonos deploy examples/portfolio/portfolio --workflow-group examples/portfolio`.
+Each workflow answers at `POST /<workflow_id>`, the ID `canyonos deploy` prints and keeps in the workflow group's record, `~/.canyonos/workflows/<workflow group>/`. The first deploy copies the example's `workflow_group.yaml` there, and later deploys read only the record's copy. To redeploy from anywhere else, name the workflow group: `canyonos deploy --workflow-group <workflow group>`; `canyonos list` shows its name.
 
 Helloworld: No LLM involved, merely returns Hello World. The first step in building a workflow! Runs on this machine.
 

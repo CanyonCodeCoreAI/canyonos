@@ -60,7 +60,7 @@ def _agents_table(agent_specs):
 
 def _redis_outlived_its_password():
     """True when this workflow group's Redis container still runs on the active Docker
-    engine but its password file under `~/.canyonos/deployments/` is gone, so a new
+    engine but its password file under `~/.canyonos/workflows/` is gone, so a new
     password would not open it."""
 ```
 

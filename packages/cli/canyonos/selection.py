@@ -5,17 +5,17 @@
 The workflow groups `canyonos stop` and `canyonos clean` act on, from any folder.
 
 A workflow group is listed when it has a record under
-`~/.canyonos/deployments/<workflow group>/`: `canyonos deploy` writes it and a stop removes
-it, so a deploy whose Global Controller died is still listed, and stopping it removes
-what is left. A command picks workflow groups as Docker picks containers, by name or ID.
+`~/.canyonos/workflows/<workflow group>/` (see records.py): `canyonos deploy` writes its
+state there and a stop removes that, so a deploy whose Global Controller died is still
+listed as deployed, and stopping it removes what is left. A command picks workflow groups as Docker picks containers, by name or ID.
 Without names, it acts on its only candidate, or asks which ones in a menu.
 """
 
 import os
 from dataclasses import dataclass
 
-from canyonos import deployment, ui
-from canyonos.constants import deployment_config_path, read_config
+from canyonos import deployment, records, ui
+from canyonos.constants import DEPLOYMENT_CONFIG, deployment_config_path, read_config
 from canyonos.init import load_state
 from canyonos.usage.consent import is_interactive
 from utils.tui import multi_select_menu
@@ -24,9 +24,8 @@ from utils.tui import multi_select_menu
 @dataclass(frozen=True)
 class Deployment:
     """A workflow group on this machine: its name (`<folder>-<id[:8]>`, which names its
-    Docker group and its records), its workflow_group_id, its folder, and its deploy
-    record, None when it isn't deployed. A record written before the CLI recorded the
-    id and folder has neither."""
+    Docker group and its record), its workflow_group_id, its record's folder, and the
+    state of its deploy, None when it isn't deployed."""
 
     name: str
     id: str | None
@@ -40,29 +39,29 @@ class Deployment:
         return f"{self.name} · {where}{deployed}"
 
     def named(self, ref):
-        """True when `ref` is this workflow group's full ID, name or folder name."""
-        folder = os.path.basename(self.folder) if self.folder else None
-        return ref in (self.id, self.name, folder)
+        """True when `ref` is this workflow group's full ID, name, or name without the
+        start of its ID, as the folder it is named after is called."""
+        return ref in (self.id, self.name, self.name.rsplit("-", 1)[0])
 
 
 def recorded_deployments():
-    """Every workflow group recorded on this machine, by name. An unreadable record raises
-    RuntimeError, naming the file to remove."""
-    try:
-        names = sorted(os.listdir(deployment.deployments_dir()))
-    except FileNotFoundError:
-        return []
+    """Every workflow group recorded on this machine, by name. An unreadable state file
+    raises RuntimeError, naming the file to remove."""
     deployments = []
-    for name in names:
+    for name in records.names():
         try:
             state = load_state(deployment.state_path(name))
         except FileNotFoundError:
-            continue
+            state = None
+        config = read_config(
+            os.path.join(deployment.state_dir(name), DEPLOYMENT_CONFIG)
+        )
         deployments.append(
             Deployment(
                 name,
-                state.get("workflow_group_id"),
-                state.get("workflow_group_dir"),
+                (state or {}).get("workflow_group_id")
+                or config.get("workflow_group_id"),
+                deployment.state_dir(name),
                 state,
             )
         )
@@ -133,11 +132,11 @@ def choose(command, refs, candidates):
         )
         ui.hint(f"Name the ones to {command}: `canyonos {command} <name or ID>...`.")
         return Choice([], False, False)
-    here = os.getcwd()
+    here = records.matching_cwd()
     chosen = multi_select_menu(
         [(p, p.label) for p in candidates],
         title=f"Select the workflow groups to {command}",
-        selected=[p for p in candidates if p.folder == here],
+        selected=[p for p in candidates if p.name in here],
     )
     if not chosen:
         ui.say(f"No workflow group selected, so `canyonos {command}` did nothing.")

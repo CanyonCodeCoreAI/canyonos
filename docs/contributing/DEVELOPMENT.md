@@ -54,8 +54,7 @@ and what it deploys:
 ## Run the CLI from a checkout
 
 In the dev shell, `canyonos` works from any folder. Deploy a copy of an example, since a
-deploy writes a `workflow_group_id` into its `workflow_group.yaml` and default resources into
-its workflow's `config/workflow_config.yaml`:
+deploy writes default resources into its workflow's `config/workflow_config.yaml`:
 
 ```bash
 cp -R examples/helloworld ../helloworld   # needs no LLM and no API keys
@@ -147,9 +146,10 @@ export CANYONOS_CONTROL_KEY_HASH=$(printf %s "$(cat ~/.canyonos/control_key)" | 
 bun run dashboard:dev
 ```
 
-Then, from the folder you deployed from, send it the registration the deploy sent: each
-workflow by its `workflow_id`, the workflow group's Redis and its password, and a client
-certificate its CA signs when that Redis takes only TLS:
+Then, from the workflow group's record, `~/.canyonos/workflows/<workflow group>/`, send
+it the registration the deploy sent: each workflow by its `workflow_id`, the workflow
+group's Redis and its password, and a client certificate its CA signs when that Redis
+takes only TLS:
 
 ```bash
 python -c 'import json; from canyonos.dashboard_registration import _registration; from canyonos.init import load_state; print(json.dumps(_registration(load_state())))' > registration.json

@@ -26,7 +26,7 @@ def test_new_app_writes_a_starter_that_passes_the_manifest_schema(cli_case: CliC
 
     assert result.returncode == 0, result.stderr
     assert "Created new CanyonOS workflow" in result.stdout
-    assert "cd .. && canyonos deploy " in result.stdout
+    assert "Deploy it with `canyonos deploy .`" in result.stdout
     assert written_files(cli_case) == sorted(path for path, _ in template_files())
     assert "workflow_group.yaml" not in written_files(cli_case)
     workflow, violations = check_workflow(str(cli_case.cwd))

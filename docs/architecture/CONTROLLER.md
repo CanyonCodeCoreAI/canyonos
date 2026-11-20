@@ -67,8 +67,9 @@ On Docker with `provider: local`, every connection inside the workflow group is 
 signed by a CA the workflow group has to itself:
 
 1. The first `canyonos deploy` makes the CA (EC P-256, ten years) in
-   `~/.canyonos/deployments/<workflow group>/ca/`, readable only by you. Later deploys reuse
-   it. A deploy refuses to start while the workflow group's Redis still runs but the CA is gone.
+   `~/.canyonos/workflows/<workflow group>/ca/`, readable only by you. Later deploys
+   reuse it. A deploy refuses to start while the workflow group's Redis still runs but
+   the CA is gone.
 2. The CLI hands the CA and a client certificate of the Global Controller's own to its
    container in `CANYONOS_TLS_*` variables, copied from the CLI's environment, never on the
    command line.

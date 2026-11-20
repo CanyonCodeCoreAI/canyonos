@@ -1,28 +1,35 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos list`, `canyonos select-context` and the commands that act on the selected
-workflow group, through the installed command, each case in its own HOME. The workflow
-groups are records `canyonos deploy` would write, whose Global Controller container is
-on no Docker engine, and the CanyonOS API that would say whether they run is on a port
-that answers nothing, so no Docker is needed and none is started. `canyonos dashboard`
-finds the dashboard through a stand-in `docker` that reports its web container's port,
-and prints the link it would open."""
+"""`canyonos list`, `canyonos select-context`, `canyonos clean` and the commands that act
+on the workflow group of the folder they run from or on the selected one, through the
+installed command, each case in its own HOME. The workflow groups are records
+`canyonos deploy` would write under `~/.canyonos/workflows/`, whose Global Controller
+container is on no Docker engine, and the CanyonOS API that would say whether they run
+is on a port that answers nothing; a command that would start that API runs with
+DOCKER_HOST pointing at nothing, so no Docker is needed and none is started.
+`canyonos dashboard` finds the dashboard through a stand-in `docker` that reports its
+web container's port, and prints the link it would open."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+
 from .harness import CliCase
+
+NO_DOCKER = {"DOCKER_HOST": "unix:///nonexistent.sock"}
 
 API_DOWN = "Could not reach the CanyonOS API"
 FIRST_ID = "8a3f6c1e-2b4d-4e5f-9a7b-1c2d3e4f5a6b"
 SECOND_ID = "0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f"
+THIRD_ID = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
 PICK_AGAIN = "`canyonos select-context <workflow group>`"
 DASHBOARD_PORT = 8095
 # Characters a URL fragment has to escape, so the link proves the key is encoded.
@@ -57,30 +64,42 @@ def _api_down(case: CliCase) -> str:
 
 
 def _record(
-    case: CliCase, folder: str, deployment_id: str, auth_disabled: bool = False
+    case: CliCase,
+    folder: str,
+    deployment_id: str,
+    auth_disabled: bool = False,
+    deployed: bool = True,
 ) -> str:
-    """Write the workflow group folder `folder` and the record a deploy from it leaves,
-    with no CanyonOS API running, and return the workflow group's name."""
+    """Write the workflow folder `folder` and the record a deploy of it leaves, with no
+    CanyonOS API running, and return the workflow group's name. Without `deployed`,
+    the record is one of a workflow group that is not deployed: it has no state."""
     _api_down(case)
     directory = case.cwd / folder
-    directory.mkdir()
-    (directory / "workflow_group.yaml").write_text(
-        f"workflow_group_id: {deployment_id}\n"
-    )
+    (directory / "config").mkdir(parents=True)
     name = f"{folder}-{deployment_id[:8]}"
-    records = case.home / ".canyonos" / "deployments" / name
-    records.mkdir(parents=True)
-    (records / "state.json").write_text(
-        json.dumps(
-            {
-                "container_id": f"{folder}-controller",
-                "workflow_group_id": deployment_id,
-                "workflow_group_dir": str(directory),
-                "auth_disabled": auth_disabled,
-            }
-        )
+    record = _record_dir(case, name)
+    record.mkdir(parents=True)
+    workflow_id = "5a30382f-8890-44dc-80f4-bef8f59f9181"
+    (record / "workflow_group.yaml").write_text(
+        f"workflow_group_id: {deployment_id}\n"
+        f"workflows:\n  {folder}-{workflow_id[:8]}:\n    path: {directory}\n"
+        f"    workflow_id: {workflow_id}\n"
     )
+    if deployed:
+        (record / "state.json").write_text(
+            json.dumps(
+                {
+                    "container_id": f"{folder}-controller",
+                    "workflow_group_id": deployment_id,
+                    "auth_disabled": auth_disabled,
+                }
+            )
+        )
     return name
+
+
+def _record_dir(case: CliCase, name: str) -> Path:
+    return case.home / ".canyonos" / "workflows" / name
 
 
 def _outside(case: CliCase) -> Path:
@@ -113,13 +132,15 @@ def test_list_shows_each_deployment_and_marks_one_deployed_without_an_api_key(
 ):
     first = _record(cli_case, "app-abcz", FIRST_ID)
     second = _record(cli_case, "app-xyza", SECOND_ID, auth_disabled=True)
+    third = _record(cli_case, "app-qrst", THIRD_ID, deployed=False)
 
     result = cli_case.run_cli(["list"])
 
     assert result.returncode == 0, _said(result)
     lines = {line.split()[1]: line for line in result.stdout.splitlines()}
-    assert set(lines) == {first, second}, result.stdout
+    assert set(lines) == {first, second, third}, result.stdout
     assert FIRST_ID in lines[first] and SECOND_ID in lines[second], result.stdout
+    assert THIRD_ID in lines[third] and "not deployed" in lines[third], result.stdout
     assert "unknown (API down)" in lines[first], result.stdout
     assert "(unauthenticated)" in lines[second], result.stdout
     assert "(unauthenticated)" not in lines[first], result.stdout
@@ -132,7 +153,7 @@ def test_select_context_takes_the_forms_stop_takes_and_list_marks_it(
     first = _record(cli_case, "app-abcz", FIRST_ID)
     second = _record(cli_case, "app-xyza", SECOND_ID)
 
-    for ref, picked in ((FIRST_ID[:6], first), ("app-xyza", second), (first, first)):
+    for ref, picked in ((FIRST_ID[:6], first), (SECOND_ID, second), (first, first)):
         selected = cli_case.run_cli(["select-context", ref], cwd=_outside(cli_case))
         assert selected.returncode == 0, _said(selected)
         listed = cli_case.run_cli(["list"]).stdout
@@ -200,22 +221,120 @@ def test_a_selected_deployment_that_is_gone_is_an_error_that_says_what_to_do(
 ):
     name = _record(cli_case, "app-abcz", FIRST_ID)
     assert cli_case.run_cli(["select-context", name]).returncode == 0
-    (cli_case.home / ".canyonos" / "deployments" / name / "state.json").unlink()
+    shutil.rmtree(_record_dir(cli_case, name))
     outside = _outside(cli_case)
 
     for command in (["status"], ["stop"], ["test"]):
         result = cli_case.run_cli(command, cwd=outside)
         assert result.returncode == 1, _said(result)
-        assert f"`{name}` is no longer deployed" in _said(result)
+        assert f"`{name}` is no longer recorded" in _said(result)
         assert "canyonos list" in _said(result) and PICK_AGAIN in _said(result)
         assert "Traceback" not in result.stderr, result.stderr
     listed = cli_case.run_cli(["list"])
     assert listed.returncode == 0, _said(listed)
-    assert f"`{name}` is no longer deployed" in _said(listed)
+    assert f"`{name}` is no longer" in _said(listed) and PICK_AGAIN in _said(listed)
 
     cleared = cli_case.run_cli(["select-context", "--clear"])
     assert cleared.returncode == 0, _said(cleared)
     assert not (cli_case.home / ".canyonos" / "context.json").exists()
+
+
+def test_status_in_a_workflow_folder_acts_on_its_workflow_group_not_the_selected(
+    cli_case: CliCase,
+):
+    first = _record(cli_case, "app-abcz", FIRST_ID)
+    second = _record(cli_case, "app-xyza", SECOND_ID)
+    assert cli_case.run_cli(["select-context", second]).returncode == 0
+    folder = cli_case.cwd / "app-abcz"
+
+    for cwd in (folder, folder / "config"):
+        result = cli_case.run_cli(["status", "--json"], cwd=cwd)
+        assert result.returncode == 1, _said(result)
+        assert json.loads(result.stdout)["workflow_group"] == first, result.stdout
+        assert "Acting on" not in result.stderr, _said(result)
+
+
+def test_stop_in_a_workflow_folder_acts_on_its_workflow_group(cli_case: CliCase):
+    """With two workflow groups deployed, `stop` without a name, run from one's workflow
+    folder, acts on that one without asking."""
+    first = _record(cli_case, "app-abcz", FIRST_ID)
+    _record(cli_case, "app-xyza", SECOND_ID)
+
+    result = cli_case.run_cli(
+        ["stop", "--json"], env=NO_DOCKER, cwd=cli_case.cwd / "app-abcz", timeout=30
+    )
+
+    assert json.loads(result.stdout)["workflow_groups"] == [first], _said(result)
+
+
+def test_stop_of_a_workflow_group_that_is_not_deployed_fails(cli_case: CliCase):
+    name = _record(cli_case, "app-abcz", FIRST_ID, deployed=False)
+
+    result = cli_case.run_cli(["stop", name], env=NO_DOCKER)
+
+    assert result.returncode == 1, _said(result)
+    assert f"{name} is not deployed" in _said(result), _said(result)
+    assert _record_dir(cli_case, name).is_dir()
+
+
+def test_stop_in_the_folder_of_a_workflow_group_not_deployed_has_nothing_to_do(
+    cli_case: CliCase,
+):
+    """Run from its workflow folder, `stop` of a workflow group already stopped says so
+    and succeeds, and stops no other workflow group."""
+    name = _record(cli_case, "app-abcz", FIRST_ID, deployed=False)
+    _record(cli_case, "app-xyza", SECOND_ID)
+
+    result = cli_case.run_cli(
+        ["stop", "--json"], env=NO_DOCKER, cwd=cli_case.cwd / "app-abcz", timeout=30
+    )
+
+    assert result.returncode == 0, _said(result)
+    assert json.loads(result.stdout)["workflow_groups"] == [], result.stdout
+    assert _record_dir(cli_case, name).is_dir()
+
+
+def test_clean_in_a_workflow_folder_removes_its_record_and_finishes(
+    cli_case: CliCase,
+):
+    """`clean` with no name, from the workflow folder, runs from the record it then
+    removes, and goes on from elsewhere: it finishes, and says so."""
+    name = _record(cli_case, "app-abcz", FIRST_ID, deployed=False)
+
+    result = cli_case.run_cli(
+        ["clean", "--yes", "--json"], cwd=cli_case.cwd / "app-abcz", timeout=60
+    )
+
+    assert result.returncode == 0, _said(result)
+    assert json.loads(result.stdout)["workflow_groups"] == [name], result.stdout
+    assert not _record_dir(cli_case, name).exists()
+
+
+def test_stop_in_a_folder_of_two_workflow_groups_refuses_and_stops_neither(
+    cli_case: CliCase,
+):
+    """Run from a folder that holds the workflow folders of two workflow groups, one
+    of them deployed, `stop` with no name refuses, as the other commands do, rather
+    than stop the deployed one."""
+    _record(cli_case, "app-abcz", FIRST_ID)
+    _record(cli_case, "app-xyza", SECOND_ID, deployed=False)
+
+    result = cli_case.run_cli(["stop"], env=NO_DOCKER, timeout=30)
+
+    assert result.returncode == 1, _said(result)
+    assert "belongs to 2 workflow groups" in _said(result), _said(result)
+
+
+def test_clean_removes_the_whole_record_of_a_workflow_group(cli_case: CliCase):
+    name = _record(cli_case, "app-abcz", FIRST_ID, deployed=False)
+
+    result = cli_case.run_cli(["clean", name, "--yes"], env=NO_DOCKER)
+
+    assert f"Removed {_record_dir(cli_case, name)}" in _said(result), _said(result)
+    assert not _record_dir(cli_case, name).exists()
+    assert (cli_case.cwd / "app-abcz" / "config").is_dir()
+    listed = cli_case.run_cli(["list"])
+    assert "No workflow group on this machine" in _said(listed), _said(listed)
 
 
 def test_dashboard_prints_a_link_that_signs_in_with_the_api_key(cli_case: CliCase):

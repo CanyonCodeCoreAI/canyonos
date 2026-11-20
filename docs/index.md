@@ -48,8 +48,7 @@ With CanyonOS [installed](INSTALLATION.md), run these:
 ```bash
 mkdir my-app && cd my-app
 canyonos new-app                                # writes a starter workflow with two small agents
-cd ..
-canyonos deploy my-app --workflow-group my-group --api-key <your api key>   # runs it
+canyonos deploy . --api-key <your api key>      # runs it
 ```
 
 [Start from scratch](guides/FROM_SCRATCH.md) takes it from there, step by step.

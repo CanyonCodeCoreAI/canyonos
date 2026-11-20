@@ -374,17 +374,23 @@ class CliCase:
         )
 
     def spawn_cli(
-        self, args: Sequence[str], *, timeout: float = 5.0
+        self,
+        args: Sequence[str],
+        *,
+        timeout: float = 5.0,
+        env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> TerminalProcess:
-        """Run the installed CLI on a pseudoterminal and record the interaction."""
+        """Run the installed CLI on a pseudoterminal and record the interaction, from
+        `cwd` (the case's own directory by default) with `env` added."""
         transcript_path = self._artifact_path("canyonos-terminal", "log")
         transcript = transcript_path.open("w", encoding="utf-8")
         try:
             child = pexpect.spawn(
                 str(self.cli),
                 list(args),
-                cwd=str(self.cwd),
-                env=self.env,
+                cwd=str(cwd or self.cwd),
+                env={**self.env, **(env or {})},
                 encoding="utf-8",
                 timeout=timeout,
                 echo=False,
@@ -576,8 +582,9 @@ def run_ok(case: CliCase, args: list[str], **options) -> str:
 def deploy_starter(
     case: CliCase, folder: Path, *args: str, env: Mapping[str, str] | None = None
 ) -> tuple[str, str]:
-    """Deploy the workflow from its workflow group folder `folder`, as the quickstart
-    types it, naming its workflow, without the dashboard, which is shared across every
+    """Deploy the workflow from the folder `folder` that holds it and the
+    `workflow_group.yaml` its workflow group starts from, as the quickstart types it,
+    naming its workflow, without the dashboard, which is shared across every
     workflow group on the machine (`tests/e2e/scenarios/test_shared_dashboard.py` is where
     it belongs), with `env` or the runtime's environment; return the endpoint it
     published and what it showed."""
@@ -593,8 +600,31 @@ def deploy_starter(
     return endpoint.group(), output
 
 
-def workflow_group_id(folder: Path) -> str:
-    """The `workflow_group_id` the deploy saved in the workflow group folder `folder`."""
-    return yaml.safe_load((folder / "workflow_group.yaml").read_text())[
+def workflow_group_record(case: CliCase, folder: Path) -> Path:
+    """The record `canyonos deploy` keeps in `case`'s `~/.canyonos/workflows/` for the
+    workflow group of `folder`: the one whose `workflow_group.yaml` lists a workflow
+    folder that is `folder`, inside it or holds it, as the CLI picks the workflow group
+    a command run from `folder` acts on. Fails unless there is exactly one."""
+    here = folder.resolve()
+    found = []
+    for config in sorted(
+        (case.home / ".canyonos" / "workflows").glob("*/workflow_group.yaml")
+    ):
+        workflows = (yaml.safe_load(config.read_text()) or {}).get("workflows") or {}
+        paths = [Path(entry["path"]).resolve() for entry in workflows.values()]
+        if any(
+            here == path or path in here.parents or here in path.parents
+            for path in paths
+        ):
+            found.append(config.parent)
+    assert len(found) == 1, f"{folder} belongs to {len(found)} workflow groups: {found}"
+    return found[0]
+
+
+def workflow_group_id(case: CliCase, folder: Path) -> str:
+    """The `workflow_group_id` of the workflow group deployed from `folder`, from its
+    record."""
+    record = workflow_group_record(case, folder)
+    return yaml.safe_load((record / "workflow_group.yaml").read_text())[
         "workflow_group_id"
     ]

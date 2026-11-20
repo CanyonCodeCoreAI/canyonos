@@ -197,7 +197,7 @@ def test_reads_match_the_spec(recorder, deployed):
     assert status["applied_generation"] == status["generation"], status
     assert status["last_apply"]["ok"], status
     assert status["name"] == deployed.dir.name, status
-    config = (deployed.dir / "workflow_group.yaml").read_text()
+    config = (deployed.record / "workflow_group.yaml").read_text()
     assert status["config"] == config, status
     group = f"{PREFIX}/{{workflow_group_id}}"
     base = f"{url}{PREFIX}/{deployed.workflow_group_id}"
@@ -378,10 +378,10 @@ def test_uploading_what_runs_changes_nothing(recorder, deployed, tmp_path):
         return by_id[deployed.workflow_id]
 
     before = fingerprints()
-    env = deployed.dir / ".env"
+    env = deployed.record / ".env"
     body = {
         "name": deployed.dir.name,
-        "config": (deployed.dir / "workflow_group.yaml").read_text("utf-8"),
+        "config": (deployed.record / "workflow_group.yaml").read_text("utf-8"),
         "env": env.read_text("utf-8") if env.is_file() else None,
     }
     http(recorder, "PUT", url, json=body, headers=auth)

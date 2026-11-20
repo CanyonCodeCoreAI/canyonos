@@ -10,7 +10,8 @@ checks Docker.
 
 ## Where a workflow deploys
 
-Two settings in `workflow_group.yaml` decide where a workflow runs:
+Two settings in the workflow group's `workflow_group.yaml`, in its record
+`~/.canyonos/workflows/<workflow group>/`, decide where a workflow runs:
 
 - `target` picks what runs it: `docker`, CanyonOS on the machine that runs
   `canyonos deploy` (the default), or `kubernetes`, the CanyonOS operator on a cluster.
@@ -27,16 +28,18 @@ Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ## Deploy
 
-From the folder above the workflow folder (for a converted workflow, the workflow folder
-holds `.canyon`), with a workflow group folder of its own beside it:
+From the workflow folder (for a converted workflow, the folder that holds `.canyon`), or
+from any folder with its path:
 
 ```bash
-canyonos deploy my-workflow --workflow-group my-group --api-key <your api key>
+canyonos deploy . --api-key <your api key>
 ```
 
-It makes the workflow group folder and its `workflow_group.yaml` when there are none. Run the
-other commands, a redeploy included, from the workflow group folder:
-`cd my-group && canyonos deploy ../my-workflow`.
+The first deploy makes the workflow group's record, `~/.canyonos/workflows/<workflow
+group>/`, with its `workflow_group.yaml`, starting from the one in the folder it runs
+from when there is one. Run the other commands, a redeploy included, from the workflow
+folder: `canyonos deploy .`. From any folder, `canyonos deploy --workflow-group
+<workflow group>` redeploys it.
 
 `--api-key` sets the key every request to the endpoint and the dashboard must carry. The
 CLI saves it to `~/.canyonos/api_key` and later deploys reuse it, so pass it once.
@@ -81,13 +84,13 @@ setting that fixes it.
 
 ## Run several workflows
 
-`canyonos deploy ../a ../b` runs both workflow folders in one workflow group, with one
-Global Controller, Redis and endpoint, which serves each route at
-`POST /<workflow_id>`. Each workflow group folder deploys on its own, so
-several can run at once and share one dashboard. Their containers and images are named
-`canyonos-<folder>-<id>-...`, such as `canyonos-my-group-1a2b3c4d-global-controller`,
-where `<folder>` is the workflow group folder and `<id>` is the start of the `workflow_group_id`
-the first deploy writes into `workflow_group.yaml`.
+`canyonos deploy a b` runs both workflow folders in one workflow group, with one Global
+Controller, Redis and endpoint, which serves each route at `POST /<workflow_id>`. Each
+workflow group deploys on its own, so several can run at once and share one dashboard.
+Their containers and images are named `canyonos-<folder>-<id>-...`, such as
+`canyonos-a-1a2b3c4d-global-controller`, where `<folder>` is the folder that held the
+`workflow_group.yaml` the workflow group started from, else its first workflow folder,
+and `<id>` is the start of its `workflow_group_id`.
 
 ## Check it
 
@@ -103,19 +106,20 @@ The [dashboard](DASHBOARD.md) shows each request, its traces, logs, errors and c
 ## Change it
 
 The deploy runs from a copy of the workflow, so an edit changes nothing until you apply
-it: `canyonos sync ../my-workflow` for files in `config/`, `canyonos deploy` for code
-and `.env`. See [Apply a change](CONFIGURE.md#apply-a-change).
+it: `canyonos sync .` from the workflow folder for files in `config/`, `canyonos deploy`
+for code and `.env`. See [Apply a change](CONFIGURE.md#apply-a-change).
 
 ## Stop
 
 ```bash
 canyonos stop     # remove this workflow group's containers, keep its images for a quick redeploy
-canyonos clean    # stop, then remove the agent images; each workflow's .canyon stays
+canyonos clean    # stop, then remove the agent images and the workflow group's record
 ```
 
 With more than one workflow group, each lists them for you to pick, or takes a name:
-`canyonos stop my-group` works from any folder. The dashboard stops with the last
-running workflow group and keeps its history. Neither command touches `.env`.
+`canyonos stop my-workflow-1a2b3c4d` works from any folder. The dashboard stops with the
+last running workflow group and keeps its history. Neither command touches the `.env` in
+a workflow folder.
 [Stop and clean up](CLI.md#stop-and-clean-up) has what each command removes, and
 `--all` for every workflow group on the machine.
 

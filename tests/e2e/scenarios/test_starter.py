@@ -4,7 +4,8 @@
 """The starter `canyonos new-app` writes deploys from a workflow group folder of its own
 and answers as it is, with no LLM, through `canyonos test`, with the binary files
 macOS hides in config/ next to it, and keeps the workflow group's id out of the
-workflow's manifest, in the workflow_group.yaml it writes beside the workflow. Its
+workflow's manifest, in the workflow_group.yaml of the workflow group's record, and
+writes none in the folder it deploys from. Its
 agent writes to and reads from a database agent, whose stock image never reports
 its own health, with the dashboard running as a deploy starts it. Deployed with
 `--no-api-key` and no CANYONOS_API_KEY, it warns that it is open, publishes an
@@ -26,6 +27,7 @@ from ..harness import (
     deployed_endpoint,
     docker,
     http,
+    record,
     workflow_dir,
     workflow_group_redis,
     qualified,
@@ -151,9 +153,10 @@ def test_new_app_deploys_and_answers(recorder, starter):
     assert "workflow_group_id" not in manifest and "project_id" not in manifest, (
         manifest
     )
-    written = (starter / "workflow_group.yaml").read_text().splitlines()
+    written = (record(starter) / "workflow_group.yaml").read_text().splitlines()
     minted = [line for line in written if line.startswith("workflow_group_id: ")]
     assert len(minted) == 1, written
+    assert not (starter / "workflow_group.yaml").exists()
 
 
 def test_a_deploy_without_an_api_key_answers_anyone(recorder, starter):

@@ -6,8 +6,9 @@ endpoint are the same.
 
 It needs no LLM keys, but EC2 charges apply. Deploy it from a machine made by
 `canyonos provision`; the [EC2 workflow group](../../docs/guides/EC2.md#quick-start) quick
-start has every command. This folder is the workflow group folder: its `workflow_group.yaml`
-sets `provider: ec2-assign`, and `helloworld/` is the workflow. Deploy it from here:
+start has every command. This folder's `workflow_group.yaml` sets `provider: ec2-assign`,
+and `helloworld/` is the workflow. Deploy it from here, so the new workflow group starts
+from that file:
 
 ```bash
 canyonos deploy helloworld

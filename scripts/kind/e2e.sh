@@ -180,18 +180,30 @@ EOF
   grep -qF "${api_key}" /tmp/canyonbuilds.yaml && fail "the CanyonBuild holds the API key"
   as_deployer kubectl -n "${NS}" get canyonproject -o yaml | grep -qF "${api_key}" \
     && fail "the CanyonProject holds the API key"
-  project_id="$(grep -E '^workflow_group_id:' /hw/workflow_group.yaml | awk '{print $2}')"
-  workflow_in() {  # workflow group folder: the name the deploy gave its one workflow
+  record_of() {  # folder deployed from: the workflow_group.yaml of the record its deploy made
+    /w/.venv/bin/python -c '
+import glob, os, sys, yaml
+inside = sys.argv[1].rstrip("/") + "/"
+for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group.yaml")):
+    workflows = (yaml.safe_load(open(path)) or {}).get("workflows") or {}
+    if any(entry["path"].startswith(inside) for entry in workflows.values()):
+        print(path)' "$1"
+  }
+  record="$(record_of /hw)"
+  [ -n "${record}" ] || fail "the deploy made no record under ~/.canyonos/workflows for /hw"
+  project_id="$(grep -E '^workflow_group_id:' "${record}" | awk '{print $2}')" \
+    || fail "${record} has no workflow_group_id"
+  workflow_in() {  # folder deployed from: the name the deploy gave its one workflow
     # The folder's name and the start of its workflow_id, as in helloworld-3f9a2c1b.
     /w/.venv/bin/python -c 'import sys, yaml; print(*yaml.safe_load(open(sys.argv[1]))["workflows"])' \
-      "$1/workflow_group.yaml"
+      "$(record_of "$1")"
   }
   workflow="$(workflow_in /hw)"
-  [ -n "${workflow}" ] || fail "the deploy wrote no workflow to /hw/workflow_group.yaml"
+  [ -n "${workflow}" ] || fail "the deploy wrote no workflow to ${record}"
   # The dashboard's routes take the workflow's own id, never the workflow group's.
   workflow_id="$(/w/.venv/bin/python -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["workflows"][sys.argv[2]]["workflow_id"])' \
-    /hw/workflow_group.yaml "${workflow}")"
-  [ -n "${workflow_id}" ] || fail "the deploy wrote no workflow_id for ${workflow} to /hw/workflow_group.yaml"
+    "${record}" "${workflow}")"
+  [ -n "${workflow_id}" ] || fail "the deploy wrote no workflow_id for ${workflow} to ${record}"
   # The deploy keeps the endpoint on 127.0.0.1:8080, as on Docker: an unknown request 404s.
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" \
     || fail "the endpoint is not forwarded to 127.0.0.1:8080: ${said}"
@@ -514,7 +526,7 @@ EOF
   (cd /toy && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" /w/.venv/bin/canyonos deploy helloworld) \
     || fail "toy deploy"
   workflow="$(workflow_in /toy)"
-  [ -n "${workflow}" ] || fail "the toy deploy wrote no workflow to /toy/workflow_group.yaml"
+  [ -n "${workflow}" ] || fail "the toy deploy wrote no workflow to its record"
   [ "$(as_deployer kubectl -n "${NS}" get canyonagents -o name)" = "canyonagent.canyonos.canyoncode.ai/${workflow}-toy" ] \
     && [ "$(as_deployer kubectl -n "${NS}" get statefulsets -l canyonos.canyoncode.ai/agent -o name)" = "statefulset.apps/${workflow}-toy" ] \
     && as_deployer kubectl -n "${NS}" get statefulset endpoint >/dev/null \

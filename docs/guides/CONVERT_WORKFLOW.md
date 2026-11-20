@@ -96,13 +96,15 @@ yet.
 
 ## 5. Deploy
 
-From the folder above `my-app/`, deploy it as a workflow group of its own, in a folder beside it:
+From `my-app/`, deploy it as a workflow group of its own:
 
 ```bash
-cd ..
-canyonos deploy my-app --workflow-group my-app-group --api-key <your api key>
-cd my-app-group
+canyonos deploy . --api-key <your api key>
 ```
+
+The workflow group's `workflow_group.yaml` and the CLI's state for it go in its record,
+`~/.canyonos/workflows/my-app-<id>/`, not in `my-app/`. Run the other commands from
+`my-app/`.
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
 **2. Configure an agent** to change them first. What it deploys with, defaults included,

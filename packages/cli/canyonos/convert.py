@@ -508,7 +508,15 @@ def run_convert(
 
     # The agent's TUI needs stdin and stdout; without both, or with -y, run unattended.
     attended = not yes and is_terminal(sys.stdin) and is_terminal(sys.stdout)
-    log_path = None if attended else os.path.join(deployment.state_dir(), "convert.log")
+    log_path = (
+        None
+        if attended
+        else os.path.join(
+            deployment.legacy_deployments_dir(),
+            deployment.deployment_name(),
+            "convert.log",
+        )
+    )
     ui.say(f"Launching {spec['label']}...")
     status = _launch_agent(agent, CONVERT_PROMPT, log_path)
     if status is None:

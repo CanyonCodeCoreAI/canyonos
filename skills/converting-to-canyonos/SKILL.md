@@ -71,10 +71,10 @@ external stores and concurrency controls; follow the
   schema defaults when unanswered or unattended. Leave `resources` at schema
   defaults without asking.
 - Write only `agents:` and `endpoint: routes:` to the workflow config. `target`,
-  `provider`, provider sections, `endpoint.api_port`, `redis`, `dashboard_port`,
-  `logs` and `otel` are workflow group settings: they belong in the `workflow_group.yaml`
-  of the folder the workflow is deployed from, and the workflow config rejects them.
-  Report any the source needs instead of writing them.
+  `provider`, provider sections, `endpoint.api_port`, `redis`, `dashboard_port`, `logs`
+  and `otel` are workflow group settings: they belong in the workflow group's
+  `workflow_group.yaml`, in its record `~/.canyonos/workflows/<workflow group>/`, and
+  the workflow config rejects them. Report any the source needs instead of writing them.
 - Check each image's dependency set with `uv pip compile`, using the target
   Python version and [runtime requirements](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#per-image-requirements).
   Report incompatible constraints instead of changing application dependencies.
@@ -85,9 +85,8 @@ external stores and concurrency controls; follow the
 - For EC2, report the [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
   for `workflow_group.yaml`, using developer-supplied identifiers. If unavailable,
   report that EC2 is not configured.
-- To deploy to Kubernetes, the developer runs `canyonos target kubernetes` in the
-  workflow group folder, which writes `target` and the `kubernetes:` block to
-  `workflow_group.yaml`; say so in the report.
+- To deploy to Kubernetes, the developer sets `target: kubernetes` and the `kubernetes:`
+  block in the workflow group's `workflow_group.yaml`; say so in the report.
 
 ## 4. Validate and stop
 
@@ -100,21 +99,19 @@ until exit 0, or report the blocker. Check changes against the allowed scope.
 
 Report the validation result, blockers, chosen defaults and required credential
 names in the developer's language. Link to [Commands](https://canyonos.readthedocs.io/en/latest/#commands)
-for next steps, including deploying with a workflow group folder beside the workflow,
-`cd .. && canyonos deploy <workflow> --workflow-group <workflow>-group`, then `canyonos test` from that
-folder, which sends `.canyon/config/test_query.txt`.
+for next steps, including deploying from the workflow folder with `canyonos deploy .`,
+then `canyonos test` from that folder, which sends `.canyon/config/test_query.txt`.
 Claim success only after validation exits 0 with no open blocker.
 
 ## After the conversion: run the deploy
 
 Only once the conversion is reported and you are asked to run it, with no terminal
-attached. Deploy from the folder above the workflow; run the other commands from the
-workflow group folder, `<workflow>-group`:
+attached. Run every command from the workflow folder:
 
-- `canyonos deploy <workflow> --workflow-group <workflow>-group --serve false`: build and start
-  it without the dashboard, using default resources instead of asking. It makes the
-  workflow group folder and its `workflow_group.yaml` when there are none, and replaces this
-  workflow group's earlier deploy.
+- `canyonos deploy . --serve false`: build and start it without the dashboard, using
+  default resources instead of asking. It makes the workflow group's record,
+  `~/.canyonos/workflows/<workflow group>/`, with its `workflow_group.yaml`, when there
+  is none, and replaces this workflow group's earlier deploy.
 - `canyonos status --json`: `running`, `endpoint`, `dashboard_url`, per agent the
   desired and running replicas and last launch error, each machine type's last
   start error, and `errors` for any part it could not read. Exits 1 if nothing runs.
@@ -124,12 +121,12 @@ workflow group folder, `<workflow>-group`:
 - `canyonos logs <workflow>.<agent>`: print the last 200 lines of each of that agent's
   replicas, or of one replica such as `<workflow>.IntentAgent-1a2b3c4d`; `--tail N` or
   `--tail all` for more.
-- Any change, config or code, takes effect only after another
-  `canyonos deploy ../<workflow>`.
-- `canyonos validate --json ../<workflow>`: recheck `.canyon` after an edit.
-- `canyonos stop` removes the deploy. `canyonos clean` also removes the images on
-  Docker, and leaves `.canyon`; with `target: kubernetes` it removes only the workflow group's ConfigMap
-  and Secret in the cluster, and `.canyon` and the images stay.
+- Any change, config or code, takes effect only after another `canyonos deploy .`.
+- `canyonos validate --json`: recheck `.canyon` after an edit.
+- `canyonos stop` removes the deploy. `canyonos clean` also removes the images and the
+  workflow group's record on Docker, and leaves `.canyon`; with `target: kubernetes` it
+  removes only the workflow group's ConfigMap and Secret in the cluster, and `.canyon`
+  and the images stay.
 
 Every command exits non-zero on failure.
 

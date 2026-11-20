@@ -7,7 +7,7 @@ what to include.
 
 ## Health check
 
-Run these from your workflow group folder, the folder that holds `workflow_group.yaml`:
+Run these from one of your workflow group's workflow folders:
 
 - `canyonos --version` shows which version you have installed.
 - `docker info` confirms Docker is running.
@@ -25,20 +25,23 @@ Run these from your workflow group folder, the folder that holds `workflow_group
 
 `! No workflow group is running.`
 
-**Cause:** CanyonOS commands only look in the folder you run them from. If you're in a
-workflow folder or a sub-folder, or you renamed, moved or deleted the workflow group folder
-after deploying, they can't find the deploy.
+**Cause:** CanyonOS commands find the workflow group from the folder you run them from:
+one of its workflow folders, a folder inside one, or a folder that holds one. From any
+other folder, or after you renamed, moved or deleted a workflow folder, they can't find
+the deploy unless one is picked with `canyonos select-context`.
 
-**Solution:** go to the workflow group folder and run the command again:
+**Solution:** go to a workflow folder of the workflow group and run the command again:
 
 ```bash
-cd <workflow group folder>
+cd <workflow folder>
 canyonos status    # ✓ Workflow group is running.
 ```
 
-- **Renamed or moved the folder?** Move it back, run `canyonos stop`, then move it again.
-- **Deleted the folder?** Run `canyonos stop <workflow group>` from any folder, or
-  `canyonos stop --all`. **Warning:** `--all` stops every workflow group on the machine.
+- **Anywhere else?** `canyonos list` shows the workflow groups; `canyonos select-context
+  <workflow group>` picks the one commands act on.
+- **Renamed, moved or deleted the folder?** Run `canyonos stop <workflow group>` from
+  any folder, or `canyonos stop --all`. **Warning:** `--all` stops every workflow group
+  on the machine.
 
 ### `new-app` won't run in a folder that looks empty
 
@@ -77,8 +80,7 @@ replaces `quit --all`.
 terminal, nobody can answer, so they stop.
 
 **Solution:** run them yourself in a terminal window. In scripts and CI, use
-`canyonos new-app` followed by `cd ..` and `canyonos deploy <name> --workflow-group <name>-group`, which
-don't ask questions.
+`canyonos new-app` followed by `canyonos deploy .`, which don't ask questions.
 
 ## Configuration
 
@@ -225,7 +227,7 @@ dashboard API 3000 → 3001. This is expected.
 `<workflow group>'s Redis is still running, but its certificate authority ... is gone`
 
 **Cause:** on Docker, a workflow group's internal traffic is mutual TLS, signed by a CA kept
-in `~/.canyonos/deployments/<workflow group>/ca/`. That folder was deleted while the
+in `~/.canyonos/workflows/<workflow group>/ca/`. That folder was deleted while the
 workflow group's Redis kept running, and Redis would refuse every certificate a new CA signs.
 
 **Solution:** remove the old Redis as the message says, with
@@ -300,7 +302,7 @@ in your shell aren't passed to them.
 ```bash
 cp .env.example .env
 # edit .env: OPENAI_API_KEY=sk-...   (no quotes, no export)
-canyonos deploy <workflow folder>...    # from the workflow group folder
+canyonos deploy .    # from the workflow folder
 canyonos test "replace_with_your_query"
 ```
 
@@ -459,18 +461,18 @@ docker compose -p canyonos-dashboard stop
 **Warning:** use `stop`, never `down`. `down` deletes the dashboard's data, so the next
 `serve` starts empty.
 
-### A copied workflow group folder doesn't get its own dashboard entry
+### A copied folder deploys as the workflow group it was copied from
 
-`Registered <another workflow group's workflows> with the dashboard`
+`This replaces the workflows of <workflow group>`
 
-**Cause:** the first deploy writes a `workflow_group_id:` line into `workflow_group.yaml`, and
-the dashboard identifies workflow groups by it. A copied folder, or a clone of a repo where
-that file was committed after a deploy, has the same ID, so both workflow groups' data is
-mixed.
+**Cause:** the `workflow_group.yaml` in the folder you deploy from has a
+`workflow_group_id:` line, the ID of a workflow group already recorded on this machine,
+so the deploy acts on that workflow group. A copied folder, or a clone of a repo where
+that file was committed with its ID, has the same ID.
 
-**Solution:** in the copy, delete the `workflow_group_id:` line from `workflow_group.yaml` and
-run `canyonos deploy <workflow folder>...`. The copy gets a new ID and shows up as its
-own workflow group.
+**Solution:** answer no, delete the `workflow_group_id:` line from the copy's
+`workflow_group.yaml`, and run `canyonos deploy <workflow folder>...` again. The copy
+gets a new ID and shows up as its own workflow group.
 
 ### The dashboard sends you back to the sign-in screen
 
@@ -487,7 +489,7 @@ that holds it.
 **Cause:** the password the dashboard holds for the workflow group no longer matches the
 workflow group's Redis.
 
-**Solution:** run `canyonos deploy <workflow folder>...` from the workflow group's folder.
+**Solution:** run `canyonos deploy --workflow-group <workflow group>` from any folder.
 The deploy registers the current password with the dashboard.
 
 ## Kubernetes
@@ -554,7 +556,7 @@ docker rmi canyonos-<folder>-<id>-<workflow>--<database agent name>:latest
 canyonos clean
 ```
 
-### `clean` leaves `~/.canyonos/deployments/<workflow group>/`
+### `clean` leaves `~/.canyonos/workflows/<workflow group>/`
 
 **Cause:** `clean` stops the workflow group first. When that stop fails or is refused,
 `clean` removes nothing.
@@ -567,17 +569,17 @@ canyonos clean
 Start at step 1 and stop at the first step that fixes your problem.
 
 1. **Retry** after checking that `docker info` works.
-2. **Stop the workflow group:** `canyonos stop` in its workflow group folder. Images and
-   dashboard data are kept.
+2. **Stop the workflow group:** `canyonos stop` in one of its workflow folders. Images
+   and dashboard data are kept.
 3. **Stop the dashboard:** `docker compose -p canyonos-dashboard stop`, if `stop` left
    it running. Its data is kept.
 4. **Remove a failed deploy's leftovers:** `docker rm -f` the workflow group's
    `-redis-localhost` and `-metrics-localhost` containers, then `canyonos stop`. Find
    them with `docker ps -a --filter name=canyonos-<folder name>-`.
 5. **Stop everything:** `canyonos stop --all` stops every workflow group on the machine,
-   including ones whose folder is gone, and the dashboard.
-6. **Remove one workflow group:** `canyonos clean` in its workflow group folder also deletes its
-   images and records.
+   including ones whose workflow folders are gone, and the dashboard.
+6. **Remove one workflow group:** `canyonos clean` in one of its workflow folders also
+   deletes its images and its record, settings included.
 7. **Remove CanyonOS completely:** `canyonos clean --all`. **Warning:** this deletes
    every workflow group, the dashboard and its data, all CanyonOS images, and `~/.canyonos`.
    Use it only before uninstalling.

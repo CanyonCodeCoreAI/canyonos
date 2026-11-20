@@ -195,7 +195,10 @@ def test_chat_finds_adds_switches_and_deletes_workflows_and_answers_questions(
         [
             (box, "/rec\t\r"),
             ("Show the result of", "\r"),
-            ("answer  remember this", "/quit\r"),
+            # Typed only once the next box is up: keys sent while the result is
+            # still being shown are lost.
+            ("answer  remember this", ""),
+            (box, "/quit\r"),
         ],
     )
     # Elsewhere it is deleted, refused from a curl that isn't a workflow's, added back

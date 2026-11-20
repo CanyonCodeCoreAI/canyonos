@@ -118,7 +118,8 @@ def run_curl(body_text, route=None, show_command=False):
         return 1
     if not os.path.isfile(deployment_config_path()):
         ui.fail(
-            "No workflow group is selected. Run it from a workflow group's folder, or see "
+            "No workflow group is selected. Run it from one of a workflow group's "
+            "workflow folders, or see "
             "the workflow groups with `canyonos list` and pick one with "
             "`canyonos select-context <workflow group>`."
         )
