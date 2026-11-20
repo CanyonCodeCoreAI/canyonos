@@ -62,6 +62,31 @@ func gaveUp(ctx context.Context, obj client.Object, err error, skipped string) b
 	return true
 }
 
+// projectRedisGoes says whether the project's own Redis is being deleted already: its
+// StatefulSet is gone or being deleted. The operator never deletes it before the
+// project is released, so something else is taking it away -- the namespace's
+// deletion, or a foreground deletion of the project -- and its password Secret with
+// it. There is then nothing to clean in it, and a cleanup would only fail until
+// teardownGiveUp. An external Redis outlives the project and is still cleaned. When
+// the StatefulSet cannot be read, the Redis is cleaned as before: at worst the
+// deletion waits until teardownGiveUp, never forever.
+func projectRedisGoes(ctx context.Context, c client.Reader, project *canyonosv1alpha1.CanyonProject) bool {
+	if project.Spec.Redis.Mode == redisExternal {
+		return false
+	}
+	redis := &appsv1.StatefulSet{}
+	err := c.Get(ctx, client.ObjectKey{Namespace: project.Namespace, Name: builders.RedisName}, redis)
+	if apierrors.IsNotFound(err) {
+		return true
+	}
+	if err != nil {
+		logf.FromContext(ctx).Info("cannot tell whether the project's Redis is being deleted; cleaning it",
+			"error", err.Error())
+		return false
+	}
+	return redis.DeletionTimestamp != nil
+}
+
 // deleteControlled deletes the named object if owner controls it; anything else of
 // that name is not the operator's.
 func deleteControlled(ctx context.Context, c client.Client, owner, obj client.Object, name string) error {
@@ -102,9 +127,11 @@ func (r *CanyonAgentReconciler) finalizeAgent(
 			return ctrl.Result{}, err
 		}
 		present = len(endpoints)
-		if err := r.unrouteAgent(ctx, project, agent, endpoints); err != nil &&
-			!gaveUp(ctx, agent, err, "the agent's Redis keys") {
-			return ctrl.Result{}, err
+		if !projectRedisGoes(ctx, r.Client, project) {
+			if err := r.unrouteAgent(ctx, project, agent, endpoints); err != nil &&
+				!gaveUp(ctx, agent, err, "the agent's Redis keys") {
+				return ctrl.Result{}, err
+			}
 		}
 	}
 	if err := deleteControlled(ctx, r.Client, agent, &appsv1.StatefulSet{}, agent.Name); err != nil {
@@ -184,8 +211,11 @@ func (r *CanyonProjectReconciler) finalizeProject(
 	}
 
 	// An external Redis outlives the project: leave none of the operator's keys in it.
-	if err := r.cleanProjectRedis(ctx, project); err != nil && !gaveUp(ctx, project, err, "the endpoint's Redis keys") {
-		return ctrl.Result{}, err
+	if !projectRedisGoes(ctx, r.Client, project) {
+		if err := r.cleanProjectRedis(ctx, project); err != nil &&
+			!gaveUp(ctx, project, err, "the endpoint's Redis keys") {
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{}, releaseFinalizer(ctx, r.Client, project)
 }

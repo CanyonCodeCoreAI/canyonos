@@ -544,6 +544,27 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
+	It("releases a deleted project at once when its own Redis is being deleted", func() {
+		createProject(nil)
+		reconcileProject()
+		markRedisReady()
+		reconcileProject()
+		project := &canyonosv1alpha1.CanyonProject{}
+		get(project, testProjectName)
+		redisBeingDeleted(namespace)
+
+		// A namespace's deletion takes the Redis password Secret away too: every login fails.
+		deleting := reconciler()
+		deleting.RedisFor = func(context.Context, *canyonosv1alpha1.CanyonProject) (redis.Cmdable, error) {
+			return nil, fmt.Errorf("the Redis password Secret %s/canyonos-redis does not exist", namespace)
+		}
+		Expect(k8sClient.Delete(ctx, project)).To(Succeed())
+		_, err := deleting.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(project)})
+		Expect(err).NotTo(HaveOccurred())
+		err = k8sClient.Get(ctx, client.ObjectKeyFromObject(project), &canyonosv1alpha1.CanyonProject{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
 	It("deletes Redis's disk with the project", func() {
 		createProject(nil)
 		reconcileProject()

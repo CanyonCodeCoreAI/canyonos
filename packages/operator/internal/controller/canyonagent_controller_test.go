@@ -30,6 +30,17 @@ import (
 // testContainer names the container of pods the tests create by hand.
 const testContainer = "agent"
 
+// redisBeingDeleted puts the project's own Redis StatefulSet in namespace in the state
+// a namespace's deletion leaves it in: being deleted. A finalizer of the test's keeps
+// it there, as envtest has no garbage collector to finish it.
+func redisBeingDeleted(namespace string) {
+	redis := &appsv1.StatefulSet{}
+	Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: builders.RedisName}, redis)).To(Succeed())
+	redis.Finalizers = append(redis.Finalizers, "test.canyonos.canyoncode.ai/hold")
+	Expect(k8sClient.Update(ctx, redis)).To(Succeed())
+	Expect(k8sClient.Delete(ctx, redis)).To(Succeed())
+}
+
 var _ = Describe("CanyonAgent controller", func() {
 	ctx := context.Background()
 	var namespace string
@@ -65,6 +76,8 @@ var _ = Describe("CanyonAgent controller", func() {
 		if redisReady {
 			setCondition(&project.Status.Conditions, project.Generation, ConditionRedisReady, true, "", "")
 			Expect(k8sClient.Status().Update(ctx, project)).To(Succeed())
+			// A ready Redis has its StatefulSet, as the project controller makes it.
+			Expect(k8sClient.Create(ctx, builders.RedisStatefulSet(project, "redis:test", "1"))).To(Succeed())
 		}
 	}
 
@@ -309,6 +322,43 @@ var _ = Describe("CanyonAgent controller", func() {
 		Expect(rdb.Exists(ctx, status).Val()).To(BeZero())
 		err = k8sClient.Get(ctx, client.ObjectKeyFromObject(agent), &canyonosv1alpha1.CanyonAgent{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	// A namespace's deletion takes the Redis password Secret away too: every login fails.
+	loginFails := RedisFor(func(context.Context, *canyonosv1alpha1.CanyonProject) (redis.Cmdable, error) {
+		return nil, fmt.Errorf("the Redis password Secret %s/canyonos-redis does not exist", namespace)
+	})
+
+	It("releases a deleted agent at once when the project's own Redis is being deleted", func() {
+		createProject(true)
+		createAgent(nil)
+		agent := reconcileAgent(testAgentName)
+		reconciler.RedisFor = loginFails
+		redisBeingDeleted(namespace)
+
+		Expect(k8sClient.Delete(ctx, agent)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)})
+		Expect(err).NotTo(HaveOccurred())
+		err = k8sClient.Get(ctx, client.ObjectKeyFromObject(agent), &canyonosv1alpha1.CanyonAgent{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("still cleans an external Redis, which outlives the project", func() {
+		project := validProject(testProjectName)
+		project.Namespace = namespace
+		project.Spec.Redis.Mode = redisExternal
+		project.Spec.Redis.Host = "redis.example.internal"
+		Expect(k8sClient.Create(ctx, project)).To(Succeed())
+		setCondition(&project.Status.Conditions, project.Generation, ConditionRedisReady, true, "", "")
+		Expect(k8sClient.Status().Update(ctx, project)).To(Succeed())
+		createAgent(nil)
+		agent := reconcileAgent(testAgentName)
+		reconciler.RedisFor = loginFails
+
+		Expect(k8sClient.Delete(ctx, agent)).To(Succeed())
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(agent)})
+		Expect(err).To(MatchError(ContainSubstring("does not exist")))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(agent), &canyonosv1alpha1.CanyonAgent{})).To(Succeed())
 	})
 
 	It("deleting a wrongly named CanyonAgent leaves the real one alone", func() {
