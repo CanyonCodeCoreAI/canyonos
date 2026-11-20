@@ -339,10 +339,11 @@ def _install_networking():
 
 
 def _install_canyonos(name, version, api_key_hash):
-    """This release's chart, its CRDs applied first (Helm never upgrades them), and
-    Helm waiting until the operator, the builder and the dashboard are ready. The
-    dashboard takes the API key whose hash is `api_key_hash`: the chart lets users
-    port-forward to the cluster's CanyonOS API only when its dashboard has a key."""
+    """This release's chart, its CRDs with it, and Helm waiting until the operator, the
+    builder and the dashboard are ready. --take-ownership: a cluster made by a CLI up to
+    0.2.x has the CRDs already, outside the Helm release. The dashboard takes the API
+    key whose hash is `api_key_hash`: the chart lets users port-forward to the cluster's
+    CanyonOS API only when its dashboard has a key."""
     with tempfile.TemporaryDirectory() as tmp:
         kubeconfig = Path(tmp) / "config"
         kubeconfig.write_text(
@@ -351,17 +352,10 @@ def _install_canyonos(name, version, api_key_hash):
         )
         helm = ["docker", "run", "--rm", "--network", "kind",
                 "-v", f"{tmp}:/kube:ro", "-e", "KUBECONFIG=/kube/config", HELM_IMAGE]  # fmt: skip
-        crds = _run(
-            [*helm, "show", "crds", CHART, "--version", version],
-            what=f"Reading the CanyonOS {version} chart (is {version} published?)",
-        ).stdout
-        kubectl(
-            ["apply", "--server-side", "--force-conflicts", "-f", "-"], input_text=crds
-        )
         _run(
             [*helm, "upgrade", "--install", "canyonos", CHART, "--version", version,
-             "--namespace", NAMESPACE, "--create-namespace", *KIND_VALUES,
-             "--set", f"dashboard.apiKeyHash={api_key_hash}",
+             "--namespace", NAMESPACE, "--create-namespace", "--take-ownership",
+             *KIND_VALUES, "--set", f"dashboard.apiKeyHash={api_key_hash}",
              "--wait", "--timeout", "10m"],
             timeout=900,
             what=f"Installing CanyonOS {version}",

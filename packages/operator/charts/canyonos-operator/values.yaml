@@ -34,9 +34,20 @@ controllerImage: ""
 # the operator's default.
 redisImage: ""
 
-# Empty: the operator runs projects in any namespace (cluster-wide permissions).
-# A list: only in these namespaces, with its permissions granted in them alone.
+# One operator serves the whole cluster (a second install is refused), one project per
+# namespace. Empty: it runs projects in any namespace (cluster-wide permissions).
+# A list: only in these namespaces, with its permissions granted in them alone; add a
+# namespace with `helm upgrade`.
 watchNamespaces: []
+
+# CanyonOS's CRDs (CanyonProject, CanyonAgent, CanyonBuild): installed and upgraded with
+# the chart, and never deleted by it, not even by `helm uninstall`, since deleting a CRD
+# deletes every project in the cluster. false where the cluster's administrators apply
+# CRDs themselves: then apply each release's before installing or upgrading it,
+#   helm pull <chart> --version <version> --untar \
+#     && kubectl apply --server-side -f canyonos-operator/files/crds/
+crds:
+  enabled: true
 
 replicas: 1        # more than one only adds standbys: leader election picks one
 

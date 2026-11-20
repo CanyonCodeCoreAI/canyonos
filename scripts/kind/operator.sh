@@ -15,8 +15,11 @@
 #
 # Usage: scripts/kind/operator.sh [--version X.Y.Z]
 # Environment:
-#   CANYONOS_KIND_CLUSTER  The cluster's name (default canyonos).
-#   CANYONOS_API_KEY       The dashboard's API key, instead of ~/.canyonos/api_key.
+#   CANYONOS_KIND_CLUSTER       The cluster's name (default canyonos).
+#   CANYONOS_API_KEY            The dashboard's API key, instead of ~/.canyonos/api_key.
+#   CANYONOS_KIND_REUSE_VALUES  1: upgrade with --reset-then-reuse-values, as the
+#                               Kubernetes guide upgrades: the settings the installed
+#                               release was given, on this chart's own defaults.
 # Needs docker, kind and kubectl; helm runs in a container.
 set -euo pipefail
 # Git Bash on Windows rewrites /... arguments into Windows paths.
@@ -100,12 +103,16 @@ kind_values=(
 
 if [ -n "${version}" ]; then
   log "CanyonOS ${version}, as published"
-  # Helm installs crds/ once and never upgrades them: apply the release's first. The
-  # chart's images default to the release's own.
-  helm show crds "${RELEASED_CHART}" --version "${version}" \
-    | cluster_kubectl apply --server-side --force-conflicts -f - >/dev/null
+  # Releases up to 0.2.x keep their CRDs in crds/, which Helm installs once and never
+  # upgrades: apply those first. Later ones render them as templates, and show none.
+  crds="$(helm show crds "${RELEASED_CHART}" --version "${version}")"
+  if [ -n "${crds}" ]; then
+    printf '%s\n' "${crds}" | cluster_kubectl apply --server-side --force-conflicts -f - >/dev/null
+  fi
+  # The chart's images default to the release's own. --take-ownership: CRDs a release up
+  # to 0.2.x left outside the Helm release join it.
   helm upgrade --install canyonos "${RELEASED_CHART}" --version "${version}" \
-    --namespace "${NAMESPACE}" --create-namespace "${kind_values[@]}" \
+    --namespace "${NAMESPACE}" --create-namespace --take-ownership "${kind_values[@]}" \
     --wait --timeout 10m >/dev/null
   echo "operator, builder and dashboard ${version} installed in ${NAMESPACE}"
   exit 0
@@ -142,12 +149,13 @@ web="$(pushed web)"
 printf '%s\n' "${operator}" "${core}" "${api}" "${web}"
 
 log "CanyonOS from this checkout"
-# Helm installs crds/ once and never upgrades them: apply them first, taking them over
-# from Helm, which installed them.
-cluster_kubectl apply --server-side --force-conflicts \
-  -f "${REPO}/packages/operator/charts/canyonos-operator/crds/" >/dev/null
+# The chart installs and upgrades the CRDs. --take-ownership: a cluster that ran a
+# release up to 0.2.x has them already, outside the Helm release.
+reuse=()
+[ "${CANYONOS_KIND_REUSE_VALUES:-}" = 1 ] && reuse=(--reset-then-reuse-values)
 helm upgrade --install canyonos /charts/canyonos-operator \
-  --namespace "${NAMESPACE}" --create-namespace "${kind_values[@]}" \
+  --namespace "${NAMESPACE}" --create-namespace --take-ownership \
+  ${reuse[@]+"${reuse[@]}"} "${kind_values[@]}" \
   --set image.repository="${operator%:*}" --set image.tag="${operator##*:}" \
   --set controllerImage="${core}" \
   --set dashboard.apiImage="${api}" \

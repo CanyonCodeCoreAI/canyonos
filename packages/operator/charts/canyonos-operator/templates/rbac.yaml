@@ -3,6 +3,21 @@
 
 # What the operator may do: the rules `make manifests` generates from its code into
 # files/role.yaml.
+{{- /* One operator per cluster: it runs projects in any number of namespaces
+(watchNamespaces), and the CRDs, the builder, the dashboard and the user roles are the
+cluster's. So an install other than the one this role belongs to stops here, saying
+so, before Helm applies anything. lookup finds nothing when the chart is rendered
+without a cluster (helm template), which is not checked. */}}
+{{- with lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" "canyonos-manager-role" }}
+{{- $annotations := .metadata.annotations | default dict }}
+{{- $release := index $annotations "meta.helm.sh/release-name" | default "" }}
+{{- $namespace := index $annotations "meta.helm.sh/release-namespace" | default "" }}
+{{- if not $release }}
+{{- fail "CanyonOS's operator is already installed in this cluster, though not by Helm (the ClusterRole canyonos-manager-role exists). One operator serves the whole cluster: run projects through that one, or remove it before installing this chart." }}
+{{- else if or (ne $release $.Release.Name) (ne $namespace $.Release.Namespace) }}
+{{- fail (printf "CanyonOS's operator is already installed in this cluster: Helm release %q in namespace %q. One operator serves the whole cluster: to run projects in more namespaces, add them to that release's watchNamespaces (empty: every namespace) and upgrade it." $release $namespace) }}
+{{- end }}
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

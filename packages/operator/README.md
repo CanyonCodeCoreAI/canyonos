@@ -17,8 +17,9 @@ both alike.
 - `internal/builders/`: the Kubernetes objects each resource becomes, as pure functions.
 - `internal/redisstate/`: the Redis records and routing table the operator writes.
   Their format is recorded in `testdata/contract.json`, for reference.
-- `charts/canyonos-operator/`: the Helm chart. Its `crds/` and `files/` (the manager's
-  RBAC role) are generated from the Go types and markers.
+- `charts/canyonos-operator/`: the Helm chart. Its `files/` (the CRDs, which
+  `templates/crds.yaml` renders so `helm upgrade` upgrades them, and the manager's RBAC
+  role) are generated from the Go types and markers.
 
 How it works: [Operator](../../docs/architecture/OPERATOR.md). How to use it:
 [Kubernetes deployment](../../docs/guides/KUBERNETES.md).

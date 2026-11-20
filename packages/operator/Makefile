@@ -44,7 +44,7 @@ CHART ?= charts/canyonos-operator
 
 .PHONY: manifests
 manifests: controller-gen ## Generate the CRDs and the manager's RBAC role into the Helm chart.
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd paths="./..." 		output:crd:artifacts:config=$(CHART)/crds output:rbac:artifacts:config=$(CHART)/files
+	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd paths="./..." 		output:crd:artifacts:config=$(CHART)/files/crds output:rbac:artifacts:config=$(CHART)/files
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

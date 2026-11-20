@@ -55,7 +55,7 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "charts", "canyonos-operator", "crds")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "charts", "canyonos-operator", "files", "crds")},
 		ErrorIfCRDPathMissing: true,
 	}
 

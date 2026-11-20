@@ -106,6 +106,14 @@ jobs:
             echo "the chart rendered with no dashboard.apiKeyHash"; exit 1
           fi
           grep -q "dashboard.apiKeyHash is required" /tmp/no-key.txt || { cat /tmp/no-key.txt; exit 1; }
+          # Every CRD is rendered, and kept by Helm (never deleted, not even on
+          # uninstall); with crds.enabled=false, none is.
+          crds="$(ls canyonos-operator/files/crds/*.yaml | wc -l)"
+          helm template t canyonos-operator --set "${KEY}" --show-only templates/crds.yaml > /tmp/crds.yaml
+          [ "$(grep -c '^kind: CustomResourceDefinition$' /tmp/crds.yaml)" = "${crds}" ]
+          [ "$(grep -c '^    helm.sh/resource-policy: keep$' /tmp/crds.yaml)" = "${crds}" ]
+          helm template t canyonos-operator --set "${KEY}" --set crds.enabled=false > /tmp/no-crds.yaml
+          if grep -q 'kind: CustomResourceDefinition' /tmp/no-crds.yaml; then exit 1; fi
 
       # Each pod setting reaches the pods it is for (the operator, the builder, and the
       # dashboard's db, api and web), and podLabels never replace the chart's own labels.

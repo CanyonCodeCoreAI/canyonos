@@ -35,7 +35,6 @@ path = [
   "packages/sdk/src/schema.ts",
   "packages/cli/canyonos/sdk/models.py",
   # Kubernetes YAML that controller-gen regenerates, and Go module files.
-  "packages/operator/charts/*/crds/**",
   "packages/operator/charts/*/files/**",
   "packages/operator/PROJECT",
   "packages/operator/go.mod",

@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# CanyonProject, CanyonAgent and CanyonBuild, from files/crds/ (which `make manifests`
+# generates). Not in the chart's crds/ folder, which Helm installs once and never
+# upgrades: rendered here, each `helm upgrade` brings its release's schema, so the API
+# server keeps the fields the release adds.
+#
+# Helm never deletes them (resource-policy keep), on `helm uninstall` or otherwise:
+# deleting a CRD deletes every object of its kind, so every project in the cluster.
+#
+# crds.enabled=false leaves them to the cluster's administrators, and the install then
+# checks they are there. Missing (an upgrade with --reuse-values from a release before
+# the value): true.
+{{- $enabled := dig "crds" "enabled" true .Values.AsMap }}
+{{- /* lookup finds nothing when the chart is rendered without a cluster (helm template). */}}
+{{- $cluster := lookup "v1" "Namespace" "" "kube-system" }}
+{{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- if $enabled }}
+{{- $annotations := $crd.metadata.annotations | default dict }}
+{{- $_ := set $annotations "helm.sh/resource-policy" "keep" }}
+{{- $_ := set $crd.metadata "annotations" $annotations }}
+{{- $_ := set $crd.metadata "labels" (include "canyonos.labels" $ | fromYaml) }}
+---
+{{ toYaml $crd }}
+{{- else if and $cluster (not (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $crd.metadata.name)) }}
+{{- fail (printf "crds.enabled is false, but the cluster has no CRD %s. Apply this release's CRDs first: helm pull oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator --version %s --untar && kubectl apply --server-side -f canyonos-operator/files/crds/" $crd.metadata.name $.Chart.Version) }}
+{{- end }}
+{{- end }}
