@@ -15,7 +15,13 @@ from flask import Flask, jsonify, request
 from canyonos_core.llm_gateway.config import Config
 from canyonos_core.llm_gateway import routing
 from canyonos_core.llm_gateway.core import proxy_request
-from canyonos_core.llm_gateway.hooks import UPSTREAM_HEADER, Hooks
+from canyonos_core.llm_gateway.hooks import (
+    AGENT_HEADER,
+    FUTURE_ID_HEADER,
+    FUTURE_ROUTE,
+    UPSTREAM_HEADER,
+    Hooks,
+)
 from canyonos_core.llm_gateway.providers import build_registry
 
 log = logging.getLogger("llm_gateway")
@@ -75,5 +81,19 @@ def create_app(cfg: Config | None = None) -> Flask:
             return jsonify(
                 error={"message": str(exc), "type": "gateway_error"}, message=str(exc)
             ), 502
+
+    @app.route(
+        f"/{FUTURE_ROUTE}/<future_id>/<agent>/<provider>/<path:subpath>",
+        methods=ALL_METHODS,
+    )
+    def dispatch_for_future(future_id, agent, provider, subpath):
+        """A call whose path names its future and agent: a Bedrock call from a child
+        process started during that future, since boto3 reaches the gateway directly,
+        not through the proxy. The agent still counts only if this replica runs it."""
+        for header, value in ((FUTURE_ID_HEADER, future_id), (AGENT_HEADER, agent)):
+            request.environ.setdefault(
+                "HTTP_" + header.upper().replace("-", "_"), value
+            )
+        return dispatch(provider, subpath)
 
     return app

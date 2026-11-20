@@ -28,6 +28,10 @@ except ImportError:
 log = logging.getLogger("llm_gateway")
 
 FUTURE_ID_HEADER = "x-canyonos-future-id"
+# The gateway path prefix /future/<id>/<agent>/ that sets FUTURE_ID_HEADER and
+# AGENT_HEADER, for a child process's Bedrock calls, which reach the gateway directly,
+# not through the proxy.
+FUTURE_ROUTE = "future"
 # The agent function making the call, so the gateway can pick its prompt.
 FUNCTION_HEADER = "x-canyonos-function"
 # The agent making the call, for its prompts, LLM access and governance rules.
