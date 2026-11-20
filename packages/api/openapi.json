@@ -3,7 +3,7 @@
   "info": {
     "title": "CanyonOS API",
     "description": "With CANYONOS_API_KEY_HASH set, every /workflows and /resources route, and /auth/check, needs the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /readyz says when the API is ready. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.",
-    "version": "0.2.3-dev2"
+    "version": "0.2.3-dev3"
   },
   "tags": [
     {
