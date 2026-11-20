@@ -6,7 +6,10 @@ the reload applied, with no redeploy: one more replica of an agent starts while 
 other replica keep running. An agent whose new replica cannot start is named in
 `canyonos status` with the reason, its last launch error. `sync --json` names every
 problem with a config the deploy rejects. `canyonos test` queries the deploy a sync
-changed. Each case puts the config back as it was, comments and all, and syncs it."""
+changed. The config a sync uploads is the one the workflow group's record keeps for the
+workflow since its first deploy, which is the one the cases edit: a change made only in
+the workflow folder's `config/` is not uploaded, and the sync says so. Each case puts
+the config back as it was, comments and all, and syncs it."""
 
 import contextlib
 import re
@@ -22,6 +25,7 @@ from ..harness import (
     docker_name,
     manifest,
     poll,
+    workflow_config_dir,
     workflow_group_containers,
     workflow_root,
     qualified,
@@ -35,7 +39,8 @@ UNSCHEDULABLE_CPUS = 999
 
 
 def _config(deployed):
-    return workflow_root(deployed.workflow_dir) / "config" / "workflow_config.yaml"
+    """The deployed workflow's config, the one its workflow group's record keeps."""
+    return workflow_config_dir(deployed.workflow_dir) / "workflow_config.yaml"
 
 
 def _scaled_agent(deployed):
@@ -230,3 +235,34 @@ def test_canyonos_test_runs_on_a_synced_config(recorder, deployed, check):
             )
         )
         assert not problems, "\n".join(problems)
+
+
+def test_sync_leaves_out_a_change_made_in_the_workflow_folder(recorder, deployed):
+    """The workflow folder's `config/` was copied into the record on the first deploy;
+    an agent scaled there alone is not what a sync uploads, so the sync changes
+    nothing and names the config it deployed instead. Without `--json`, which keeps
+    warnings off its output."""
+    folder_config = workflow_root(deployed.workflow_dir) / "config"
+    assert _config(deployed).is_file()
+    path = folder_config / "workflow_config.yaml"
+    original = path.read_text()
+    agent = _scaled_agent(deployed)
+    desired, _, _ = agent_status(recorder, deployed, agent)
+    path.write_text(_edit_agent(deployed, original, agent, replicas=desired + 1))
+    try:
+        call = canyonos(
+            recorder,
+            ["sync", str(deployed.workflow_dir)],
+            cwd=deployed.dir,
+            timeout=300,
+        )
+    finally:
+        path.write_text(original)
+    shown = " ".join(call.output.split())
+    assert "Nothing changed." in shown, call.output
+    expected = (
+        f"{folder_config} changed since {_config(deployed).parent.parent.name} was "
+        f"first deployed, so it is not deployed: {_config(deployed).parent} is"
+    )
+    assert expected in shown, call.output
+    assert agent_status(recorder, deployed, agent)[0] == desired

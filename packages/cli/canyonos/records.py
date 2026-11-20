@@ -3,8 +3,8 @@
 
 """
 The record of each workflow group on this machine: `~/.canyonos/workflows/<workflow
-group>/`, which holds its `workflow_group.yaml`, the state of its last deploy and its
-CA. `canyonos deploy` reads and writes the workflow group's settings there, never in the
+group>/`, which holds its `workflow_group.yaml`, each workflow's `<workflow>/config/`,
+the state of its last deploy and its CA. `canyonos deploy` reads and writes the workflow group's settings there, never in the
 folder it runs from, so a workflow group is redeployed from any folder.
 
 A workflow group is a name: `--workflow-group <name>` deploys into the recorded one of
@@ -14,10 +14,15 @@ it is given: the record whose `workflows:` lists exactly those folders, by absol
 path; else it makes one named after them. A new record starts from the
 `workflow_group.yaml` of the folder the deploy runs from when there is one.
 
+A workflow's `config/` is copied into the record on its first deploy, and the record's
+copy is deployed from then on, with the code in the workflow's folder. `validate` and
+`convert` still work on the folder.
+
 Every command then runs from the record's folder (`enter`), as if typed there; the
 folders it was given are absolute by then.
 """
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -29,6 +34,7 @@ from canyonos.constants import (
     load_yaml,
     read_config,
     round_trip_yaml,
+    workflow_folder,
     write_config,
 )
 from canyonos.usage.consent import is_interactive
@@ -333,3 +339,75 @@ def enter_for_command(selected):
     if picked is not None:
         enter(picked)
     return picked
+
+
+def workflow_config_dir(name):
+    """The `config/` the record of the workflow group this command acts on keeps for its
+    workflow `name`: the one a deploy uploads, whether or not it is there yet."""
+    return os.path.join(deployment.state_dir(), name, "config")
+
+
+def import_workflow_configs(workflows, prune=True):
+    """Give each of `workflows` (name to folder) its `config/` in the record, copied
+    from the workflow's own folder until a deploy of it has gone through
+    (`mark_deployed`); from then on the record's copy is the one deployed, and a
+    folder `config/` changed since is only reported. With `prune`, remove the copies
+    of workflows the workflow group no longer has."""
+    for name, folder in workflows.items():
+        source = os.path.join(workflow_folder(folder), "config")
+        kept = workflow_config_dir(name)
+        stamp = _stamp_path(name)
+        if not os.path.isfile(stamp) and os.path.isdir(source):
+            shutil.rmtree(kept, ignore_errors=True)
+            shutil.copytree(source, kept)
+            ui.note(f"{name}'s config now lives in {kept}; edit it there.")
+        elif os.path.isdir(source) and _read(stamp) != _fingerprint(source):
+            ui.warn(
+                f"{source} changed since {name} was first deployed, so it is not "
+                f"deployed: {kept} is. Edit that one."
+            )
+    if not prune:
+        return
+    for entry in os.listdir(deployment.state_dir()):
+        config = os.path.join(deployment.state_dir(), entry, "config")
+        if entry not in workflows and os.path.isdir(config):
+            shutil.rmtree(os.path.join(deployment.state_dir(), entry))
+
+
+def mark_deployed(workflows):
+    """Note that `workflows` (name to folder) deployed with their record's `config/`,
+    so it is no longer replaced from their folders: keep the fingerprint of each
+    folder's `config/` as it is now, the one later changes are told against."""
+    for name, folder in workflows.items():
+        stamp = _stamp_path(name)
+        if os.path.isfile(stamp):
+            continue
+        source = os.path.join(workflow_folder(folder), "config")
+        with open(stamp, "w", encoding="utf-8") as f:
+            f.write(_fingerprint(source) if os.path.isdir(source) else "")
+
+
+def _stamp_path(name):
+    """Where the record keeps the fingerprint of workflow `name`'s folder `config/`
+    as of its first deploy."""
+    return os.path.join(
+        os.path.dirname(workflow_config_dir(name)), "deployed-from.sha256"
+    )
+
+
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _fingerprint(folder):
+    """A SHA-256 of every file under `folder`, by its path in it."""
+    digest = hashlib.sha256()
+    for directory, dirnames, filenames in sorted(os.walk(folder)):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            path = os.path.join(directory, filename)
+            digest.update(os.path.relpath(path, folder).encode() + b"\0")
+            with open(path, "rb") as f:
+                digest.update(f.read() + b"\0")
+    return digest.hexdigest()

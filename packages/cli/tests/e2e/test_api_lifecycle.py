@@ -34,6 +34,7 @@ from .harness import (
     needs_a_runtime,
     run_ok,
     runtime_environment,
+    workflow_config_dir,
     workflow_group_id,
 )
 
@@ -160,12 +161,13 @@ def test_stop_brings_back_a_removed_api_and_stops_the_deploy(deployed_workflow):
 
 @needs_a_runtime
 def test_sync_goes_through_a_recreated_api(deployed_workflow):
-    """A config change synced while the API's container is gone reaches the deploy
-    through the API `canyonos sync` makes again, which knows the workflow group from
-    what it stored."""
+    """A config change, made in the config the workflow group's record keeps for the
+    workflow, synced while the API's container is gone reaches the deploy through the
+    API `canyonos sync` makes again, which knows the workflow group from what it
+    stored."""
     case, folder = deployed_workflow
     deploy_starter(case, folder)
-    config = folder / STARTER / "config" / "workflow_config.yaml"
+    config = workflow_config_dir(case, folder / STARTER) / "workflow_config.yaml"
     manifest = yaml.safe_load(config.read_text())
     [hello] = [agent for agent in manifest["agents"] if agent["name"] == "HelloAgent"]
     hello["replicas"] = 2

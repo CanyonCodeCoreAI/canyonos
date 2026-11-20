@@ -621,6 +621,23 @@ def workflow_group_record(case: CliCase, folder: Path) -> Path:
     return found[0]
 
 
+def workflow_config_dir(case: CliCase, folder: Path) -> Path:
+    """The `config/` the record of the workflow folder `folder`'s workflow group keeps
+    for its workflow, `<record>/<workflow>/config/`: copied from the folder on the
+    workflow's first deploy, it is the config every deploy and sync uploads from then
+    on, so a case that changes a deployed workflow's config edits this one."""
+    record = workflow_group_record(case, folder)
+    workflows = yaml.safe_load((record / "workflow_group.yaml").read_text())[
+        "workflows"
+    ]
+    [name] = [
+        name
+        for name, entry in workflows.items()
+        if Path(entry["path"]).resolve() == folder.resolve()
+    ]
+    return record / name / "config"
+
+
 def workflow_group_id(case: CliCase, folder: Path) -> str:
     """The `workflow_group_id` of the workflow group deployed from `folder`, from its
     record."""

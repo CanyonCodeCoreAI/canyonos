@@ -37,7 +37,7 @@ canyonos deploy . --api-key <your api key>
 
 The first deploy makes the workflow group's record, `~/.canyonos/workflows/<workflow
 group>/`, with its `workflow_group.yaml`, starting from the one in the folder it runs
-from when there is one. Run the other commands, a redeploy included, from the workflow
+from when there is one, and a copy of each workflow's `config/`. Run the other commands, a redeploy included, from the workflow
 folder: `canyonos deploy .`. From any folder, `canyonos deploy --workflow-group
 <workflow group>` redeploys it.
 
@@ -106,8 +106,8 @@ The [dashboard](DASHBOARD.md) shows each request, its traces, logs, errors and c
 ## Change it
 
 The deploy runs from a copy of the workflow, so an edit changes nothing until you apply
-it: `canyonos sync .` from the workflow folder for files in `config/`, `canyonos deploy`
-for code and `.env`. See [Apply a change](CONFIGURE.md#apply-a-change).
+it: `canyonos sync .` from the workflow folder for files in the record's `config/`
+(the folder's is no longer read), `canyonos deploy` for code and `.env`. See [Apply a change](CONFIGURE.md#apply-a-change).
 
 ## Stop
 

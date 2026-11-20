@@ -6,7 +6,8 @@ runs the `replicas` count set in the workflow config.
 
 ## Define the policy in a file
 
-Create `scaling.yaml` in the workflow's `config` folder:
+Create `scaling.yaml` in the workflow's `config` folder, or in its copy in the workflow
+group's record once the workflow is deployed (see [Configure](CONFIGURE.md)):
 
 ```yaml
 scaling:
@@ -74,7 +75,8 @@ stored policy is invalid, the page says why.
 
 - Dashboard edits are not written back to `scaling.yaml`. On the next reload, from
   `canyonos sync` (Docker only) or a deploy, the Global Controller publishes the file again and
-  dashboard edits are lost. Copy any change you want to keep into `scaling.yaml`.
+  dashboard edits are lost. Copy any change you want to keep into the record's
+  `scaling.yaml`.
 - On Docker and EC2, a reload or deploy also sets every agent back to the `replicas`
   count in the workflow config, and scaling starts again from there. On Kubernetes, a
   redeploy keeps each agent's live count; see

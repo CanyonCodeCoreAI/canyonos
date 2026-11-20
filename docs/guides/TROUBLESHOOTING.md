@@ -122,8 +122,11 @@ started.
 
 **Solution:**
 
-- **For `workflow_config.yaml`:** fix the line the message names, then run
-  `canyonos validate <workflow folder>` until it prints `✓ <workflow folder>: clean.`
+- **For `workflow_config.yaml`:** fix the line the message names. Once the workflow
+  has been deployed, the file is its copy in the workflow group's record,
+  `~/.canyonos/workflows/<workflow group>/<workflow>/config/` (see
+  [Configure](CONFIGURE.md)). Before that, run `canyonos validate <workflow folder>`
+  until it prints `✓ <workflow folder>: clean.`
 - **For `.env`:** use plain lines, with comments on their own line:
 
   ```
@@ -133,7 +136,7 @@ started.
 
 Then run `canyonos deploy <workflow folder>...`. `sync` doesn't apply `.env` changes.
 Paths starting with `/workspace/<workflow>/` in the messages are the same files as in
-that workflow's folder.
+that workflow's folder, but for `config/`, which is the record's.
 
 ### Prompt edits in `prompts.yaml` don't apply
 
@@ -158,7 +161,7 @@ Redis and metrics containers running, and `stop` doesn't remove them.
 **Solution:**
 
 1. Fix the original error. For a missing package, list it under the agent in
-   `config/workflow_config.yaml`:
+   the record's `config/workflow_config.yaml`:
 
    ```yaml
    - name: MyAgent
@@ -320,7 +323,7 @@ canyonos test "replace_with_your_query"
 
 **Solution:** read the traceback in the agent's log, fix the line it names, then run
 `canyonos deploy <workflow folder>...`. Code changes need a full deploy; `sync` only
-applies `config/`.
+applies the record's `config/`.
 
 ```bash
 canyonos logs <workflow>.MyAgent --no-follow --tail 50
@@ -342,16 +345,16 @@ docker events --since 10m --until 0s --filter event=oom --format '{{.Time}} {{.A
 ```
 
 If the agent is listed, raise `memory:` (in MB) in its `resources:` block in
-`config/workflow_config.yaml`, for example `memory: 2048`, and run
+the record's `config/workflow_config.yaml`, for example `memory: 2048`, and run
 `canyonos deploy <workflow folder>...`.
 
 ### Model calls are blocked by policy (HTTP 403)
 
 `canyonos denied: <agent> is not allowed to use <model>` or `over its $<n> per-request cap`
 
-**Cause:** in `config/llms.yaml`, a model with an `agents:` list allows only those
-agents, each with a maximum cost per call. The cost is estimated from the request's
-`max_tokens`. The call never reaches the provider.
+**Cause:** in the record's `config/llms.yaml`, a model with an `agents:` list allows
+only those agents, each with a maximum cost per call. The cost is estimated from the
+request's `max_tokens`. The call never reaches the provider.
 
 **Solution:** add the agent to the model's `agents:` list with a high enough cap, or
 lower `max_tokens`. Run `canyonos sync <workflow folder>`, then **wait about 5 seconds**
@@ -409,7 +412,7 @@ the result as its declared type. See
 with no `returns` type.
 
 **Solution:** use the result without `.value()`, and declare `returns` for the function
-under `functions` in `config/workflow_config.yaml`.
+under `functions` in the record's `config/workflow_config.yaml`.
 
 ### Calls to several agents run one at a time
 
@@ -505,7 +508,7 @@ enough for all of them. Workflows with many agents hit this first.
 
 **Solution:** stop other workflow groups, raise Docker Desktop's memory
 (**Settings → Resources**), or lower `memory:` for your agents in
-`config/workflow_config.yaml` to fit your hardware. Then redeploy:
+the record's `config/workflow_config.yaml` to fit your hardware. Then redeploy:
 
 ```bash
 canyonos stop

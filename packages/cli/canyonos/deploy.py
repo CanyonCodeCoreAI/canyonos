@@ -29,7 +29,7 @@ import uuid
 from rich.panel import Panel
 from rich.text import Text
 
-from canyonos import deployment, internal_ca, ui
+from canyonos import deployment, internal_ca, records, ui
 from canyonos.auth import (
     curl_auth,
     gc_env,
@@ -45,7 +45,6 @@ from canyonos.constants import (
     read_config,
     round_trip_yaml,
     workflow_config_path,
-    workflow_folder,
     write_config,
 )
 from canyonos.api import ApiError, controller_log, deploy_status
@@ -167,9 +166,10 @@ def run_deploy(
 
     save_deployment_config(config_path)
     deployment.save_workflows(config_path, workflows, ids)
+    records.import_workflow_configs(workflows)
     workflow_configs = {
-        name: workflow_config_path(workflow_folder(folder))
-        for name, folder in workflows.items()
+        name: workflow_config_path(os.path.dirname(records.workflow_config_dir(name)))
+        for name in workflows
     }
     if not configure_resources(workflow_configs, config_path, ask=not yes):
         ui.say("Deploy cancelled.")
@@ -193,6 +193,7 @@ def run_deploy(
     # Upload the workflow group into the container before building/deploying.
     if not run_sync(workflows, api_key_hash=hash_api_key(key)):
         raise RuntimeError("Could not sync the workflow group into the container.")
+    records.mark_deployed(workflows)
 
     state = load_state()
 

@@ -40,7 +40,7 @@ from ..harness import (
     poll,
     workflow_dir,
     workflow_group_redis,
-    workflow_root,
+    workflow_config_dir,
     stage,
     submit,
     stop_workflow_group,
@@ -324,7 +324,7 @@ def test_deploy_seeds_the_rules_from_governance_yaml(governed):
     expanded from the workflow's .env, every agent named as the workflow group names it,
     and ReviewAgent's spend counted since the deploy."""
     agents = _seeded(governed)
-    path = workflow_root(governed.workflow_dir) / "config" / "governance.yaml"
+    path = workflow_config_dir(governed.workflow_dir) / "governance.yaml"
     from_yaml = yaml.safe_load(path.read_text())["agents"]
     assert set(agents) == {f"{NAME}.{name}" for name in from_yaml}, agents
     requires = [f"{NAME}.{name}" for name in from_yaml["MergeAgent"]["requires"]]
@@ -467,7 +467,8 @@ def test_a_reload_keeps_the_rules_edited_in_redis(recorder, governed):
     ReviewAgent keeps the deny rule written to Redis. The new agent appearing is
     what shows the reload ran at all."""
     store = governed.store
-    path = workflow_root(governed.workflow_dir) / "config" / "governance.yaml"
+    # The copy the workflow group's record keeps since the deploy, which a sync uploads.
+    path = workflow_config_dir(governed.workflow_dir) / "governance.yaml"
     original = path.read_text()
     document = yaml.safe_load(original)
     document["agents"]["MergeAgent"]["requires"] = ["TestRunnerAgent", "ReviewAgent"]

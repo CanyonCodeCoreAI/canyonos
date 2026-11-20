@@ -53,8 +53,9 @@ and what it deploys:
 
 ## Run the CLI from a checkout
 
-In the dev shell, `canyonos` works from any folder. Deploy a copy of an example, since a
-deploy writes default resources into its workflow's `config/workflow_config.yaml`:
+In the dev shell, `canyonos` works from any folder. Deploy an example; a deploy writes
+default resources into the copy of its workflow's `config/` in the workflow group's
+record, `~/.canyonos/workflows/`, not into the checkout:
 
 ```bash
 cp -R examples/helloworld ../helloworld   # needs no LLM and no API keys

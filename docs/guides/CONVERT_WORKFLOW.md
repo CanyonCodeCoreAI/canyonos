@@ -103,12 +103,13 @@ canyonos deploy . --api-key <your api key>
 ```
 
 The workflow group's `workflow_group.yaml` and the CLI's state for it go in its record,
-`~/.canyonos/workflows/my-app-<id>/`, not in `my-app/`. Run the other commands from
-`my-app/`.
+`~/.canyonos/workflows/my-app-<id>/`, not in `my-app/`, and so does a copy of
+`.canyon/config/`, in `<workflow>/config/`. That copy is the one deployed from now on:
+edit it there, not in `.canyon/config/`. Run the other commands from `my-app/`.
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
 **2. Configure an agent** to change them first. What it deploys with, defaults included,
-is saved in the workflow config. `--api-key` sets the key every request must carry;
+is saved in the record's workflow config. `--api-key` sets the key every request must carry;
 later deploys reuse it (see [API key](AUTHORIZATION.md)). When it's up, it prints the
 endpoint and the dashboard address. Then send it the query in `test_query.txt`:
 

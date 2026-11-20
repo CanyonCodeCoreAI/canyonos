@@ -17,8 +17,9 @@ On each call, the gateway also applies these settings:
 
 ## Define the limits in a file
 
-Create `llms.yaml` in the workflow's `config` folder. Each entry names a model and the
-agents allowed to use it:
+Create `llms.yaml` in the workflow's `config` folder, or in its copy in the workflow
+group's record once the workflow is deployed (see [Configure](CONFIGURE.md)). Each
+entry names a model and the agents allowed to use it:
 
 ```yaml
 haiku:
@@ -76,8 +77,8 @@ have been shorter.
 
 ## Change the limits while the workflow runs
 
-Edit `llms.yaml` and run `canyonos sync <workflow folder>...` (on Kubernetes,
-`canyonos deploy`). Each gateway picks up the changed file within 5 seconds.
+Edit `llms.yaml` in the workflow group's record and run
+`canyonos sync <workflow folder>...` (on Kubernetes, `canyonos deploy`). Each gateway picks up the changed file within 5 seconds.
 
 ## Model prices
 

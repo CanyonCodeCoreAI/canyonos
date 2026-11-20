@@ -9,7 +9,7 @@ cd examples/portfolio
 canyonos deploy portfolio
 ```
 
-Each workflow answers at `POST /<workflow_id>`, the ID `canyonos deploy` prints and keeps in the workflow group's record, `~/.canyonos/workflows/<workflow group>/`. The first deploy copies the example's `workflow_group.yaml` there, and later deploys read only the record's copy. To redeploy from anywhere else, name the workflow group: `canyonos deploy --workflow-group <workflow group>`; `canyonos list` shows its name.
+Each workflow answers at `POST /<workflow_id>`, the ID `canyonos deploy` prints and keeps in the workflow group's record, `~/.canyonos/workflows/<workflow group>/`. The first deploy copies the example's `workflow_group.yaml` and each workflow's `config/` there, and later deploys read only the record's copies: edit those. To redeploy from anywhere else, name the workflow group: `canyonos deploy --workflow-group <workflow group>`; `canyonos list` shows its name.
 
 Helloworld: No LLM involved, merely returns Hello World. The first step in building a workflow! Runs on this machine.
 

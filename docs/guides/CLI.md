@@ -7,8 +7,9 @@ Every `canyonos` command and its options. `canyonos -h` lists the commands, and
 Run `new-app`, `convert` and `validate` from the workflow folder, the folder that holds
 `config/` or `.canyon/`. Run `deploy` from any folder, that one included. Each workflow
 group's settings (`workflow_group.yaml` and its `.env`) and the CLI's state for it live
-in its record, `~/.canyonos/workflows/<workflow group>/`, never in your folders. Run the
-other commands from one of its workflow folders. A typical session:
+in its record, `~/.canyonos/workflows/<workflow group>/`, never in your folders. So
+does each workflow's `config/`, from its first deploy on; its code and `.env` stay in
+its folder. Run the other commands from one of its workflow folders. A typical session:
 
 ```bash
 cd my-workflow
@@ -55,7 +56,7 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 | `status`    | Show whether a workflow group is running, its endpoint, and how to query it |
 | `logs`      | Stream the Global Controller's logs until Ctrl-C                     |
 | `config`    | View or edit `workflow_group.yaml`; `sync` applies the changes           |
-| `sync`      | Apply changes you made by hand in `config/` to the running workflow group |
+| `sync`      | Apply changes you made by hand in the record's `config/` to the running workflow group |
 | `serve`     | Start the local dashboard on its own                                 |
 | `dashboard` | Open the running dashboard, signed in with this machine's API key    |
 
@@ -69,13 +70,18 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
   After that the folder's copy is not read, and the CLI says so: edit the record's, or
   use `config`. The `.env` beside it is copied in with it, readable only by you, and
   is not read after that either.
+- A workflow's first deploy copies its `config/` (from `.canyon/` after `convert`) into
+  the record, `~/.canyonos/workflows/<workflow group>/<workflow>/config/`, and says so.
+  From then on that copy is deployed, with the code and `.env` in the folder: edit it
+  there. `deploy` and `sync` warn when the folder's `config/` changed since; the
+  folder's may be deleted. `validate` and `convert` still work on the folder's.
 - A workflow group is a name. `deploy <folder>... --workflow-group <name>` makes the
   workflow group of that name when there is none, from any folder.
   `deploy --workflow-group <name or ID>` deploys a recorded one from any folder: with no
   folders, the ones it records; with other folders, it replaces its workflows, stopping
-  the ones left out, after asking. `-y` skips the question; without a terminal and
-  without `-y`, it refuses. `canyonos list` shows each one's name and ID, deployed or
-  not.
+  the ones left out, after asking, and deletes their `config/` from the record. `-y`
+  skips the question; without a terminal and without `-y`, it refuses. `canyonos list`
+  shows each one's name and ID, deployed or not.
 - An older CLI's records, `~/.canyonos/deployments/<workflow group>/`, move into the
   workflow group's record on its first deploy.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
@@ -120,8 +126,9 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
   print once on Docker and stream on Kubernetes.
 - `logs --tail N` shows the last N lines (default 200, or `all`); `--no-follow` prints
   them and exits.
-- `sync <folder>...` copies those workflow folders and their `.env`, and
-  `workflow_group.yaml` and the `.env` beside it, into the running workflow group and has it reload
+- `sync <folder>...` copies those workflow folders with their `.env` and the record's
+  `config/` for each, and `workflow_group.yaml` and the `.env` beside it, into the
+  running workflow group and has it reload
   the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
   only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
@@ -190,8 +197,9 @@ canyonos stop --all                 # every workflow group on this machine
   ones.
 - `stop` also stops the dashboard, keeping its history, when no other workflow group runs.
 - `clean` removes the workflow group's record, `~/.canyonos/workflows/<workflow
-  group>/`, its `workflow_group.yaml` and Redis password among them, and the skills
-  `convert` installed in its workflow folders, keeping their `.canyon`. Run from a folder
+  group>/`, its `workflow_group.yaml`, each workflow's `config/` and Redis password
+  among them, and the skills `convert` installed in its workflow folders, keeping their
+  `.canyon`. Run from a folder
   that is not deployed, it also offers to remove that folder's `.canyon` and the skills
   `convert` installed there. It leaves a skill that `convert --scope global` installed.
   When the stop fails or is refused, `clean` removes nothing.

@@ -28,7 +28,7 @@ from ..harness import (
     http,
     poll,
     workflow_group_redis,
-    workflow_root,
+    workflow_config_dir,
     result_of,
     submit,
 )
@@ -86,7 +86,7 @@ def test_canyonos_test_reports_a_real_result(recorder, deployed, check):
 
 
 def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, check):
-    path = workflow_root(deployed.workflow_dir) / "config" / "test_query.txt"
+    path = workflow_config_dir(deployed.workflow_dir) / "test_query.txt"
     report = _canyonos_test(recorder, deployed)
     query = path.read_text().strip()
     assert report["results"][0]["query"] == query, report

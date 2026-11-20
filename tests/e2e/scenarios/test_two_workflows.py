@@ -4,10 +4,14 @@
 """Two `canyonos new-app` workflows deployed as one workflow group from the folder
 that holds them, each answer at their own route, `canyonos sync` of one leaves the
 other in the workflow group, and a redeploy of the workflow group with one of them, by
-`--workflow-group`, reuses the Global Controller and drops the other. Two folders of
-the same name are two workflows, each with its own workflow_id, kept across
-redeploys, and a redeploy of the same folders from another folder finds the same
-workflow group by their paths."""
+`--workflow-group`, reuses the Global Controller and drops the other. Each workflow's
+`config/` is copied into the workflow group's record on its first deploy, so that
+redeploy works with the kept workflow's own `config/` deleted from its folder, and it
+removes the copy of the workflow it drops. Two folders of the same name are two
+workflows, each with its own workflow_id, kept across redeploys, and a redeploy of the
+same folders from another folder finds the same workflow group by their paths."""
+
+import shutil
 
 import pytest
 
@@ -19,6 +23,7 @@ from ..harness import (
     group_settings,
     record,
     stop_workflow_group,
+    workflow_config_dir,
     workflow_name,
 )
 
@@ -72,6 +77,11 @@ def test_two_workflows_share_a_workflow_group_and_sync_one(recorder, deployment)
     canyonos(recorder, ["deploy", *WORKFLOWS], cwd=deployment, timeout=DEPLOY_TIMEOUT)
     group = record(deployment)
     assert not (deployment / "workflow_group.yaml").exists()
+    alpha_config, beta_config = (
+        workflow_config_dir(deployment / name) for name in WORKFLOWS
+    )
+    for kept in (alpha_config, beta_config):
+        assert (kept / "workflow_config.yaml").is_file(), kept
     routes = _workflow_ids([deployment / name for name in WORKFLOWS])
     assert _answered_routes(recorder, deployment) == routes
 
@@ -96,6 +106,8 @@ def test_two_workflows_share_a_workflow_group_and_sync_one(recorder, deployment)
     assert refused.code != 0 and "Add --yes" in refused.output, refused.output
     assert _holds(recorder, controller, beta), "a refused redeploy dropped beta"
 
+    # The record's copy is what the redeploy uploads, so the folder's can go.
+    shutil.rmtree(deployment / "alpha" / "config")
     redeploy = canyonos(
         recorder,
         ["deploy", "--workflow-group", group.name, "alpha", "--yes"],
@@ -105,6 +117,8 @@ def test_two_workflows_share_a_workflow_group_and_sync_one(recorder, deployment)
     assert "Global Controller already running" in redeploy.output, redeploy.output
     assert record(deployment) == group
     assert not _holds(recorder, controller, beta), "redeploying alpha kept beta"
+    assert (alpha_config / "workflow_config.yaml").is_file(), alpha_config
+    assert not beta_config.parent.exists(), "redeploying alpha kept beta's config"
     alpha = _workflow_ids([deployment / "alpha"])
     assert _answered_routes(recorder, deployment) == alpha
 

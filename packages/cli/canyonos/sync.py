@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from canyonos import deployment, env, ui
+from canyonos import deployment, env, records, ui
 from canyonos.api import (
     ApiError,
     NoDeployError,
@@ -45,19 +45,18 @@ ENV_NAME = ".env"
 _REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
 
 
-def workflow_archive(folder):
-    """Return a temporary file, deleted once closed, holding a gzip tar of the workflow
-    in `folder`, with the `.env` in its folder as `.env`. A `.env` that is a link is
-    stored as the file it points at."""
+def workflow_archive(name, folder):
+    """Return a temporary file, deleted once closed, holding a gzip tar of workflow
+    `name`: the code in `folder`, the `config/` the workflow group's record keeps for it
+    in place of the folder's own, and the `.env` in its folder as `.env`. A `.env` that
+    is a link is stored as the file it points at."""
     root = os.path.abspath(workflow_folder(folder))
+    config = records.workflow_config_dir(name)
     buffer = tempfile.TemporaryFile()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for directory, dirnames, filenames in os.walk(root, followlinks=False):
-            for entry in dirnames + filenames:
-                path = os.path.join(directory, entry)
-                relative = container_path(os.path.relpath(path, root))
-                if relative != ENV_NAME:
-                    archive.add(path, relative, recursive=False)
+        _add_tree(archive, root, "", skip=("config", ENV_NAME))
+        archive.add(config, "config", recursive=False)
+        _add_tree(archive, config, "config")
         env_path = workflow_env_path(folder)
         if os.path.isfile(env_path):
             with open(env_path, "rb") as env_file:
@@ -65,6 +64,19 @@ def workflow_archive(folder):
                 archive.addfile(info, env_file)
     buffer.seek(0)
     return buffer
+
+
+def _add_tree(archive, base, prefix, skip=()):
+    """Add everything under `base` to `archive` under `prefix`, but the entries of
+    `base` itself that `skip` names."""
+    for directory, dirnames, filenames in os.walk(base, followlinks=False):
+        if directory == base:
+            dirnames[:] = [entry for entry in dirnames if entry not in skip]
+            filenames = [entry for entry in filenames if entry not in skip]
+        for entry in dirnames + filenames:
+            path = os.path.join(directory, entry)
+            relative = os.path.join(prefix, os.path.relpath(path, base))
+            archive.add(path, container_path(relative), recursive=False)
 
 
 def collector_image_warnings(config_text):
@@ -130,7 +142,7 @@ def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
                 config = Path(DEPLOYMENT_CONFIG).read_text("utf-8")
                 # Built first: a gap between uploads would let the container apply some.
                 tars = {
-                    name: archives.enter_context(workflow_archive(folder))
+                    name: archives.enter_context(workflow_archive(name, folder))
                     for name, folder in workflows.items()
                 }
             except OSError as e:
@@ -193,9 +205,11 @@ def run_sync_and_reload(folders):
     workflows = deployment.workflow_folders(
         folders, deployment.workflow_ids(folders, new=False)
     )
+    records.import_workflow_configs(workflows, prune=False)
     status = run_sync(workflows, keep_other_workflows=True)
     if not status:
         return False
+    records.mark_deployed(workflows)
     action = ui.json_result["action"] = status["last_apply"]["action"]
     if action == "reload":
         ui.ok("Config reloaded.")

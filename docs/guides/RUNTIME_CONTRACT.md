@@ -7,7 +7,9 @@ behaves differently from your app.
 
 ## Discovery
 
-`canyonos deploy` reads everything from each workflow's [root](BUILD_ARTIFACT.md):
+`canyonos deploy` reads everything from each workflow's [root](BUILD_ARTIFACT.md), but
+`config/`, which after the first deploy comes from the workflow group's record (see
+[Configure your workflow](CONFIGURE.md)):
 
 | Input            | Where it comes from                                             |
 | ---------------- | --------------------------------------------------------------- |

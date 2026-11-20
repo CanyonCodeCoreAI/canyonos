@@ -14,6 +14,10 @@ Preserve prompt content and application behavior; do not invent or improve promp
 - Work in the workflow root: `.canyon` when the workflow folder has one, otherwise
   the workflow folder itself. Find `config/workflow_config.yaml` there and write
   `prompts.yaml` beside it. Respect an explicitly chosen destination.
+- After the workflow's first deploy, the config deployed is the copy in its
+  workflow group's record, `~/.canyonos/workflows/<workflow group>/<workflow>/config/`,
+  and the root's `config/` is not read again. Write there instead, unless the
+  developer chose the root; then report that the change won't reach the deploy.
 - Trace the manifest's agent entrypoints, relative to the root, to their LLM calls.
 - Search for message roles, prompt constants, template constructors, formatting
   functions, and referenced prompt files. Follow imports and builders to the text

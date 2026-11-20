@@ -19,16 +19,23 @@ CLI paths below are under `packages/cli/canyonos/`, and Core paths under
 
 The CLI reads `workflow_group.yaml` in the workflow group's record,
 `~/.canyonos/workflows/<workflow group>/`, which every command runs from
-(`deployment_config_path` in `constants.py`, `records.py`), and
-`config/workflow_config.yaml` in each workflow folder it is given: in its `.canyon/`
-when it has one, else in the folder itself (`workflow_folder` and
-`workflow_config_path`). A `workflow_group.yaml` in the folder `canyonos deploy` runs
-from is copied into a new record once, and not read after; see
-[CLI](CLI.md#which-workflow-group-a-command-acts-on).
+(`deployment_config_path` in `constants.py`, `records.py`), and each workflow's
+`config/` in the record, `~/.canyonos/workflows/<workflow group>/<workflow>/config/`
+(`workflow_config_dir` in `records.py`). A workflow's first deploy copies that
+`config/` from its folder: from its `.canyon/` when it has one, else from the folder
+itself (`workflow_folder`), again on each deploy until one goes through. Then
+`mark_deployed` keeps a fingerprint of the folder's `config/` in the record
+(`deployed-from.sha256`), and the folder's `config/` is not read, only compared:
+`deploy` and `sync` warn when it changed since. Likewise, a
+`workflow_group.yaml` in the folder `canyonos deploy` runs from is copied into a new
+record once, and not read after; see
+[CLI](CLI.md#which-workflow-group-a-command-acts-on). `canyonos validate` and
+`canyonos convert` still work on the folder's `config/`.
 
 On Docker, `canyonos deploy` uploads `workflow_group.yaml` and the `.env` beside it to the
-Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, with
-its `.env`, to `/workspace/<workflow>/` as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>`:
+Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, the
+code and `.env` from its folder and `config/` from the record, to `/workspace/<workflow>/`
+as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>`:
 `run_sync` in `sync.py`). The CanyonOS API writes each into the container's workspace
 volume with a job container (`write_group_files` and `put_workflow` in
 `workspace_jobs.py`); see [Global Controller](CONTROLLER.md#global-controller). The
@@ -139,7 +146,8 @@ On Docker, `canyonos sync` and `canyonos config` apply a change to the running w
 `canyonos config` saves the file, then does what `canyonos sync` does
 (`run_sync_and_reload` in `sync.py`):
 
-1. Copy the workflows named and `workflow_group.yaml` into the container, as a deploy does.
+1. Copy the workflows named, with the record's `config/` for each, and
+   `workflow_group.yaml` into the container, as a deploy does.
 2. The CanyonOS API (`reload` in `workflow-groups.apply.ts`) sees that only config
    changed. It checks the config against the schema and reports every violation in
    `last_apply`, changing nothing, if it finds one. Otherwise it sends `SIGHUP` to the

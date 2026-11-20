@@ -13,9 +13,10 @@ This walkthrough takes it from a fresh copy to a request you can see in the dash
 ## What's in it
 
 This folder's `workflow_group.yaml` configures the workflow group, and the workflow,
-`helloworld/`, holds the agent code. The first deploy copies `workflow_group.yaml` into the
-workflow group's record, `~/.canyonos/workflows/<workflow group>/`, and later deploys read
-only that copy.
+`helloworld/`, holds the agent code and its `config/`. The first deploy copies
+`workflow_group.yaml` into the workflow group's record,
+`~/.canyonos/workflows/<workflow group>/`, and `helloworld/config/` into
+`<workflow group>/<workflow>/config/` there, and later deploys read only those copies.
 
 | File | What it does |
 |---|---|
@@ -30,7 +31,7 @@ only that copy.
 - Docker is running, and `canyonos doctor` passes.
 - This example is already in CanyonOS format, so skip `canyonos convert`. It needs no `.env`.
 - It runs on this machine (`provider: local`). To run it on EC2, use [helloworld-ec2-assign](../helloworld-ec2-assign/README.md).
-- Work on a copy. Deploying fills default resources into `helloworld/config/workflow_config.yaml`.
+- Deploying writes nothing into this folder: it fills default resources into the record's copy of `workflow_config.yaml`.
 
 ## 1. Deploy
 
@@ -113,9 +114,9 @@ Open the dashboard URL, then **Workflow groups** → **helloworld** → **Per-Qu
 
 ## 5. Try a policy rule
 
-Rules in `helloworld/config/policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
+Rules in `policy.yaml` decide which agents a request may reach, based on the `_context` you send with it. The rule with the most matching keys wins, and `match: {}` is the fallback. By default every agent is allowed.
 
-Remove `HelloAgent` from the fallback rule:
+Remove `HelloAgent` from the fallback rule, in the record's copy, `~/.canyonos/workflows/<workflow group>/<workflow>/config/policy.yaml` (the first deploy printed the path; editing `helloworld/config/policy.yaml` no longer changes the deploy):
 
 ```yaml
   - match: {}

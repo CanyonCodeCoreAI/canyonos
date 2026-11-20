@@ -6,8 +6,9 @@ Gateway sends the live version with each model call the function makes.
 
 ## Define prompts in a file
 
-Create `prompts.yaml` in the workflow's `config` folder. Each prompt is named after the
-agent function it belongs to and holds a list of versions:
+Create `prompts.yaml` in the workflow's `config` folder, or in its copy in the workflow
+group's record once the workflow is deployed (see [Configure](CONFIGURE.md)). Each
+prompt is named after the agent function it belongs to and holds a list of versions:
 
 ```yaml
 prompts:
@@ -83,10 +84,10 @@ dashboard deletes its prompts. How the gateway gets the live versions is in
   keep into the file.
 - Once the dashboard has a prompt, later changes to it in `prompts.yaml`, including new
   versions, are ignored. Save a new version on the dashboard instead.
-- The dashboard cannot add or delete a prompt. To add one, put it in `prompts.yaml` and
-  run `canyonos sync <workflow folder>` (Docker only) or `canyonos deploy`; it reaches
-  agents once the dashboard has stored it, within a minute or when you next open the
-  Prompts page.
+- The dashboard cannot add or delete a prompt. To add one, put it in the record's
+  `prompts.yaml` and run `canyonos sync <workflow folder>` (Docker only) or
+  `canyonos deploy`; it reaches agents once the dashboard has stored it, within a
+  minute or when you next open the Prompts page.
 - Prompts are set on OpenAI chat completions and responses, Anthropic messages, and AWS
   Bedrock calls. A call with no place for a system prompt, such as an embeddings call,
   is sent unchanged.

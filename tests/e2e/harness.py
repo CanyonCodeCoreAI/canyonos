@@ -582,6 +582,15 @@ def workflow_name(workspace: Path) -> str:
     raise AssertionError(f"{record(workspace)} has no workflow for {workspace}")
 
 
+def workflow_config_dir(workspace: Path) -> Path:
+    """The `config/` the record of the workflow folder `workspace`'s workflow group
+    keeps for its workflow, `<record>/<workflow>/config/`: copied from the folder on
+    the workflow's first deploy, it is the config every deploy and `canyonos sync`
+    upload from then on, so a case that changes a deployed workflow's config edits this
+    one. Changes staged before the first deploy still go in the folder."""
+    return record(workspace) / workflow_name(workspace) / "config"
+
+
 def qualified(workspace: Path, name: str) -> str:
     """`name`, an agent or `<agent>.<method>` of the workflow in the workflow folder
     `workspace`, as the workflow group names it: `<workflow>.<name>`."""

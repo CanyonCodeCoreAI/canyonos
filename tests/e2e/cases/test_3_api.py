@@ -29,7 +29,7 @@ from ..harness import (
     http,
     manifest,
     poll,
-    workflow_root,
+    workflow_config_dir,
     qualified,
     workflow_name,
 )
@@ -366,7 +366,7 @@ def test_endpoint(deployed):
 
 
 def _shipped_policy(deployed):
-    path = workflow_root(deployed.workflow_dir) / "config" / "scaling.yaml"
+    path = workflow_config_dir(deployed.workflow_dir) / "scaling.yaml"
     if not path.is_file():
         return None
     return (yaml.safe_load(path.read_text()) or {}).get("scaling")

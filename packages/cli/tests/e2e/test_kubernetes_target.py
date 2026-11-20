@@ -4,21 +4,27 @@
 """The commands of a `target: kubernetes` workflow group reach the cluster's CanyonOS
 API, through the installed command, each case in its own HOME. A stand-in `kubectl` on
 PATH signs in with a token, records the port-forward it is asked for and serves the
-"forwarded" API itself on the local port, answering what the case sets; a stand-in
-`docker` reports nothing, so no cluster and no Docker are needed."""
+"forwarded" API itself on the local port, answering what the case sets and keeping the
+last archive uploaded for each workflow; a stand-in `docker` reports nothing, so no
+cluster and no Docker are needed. That makes a deploy to the cluster the one deploy
+that runs here in full, so it is where the uploaded config of each workflow is checked:
+the one its workflow group's record keeps."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 
 import pytest
+import yaml
 
-from .harness import CliCase
+from .harness import CliCase, workflow_config_dir
 
 WORKFLOW_GROUP_ID = "5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 NAMESPACE = "team-a"
@@ -26,6 +32,18 @@ KUBE_TOKEN = "e2e-kube-token"
 UPGRADE = (
     "Upgrade the CanyonOS operator chart: this CLI needs the CanyonOS API it installs"
 )
+# What the API answers a deploy or sync: the upload is applied as a reload.
+APPLIED = {
+    "running": True,
+    "phase": "up",
+    "generation": 1,
+    "applied_generation": 1,
+    "last_apply": {"ok": True, "action": "reload", "error": None, "code": None},
+}
+UPLOADED = {"generation": 1, "warnings": []}
+MANIFEST = "agents:\n  - name: Echo\n    entrypoint: agents/echo.py\n"
+CODE = "class Echo:\n    pass\n"
+WORKFLOW_ENV = "ECHO_GREETING=hi\n"
 FAKE_KUBECTL = """\
 import json, os, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,6 +73,12 @@ elif "port-forward" in args:
                     "path": self.path,
                     "authorization": self.headers.get("Authorization"),
                 }) + "\\n")
+            length = int(self.headers.get("Content-Length") or 0)
+            upload = self.rfile.read(length) if length else b""
+            if self.command == "PUT" and "/workflows/" in self.path:
+                name = self.path.rsplit("/", 1)[1]
+                with open(os.path.join(here, name + ".tar.gz"), "wb") as kept:
+                    kept.write(upload)
             status, body = answers[self.command]
             data = json.dumps(body).encode()
             self.send_response(status)
@@ -279,6 +303,108 @@ def test_stop_deletes_the_workflow_group_and_closes_the_forward(cli_case: CliCas
     ]
     forwards = cli_case.home / ".canyonos" / "forwards"
     assert not list(forwards.glob("api.*")), list(forwards.iterdir())
+
+
+def _workflow(folder: Path) -> None:
+    """Write a workflow into `folder`: one agent, which sets none of its resources,
+    its code, a test query and a `.env`."""
+    (folder / "config").mkdir(parents=True)
+    (folder / "config" / "workflow_config.yaml").write_text(MANIFEST)
+    (folder / "config" / "test_query.txt").write_text("from the folder\n")
+    (folder / "agents").mkdir()
+    (folder / "agents" / "echo.py").write_text(CODE)
+    (folder / ".env").write_text(WORKFLOW_ENV)
+
+
+def _uploaded(records: Path, config: Path) -> dict[str, str]:
+    """Each file of the archive last uploaded for the workflow whose record keeps
+    `config`, by its path in the archive. The archive is removed, so the next read
+    shows a later upload or fails. Uploads go by workflow_id, which the workflow
+    group's `workflows:` keeps by the workflow's name."""
+    group = yaml.safe_load((config.parent.parent / "workflow_group.yaml").read_text())
+    workflow_id = group["workflows"][config.parent.name]["workflow_id"]
+    path = records / f"{workflow_id}.tar.gz"
+    with tarfile.open(path) as archive:
+        files = {
+            member.name: archive.extractfile(member).read().decode()
+            for member in archive.getmembers()
+            if member.isfile()
+        }
+    path.unlink()
+    return files
+
+
+def test_a_deploy_uploads_the_config_the_workflow_group_s_record_keeps(
+    cli_case: CliCase, close_forwards
+):
+    """A workflow's first deploy copies its folder's `config/` into the workflow
+    group's record, and the resource picker fills in that copy, leaving the folder's
+    as written. From then on a deploy or sync uploads the record's copy with the
+    folder's code and `.env`: a change made in the record is uploaded, one made only
+    in the folder is warned of and left out (an untouched folder is not, though the
+    picker filled in the record's copy), and once the folder's `config/` is gone a
+    redeploy still uploads the record's. Replacing the workflow group's workflows
+    removes the copy of the one it drops."""
+    environment, records = _kubernetes_group(
+        cli_case, {"GET": [200, APPLIED], "PUT": [200, UPLOADED]}
+    )
+    alpha, beta = cli_case.cwd / "alpha", cli_case.cwd / "beta"
+    for folder in (alpha, beta):
+        _workflow(folder)
+
+    def run(*args: str) -> str:
+        result = cli_case.run_cli(list(args), env=environment, timeout=60)
+        assert result.returncode == 0, _said(result)
+        return _said(result)
+
+    first = run("deploy", "alpha", "--yes", "--detach")
+
+    config = workflow_config_dir(cli_case, alpha)
+    assert f"{config.parent.name}'s config now lives in {config}" in first, first
+    assert (alpha / "config" / "workflow_config.yaml").read_text() == MANIFEST
+    [echo] = yaml.safe_load((config / "workflow_config.yaml").read_text())["agents"]
+    assert echo["replicas"] == 1 and echo["resources"]["memory"] == 512, echo
+    assert _uploaded(records, config) == {
+        "agents/echo.py": CODE,
+        "config/workflow_config.yaml": (config / "workflow_config.yaml").read_text(),
+        "config/test_query.txt": "from the folder\n",
+        ".env": WORKFLOW_ENV,
+    }
+
+    untouched = run("sync", "alpha")
+    assert "changed since" not in " ".join(untouched.split()), untouched
+
+    (config / "test_query.txt").write_text("from the record\n")
+    (alpha / "config" / "test_query.txt").write_text("edited in the folder\n")
+    (alpha / "config" / "llms.yaml").write_text("models: {}\n")
+    synced = run("sync", "alpha")
+
+    assert (
+        f"{alpha / 'config'} changed since {config.parent.name} was first deployed, "
+        f"so it is not deployed: {config} is"
+    ) in " ".join(synced.split()), synced
+    uploaded = _uploaded(records, config)
+    assert uploaded["config/test_query.txt"] == "from the record\n", uploaded
+    assert "config/llms.yaml" not in uploaded, uploaded
+    assert not (config / "llms.yaml").exists()
+
+    shutil.rmtree(alpha / "config")
+    run("deploy", "alpha", "--yes", "--detach")
+
+    uploaded = _uploaded(records, config)
+    assert uploaded["config/test_query.txt"] == "from the record\n", uploaded
+    assert uploaded["agents/echo.py"] == CODE, uploaded
+
+    record = config.parent.parent
+    run("deploy", "--workflow-group", record.name, "beta", "--yes", "--detach")
+
+    assert not config.parent.exists(), list(record.iterdir())
+    kept = workflow_config_dir(cli_case, beta)
+    assert kept.parent.parent == record, kept
+    assert (
+        _uploaded(records, kept)["config/workflow_config.yaml"]
+        == (kept / "workflow_config.yaml").read_text()
+    )
 
 
 def test_stop_in_a_workflow_folder_reaches_its_workflow_group_s_cluster(

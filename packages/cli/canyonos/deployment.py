@@ -137,19 +137,20 @@ def workflow_folders(folders, ids):
     """Map each workflow of the workflow group to its folder, named after the folder as
     Docker accepts names and the start of its workflow_id in `ids` (see workflow_ids),
     so two folders of the same name are two workflows. Raises when a folder holds
-    no `config/workflow_config.yaml`, or when a folder is given twice."""
+    no `config/workflow_config.yaml` and the workflow group's record keeps no `config/`
+    for it, or when a folder is given twice."""
     named = {}
     for folder in folders:
-        if not os.path.isfile(workflow_config_path(workflow_folder(folder))):
-            raise RuntimeError(
-                f"No {workflow_config_path(workflow_folder(folder))}: is {folder} a "
-                "workflow folder?"
-            )
         path = os.path.abspath(folder)
         if path in map(os.path.abspath, named.values()):
             raise RuntimeError(f"{folder} is given twice.")
         base = _docker_safe(os.path.basename(path))[:WORKFLOW_NAME_LENGTH].rstrip("-")
-        named[f"{base}-{ids[path][:8]}"] = folder
+        name = f"{base}-{ids[path][:8]}"
+        kept = os.path.join(state_dir(), name, "config")
+        source = workflow_config_path(workflow_folder(folder))
+        if not os.path.isfile(source) and not (in_record() and os.path.isdir(kept)):
+            raise RuntimeError(f"No {source}: is {folder} a workflow folder?")
+        named[name] = folder
     return named
 
 

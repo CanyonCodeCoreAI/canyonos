@@ -12,6 +12,14 @@ The file is `config/workflow_config.yaml` in the [workflow root](BUILD_ARTIFACT.
 `.canyon/config/workflow_config.yaml` after `canyonos convert`. `canyonos new-app` and
 `canyonos convert` write it for you.
 
+The first deploy of a workflow copies its `config/` into the workflow group's record,
+`~/.canyonos/workflows/<workflow group>/<workflow>/config/`, where `<workflow>` is its
+name under `workflows:` (below). From then on that copy is the one deployed, so edit
+`workflow_config.yaml` there; the folder's `config/` is not read again, and may be
+deleted. `deploy` and `sync` warn when it changed since that deploy. Until a deploy
+of the workflow goes through, the copy is made again on each deploy. `canyonos validate`
+still checks the folder's.
+
 `workflow_group.yaml` is in the workflow group's record,
 `~/.canyonos/workflows/<workflow group>/`, with the `.env` it reads. The first deploy
 writes it, with the group's `workflow_group_id`, starting from the `workflow_group.yaml`
@@ -37,8 +45,8 @@ deploy into one group as two workflows. Agents are named `<name>.<agent>`, such 
 
 - `canyonos config` views or edits `workflow_group.yaml` in the terminal and saves each
   change in place. It doesn't create the file or fill in defaults.
-- After you edit either file, `canyonos sync <workflow folder>...` applies it to the
-  running workflow group.
+- After you edit either file in the record, `canyonos sync <workflow folder>...`
+  applies it to the running workflow group.
 
 With nothing deployed, changes apply on the next `canyonos deploy`.
 
@@ -338,8 +346,8 @@ ec2-pool:
   region: ${EC2_REGION}
 ```
 
-- The value comes from the workflow's `.env`: the one beside `config/`, or, after
-  `canyonos convert`, the one beside `.canyon` when there is one. In
+- The value comes from the workflow's `.env`, in its workflow folder (beside `.canyon`
+  after `canyonos convert`), never in the record. In
   `workflow_group.yaml`, it comes from the `.env` beside it in the workflow group's
   record. A variable already set in the environment the config is read in keeps its own
   value.

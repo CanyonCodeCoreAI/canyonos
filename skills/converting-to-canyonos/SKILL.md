@@ -111,7 +111,8 @@ attached. Run every command from the workflow folder:
 - `canyonos deploy . --serve false`: build and start it without the dashboard, using
   default resources instead of asking. It makes the workflow group's record,
   `~/.canyonos/workflows/<workflow group>/`, with its `workflow_group.yaml`, when there
-  is none, and replaces this workflow group's earlier deploy.
+  is none, copies `.canyon/config/` into it on the workflow's first deploy, and
+  replaces this workflow group's earlier deploy.
 - `canyonos status --json`: `running`, `endpoint`, `dashboard_url`, per agent the
   desired and running replicas and last launch error, each machine type's last
   start error, and `errors` for any part it could not read. Exits 1 if nothing runs.
@@ -122,7 +123,11 @@ attached. Run every command from the workflow folder:
   replicas, or of one replica such as `<workflow>.IntentAgent-1a2b3c4d`; `--tail N` or
   `--tail all` for more.
 - Any change, config or code, takes effect only after another `canyonos deploy .`.
-- `canyonos validate --json`: recheck `.canyon` after an edit.
+  After the first deploy, the config deployed is the record's copy,
+  `~/.canyonos/workflows/<workflow group>/<workflow>/config/`, not `.canyon/config/`;
+  the deploy prints its path.
+- `canyonos validate --json`: recheck `.canyon` after an edit. It doesn't read the
+  record's `config/`.
 - `canyonos stop` removes the deploy. `canyonos clean` also removes the images and the
   workflow group's record on Docker, and leaves `.canyon`; with `target: kubernetes` it
   removes only the workflow group's ConfigMap and Secret in the cluster, and `.canyon`

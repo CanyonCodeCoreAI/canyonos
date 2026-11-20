@@ -6,6 +6,13 @@ runs. `canyonos new-app` creates it with `workflow_config.yaml`; `llms.yaml`,
 `policy.yaml` that lets every request reach every agent. After `canyonos convert`, the
 folder is `.canyon/config`.
 
+The first `canyonos deploy` of a workflow copies that folder into its workflow group's
+record, `~/.canyonos/workflows/<workflow group>/<workflow>/config/`, and that copy is
+the one deployed from then on: edit it there. The CLI reads the folder's `config/` no
+more, and warns on `deploy` and `sync` when it changed since. `<workflow>` is the workflow's
+name under `workflows:` in the record's `workflow_group.yaml`; the deploy prints the
+path.
+
 | File                                                            | What it sets                                                                                         | Details                                                  |
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `workflow_config.yaml`                                          | The agents, their functions and packages, replicas, CPU, memory and GPU, and the endpoint's routes   | [Workflow config](WORKFLOW_CONFIG.md)                    |
@@ -19,11 +26,11 @@ folder is `.canyon/config`.
 
 ## Apply a change
 
-| You changed               | Run                                                         |
-| ------------------------- | ----------------------------------------------------------- |
-| Settings, in the terminal | `canyonos config`, then `canyonos sync <workflow folder>...` |
-| A file in `config/`       | `canyonos sync <workflow folder>...`                         |
-| Your code or `.env`       | `canyonos deploy <workflow folder>...`                       |
+| You changed                      | Run                                                          |
+| -------------------------------- | ------------------------------------------------------------ |
+| Settings, in the terminal        | `canyonos config`, then `canyonos sync <workflow folder>...` |
+| A file in the record's `config/` | `canyonos sync <workflow folder>...`                         |
+| Your code or `.env`              | `canyonos deploy <workflow folder>...`                       |
 
 `canyonos config` and `canyonos sync` apply to a deploy on Docker; on Kubernetes, run
 `canyonos deploy` again. With nothing deployed, every change applies on the next

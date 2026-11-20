@@ -13,7 +13,14 @@ import io
 import tarfile
 import uuid
 
-from ..harness import canyonos, cli_python, controller_headers, http, poll
+from ..harness import (
+    canyonos,
+    cli_python,
+    controller_headers,
+    http,
+    poll,
+    workflow_name,
+)
 
 PREFIX = "/v1/workflow-groups"
 WORKFLOW = f"{PREFIX}/{{workflow_group_id}}/workflows/{{workflow_id}}"
@@ -385,14 +392,15 @@ def test_uploading_what_runs_changes_nothing(recorder, deployed, tmp_path):
         "env": env.read_text("utf-8") if env.is_file() else None,
     }
     http(recorder, "PUT", url, json=body, headers=auth)
-    # Built by the CLI's own code, in its environment, so it is the upload a sync sends.
+    # Built by the CLI's own code, in its environment, so it is the upload a sync sends:
+    # the folder's code with the config the workflow group's record keeps for it.
     archive = tmp_path / "workflow.tar.gz"
     cli_python(
         recorder,
         deployed.dir,
         "import shutil; from canyonos.sync import workflow_archive; "
-        f"shutil.copyfileobj(workflow_archive({str(deployed.workflow_dir)!r}), "
-        f"open({str(archive)!r}, 'wb'))",
+        f"shutil.copyfileobj(workflow_archive({workflow_name(deployed.workflow_dir)!r}, "
+        f"{str(deployed.workflow_dir)!r}), open({str(archive)!r}, 'wb'))",
     )
     upload = http(
         recorder,
