@@ -26,7 +26,8 @@
 #     serve keeps it there;
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
-#   - requests through the endpoint complete;
+#   - requests through the endpoint complete, also at /<workflow_id>, the URL
+#     `status --json` gives, as on Docker;
 #   - in a workflow group of two workflows, a code change in one rolls only its agents
 #     out, while the other keeps its pods and answers every request, and the
 #     CanyonProject and Redis stay; the rollout runs after the deploy hands it over, so
@@ -269,6 +270,21 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
   log "Requests through the endpoint"
   requests || fail "requests"
 
+  log "The endpoint serves the workflow at /<workflow_id> too, the URL status gives, as on Docker"
+  code="$(curl -s -m 10 -o /tmp/by-id.json -w '%{http_code}' -X POST "http://127.0.0.1:8080/${workflow_id}" \
+    -H "Authorization: Bearer ${api_key}" -H 'Content-Type: application/json' -d '{"query": "by id"}')"
+  [ "${code}" = 202 ] || fail "POST /${workflow_id} answered ${code}: $(cat /tmp/by-id.json)"
+  id="$(python -c 'import json; print(json.load(open("/tmp/by-id.json"))["request_id"])')"
+  answer=""
+  for _ in $(seq 60); do
+    answer="$(curl -s -m 5 -H "Authorization: Bearer ${api_key}" "http://127.0.0.1:8080/status/${id}")"
+    case "${answer}" in *'"done"'*) break ;; esac
+    sleep 0.5
+  done
+  echo "${answer}" | grep -q "Hello, by id! I'm the HelloAgent!" || fail "POST /${workflow_id} answered: ${answer}"
+  canyonos status --json | grep -q "\"url\": \"[^\"]*/${workflow_id}\"" \
+    || fail "status gives no /${workflow_id} URL: $(canyonos status --json | grep '"url"')"
+
   log "One workflow group per namespace: another is refused, and the first keeps running"
   project="$(as_deployer kubectl -n "${NS}" get canyonprojects -o jsonpath='{.items[0].metadata.name}')"
   first() {  # the first workflow group's CanyonProject and Redis pod, and its config's version
@@ -293,14 +309,15 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
   refused /other/hw
   canyonos_in "${DEPLOYER}" /other/hw stop >/dev/null || fail "stop of the refused workflow group"
   # A CanyonProject applied by hand: the operator gives it NamespaceInUse, and nothing else.
-  as_deployer kubectl -n "${NS}" apply -f - >/dev/null <<EOF
+  # Its route's workflowID is upper case, which the CanyonOS API takes on Docker too.
+  as_deployer kubectl -n "${NS}" apply -f - >/dev/null <<EOF || fail "the cluster refused an upper-case workflowID"
 apiVersion: canyonos.canyoncode.ai/v1alpha1
 kind: CanyonProject
 metadata: {name: e2e-second}
 spec:
   projectID: 00000000-0000-4000-8000-0000000000e2
   configRef: e2e-second
-  endpoint: {routes: [{workflow: second, agent: Workflow, method: main}]}
+  endpoint: {routes: [{workflow: second, workflowID: 6F1E2D3C-0000-4000-8000-0000000000E2, agent: Workflow, method: main}]}
 EOF
   reason=""
   for _ in $(seq 30); do

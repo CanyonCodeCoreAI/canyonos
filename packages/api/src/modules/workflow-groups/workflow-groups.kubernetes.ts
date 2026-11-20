@@ -108,7 +108,8 @@ type Conditions = Record<string, Condition>;
 
 interface Route {
   workflow: string;
-  workflow_id?: string | null;
+  /** Left out for a workflow from before workflow ids. */
+  workflowID?: string;
   agent: string;
   method: string;
   arguments?: string[];
@@ -834,14 +835,15 @@ function endpoint_of(project: CanyonProject | null, row: WorkflowGroupRow | null
     api_port: parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
     routes: (project.spec?.endpoint?.routes ?? []).map((route) => {
       // The path the cluster's endpoint serves, as core's `route_path` makes it from the
-      // route itself: `/<workflow_id>` only for a route that carries one. The workflow id the
-      // config gives a workflow is reported, but the endpoint does not serve it as a path.
-      const path = route.workflow_id
-        ? `/${route.workflow_id}`
+      // route itself: `/<workflow_id>` for a route that carries one. A CanyonProject from before
+      // workflow ids carries none: its workflow id from the config is reported, but its endpoint
+      // serves only `/<workflow>/<agent>/<method>` until it is deployed again.
+      const path = route.workflowID
+        ? `/${route.workflowID}`
         : `/${route.workflow}/${route.agent}/${route.method}`;
       return {
         workflow: route.workflow,
-        workflow_id: route.workflow_id ?? ids[route.workflow] ?? null,
+        workflow_id: route.workflowID ?? ids[route.workflow] ?? null,
         agent: route.agent,
         method: route.method,
         arguments: route.arguments ?? [],

@@ -103,10 +103,13 @@ def _project_spec(
         if redis.storage_class:
             redis_spec["storageClassName"] = redis.storage_class
 
-    # The CanyonProject CRD has no `workflow_id` on a route.
+    # The CanyonProject names a route's workflow_id `workflowID`, and leaves it out for
+    # a workflow that has none.
     routes = endpoint_routes(config)
     for route in routes:
-        del route["workflow_id"]
+        workflow_id = route.pop("workflow_id")
+        if workflow_id:
+            route["workflowID"] = workflow_id
     endpoint = {"routes": routes}
     exposure = spec.endpoint
     if exposure.host:

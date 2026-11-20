@@ -214,6 +214,13 @@ spec:
                             to.
                           minLength: 1
                           type: string
+                        workflowID:
+                          description: |-
+                            workflowID is the workflow's own ID: the route is also served at
+                            POST /<workflowID>, as on Docker. A workflow group from before workflow IDs
+                            gives none. A UUID in either case, as the CanyonOS API takes an upload's.
+                          pattern: ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+                          type: string
                       required:
                       - agent
                       - method

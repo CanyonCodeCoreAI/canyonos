@@ -22,6 +22,8 @@ import type { SpawnedApi } from './process-test.utils';
 const ALICE = 'alice-token';
 const BOB = 'bob-token';
 const RESTORED_ID = crypto.randomUUID();
+// A workflow of the restored workflow group that has its own id.
+const WORKFLOW_ID = crypto.randomUUID();
 const NAMESPACE = 'team-a';
 const PROJECT = 'hello';
 const API_KEY_HASH = 'a'.repeat(64);
@@ -65,7 +67,15 @@ const project = () => ({
     auth: { apiKeyHash: API_KEY_HASH },
     endpoint: {
       routes: [
+        // From before workflow ids: served at /<workflow>/<agent>/<method> only.
         { workflow: 'helloworld', agent: 'HelloAgent', method: 'hello', arguments: ['name'] },
+        {
+          workflow: 'portfolio-6f1e2d3c',
+          workflowID: WORKFLOW_ID,
+          agent: 'Workflow',
+          method: 'main',
+          arguments: ['query'],
+        },
       ],
     },
   },
@@ -245,6 +255,14 @@ describe('the Kubernetes target', () => {
             method: 'hello',
             arguments: ['name'],
             url: 'http://canyonos-endpoint.team-a.svc:8080/helloworld/HelloAgent/hello',
+          },
+          {
+            workflow: 'portfolio-6f1e2d3c',
+            workflow_id: WORKFLOW_ID,
+            agent: 'Workflow',
+            method: 'main',
+            arguments: ['query'],
+            url: `http://canyonos-endpoint.team-a.svc:8080/${WORKFLOW_ID}`,
           },
         ],
       },

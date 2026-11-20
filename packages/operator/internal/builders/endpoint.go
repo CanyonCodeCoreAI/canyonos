@@ -212,18 +212,41 @@ func EndpointStatefulSet(p *canyonosv1alpha1.CanyonProject, image string) *appsv
 	}
 }
 
+// endpointRoute is one route as the endpoint reads it from CANYONOS_ENDPOINT_ROUTES
+// (canyonos_core/endpoint), with core's field names: workflow_id, not workflowID.
+type endpointRoute struct {
+	Workflow   string   `json:"workflow"`
+	WorkflowID string   `json:"workflow_id,omitempty"`
+	Agent      string   `json:"agent"`
+	Method     string   `json:"method"`
+	Arguments  []string `json:"arguments,omitempty"`
+}
+
+// endpointRoutes is the project's routes as the endpoint reads them.
+func endpointRoutes(p *canyonosv1alpha1.CanyonProject) string {
+	routes := make([]endpointRoute, 0, len(p.Spec.Endpoint.Routes))
+	for _, route := range p.Spec.Endpoint.Routes {
+		routes = append(routes, endpointRoute{
+			Workflow: route.Workflow, WorkflowID: route.WorkflowID,
+			Agent: route.Agent, Method: route.Method, Arguments: route.Arguments,
+		})
+	}
+	encoded, _ := json.Marshal(routes)
+	return string(encoded)
+}
+
 // endpointEnv is what Docker gives the endpoint's container, with the pod's own
 // address and the health and drain opt-ins. No LLM gateway variables: it runs no
 // agent.
 func endpointEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
-	routes, _ := json.Marshal(p.Spec.Endpoint.Routes)
+	routes := endpointRoutes(p)
 	return append([]corev1.EnvVar{
 		{Name: "POD_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 		}},
 		{Name: "CANYONOS_AGENT_HOST", Value: "$(POD_NAME)." + EndpointWorkload + "." + p.Namespace + ".svc"},
 		{Name: "CANYONOS_AGENT_PORT", Value: strconv.Itoa(AgentPort)},
-		{Name: "CANYONOS_ENDPOINT_ROUTES", Value: string(routes)},
+		{Name: "CANYONOS_ENDPOINT_ROUTES", Value: routes},
 		pollIntervalEnv(p),
 		logsEnabledEnv(p),
 		{Name: envHealthPort, Value: strconv.Itoa(HealthPort)},

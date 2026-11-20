@@ -89,6 +89,13 @@ type EndpointRoute struct {
 	// +required
 	Workflow string `json:"workflow"`
 
+	// workflowID is the workflow's own ID: the route is also served at
+	// POST /<workflowID>, as on Docker. A workflow group from before workflow IDs
+	// gives none. A UUID in either case, as the CanyonOS API takes an upload's.
+	// +kubebuilder:validation:Pattern=`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`
+	// +optional
+	WorkflowID string `json:"workflowID,omitempty"`
+
 	// agent is the name of the agent whose method the route serves, as in the
 	// workflow's config (for example Workflow).
 	// +kubebuilder:validation:MinLength=1
