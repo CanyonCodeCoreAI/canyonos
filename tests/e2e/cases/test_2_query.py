@@ -4,8 +4,7 @@
 """Queries through the deployed endpoint: a queued query answers 202, and the test
 query gives a result the workflow's own check accepts, through the REST API and
 through `canyonos test`, which sends its default query when given none in a
-workflow group folder; on workflows that call no model, twenty queries in a row all
-finish; a finished request stays readable after cleanup; a bad body and an unknown
+workflow group folder; twenty queries sent at once all finish; a finished request stays readable after cleanup; a bad body and an unknown
 request are refused; a plain hex string is not taken for a Future on workflows that
 take any text; and a failing agent is named in the error.
 
@@ -16,6 +15,7 @@ passes until the Global Controller has published the key's hash."""
 import base64
 import json
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -95,14 +95,21 @@ def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, 
 
 
 @pytest.mark.trait("quick")
-def test_twenty_queries_in_a_row_all_finish(recorder, deployed, check):
+def test_twenty_queries_at_once_all_finish(recorder, deployed, check):
     timeout = deployed.workflow.timeout
-    for _ in range(20):
-        request_id, result = result_of(
-            recorder, deployed.endpoint, deployed.query, timeout=timeout
-        )
-        problems = _problems(check, result, query=deployed.query, request_id=request_id)
-        assert not problems, problems
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        runs = [
+            pool.submit(
+                result_of, recorder, deployed.endpoint, deployed.query, timeout=timeout
+            )
+            for _ in range(20)
+        ]
+        for run in runs:
+            request_id, result = run.result()
+            problems = _problems(
+                check, result, query=deployed.query, request_id=request_id
+            )
+            assert not problems, problems
 
 
 def test_status_answers_after_cleanup(recorder, deployed, query_result):

@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read

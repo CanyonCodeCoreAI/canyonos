@@ -80,13 +80,13 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'e2e') &&
         (github.event.action != 'labeled' || github.event.label.name == 'e2e')))
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
       scenarios: ${{ steps.list.outputs.scenarios }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -103,14 +103,14 @@ jobs:
 
   workflow:
     needs: workflows
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         workflow: ${{ fromJson(needs.workflows.outputs.matrix) }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -123,15 +123,15 @@ jobs:
       - run: uv sync --locked
 
       # Each job builds the three images once; the harness builds only the ones not named here.
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-core
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -139,12 +139,14 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-web
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/api/Dockerfile
           load: true
           tags: canyonos-api:ci
+          cache-from: type=gha,scope=canyonos-api
 
       - name: Run the cases for ${{ matrix.workflow }}
         env:
@@ -174,7 +176,7 @@ jobs:
     name: Agents on Python ${{ matrix.python }}
     # Nightly and by hand; pull requests and main cover the default Python through `workflow`.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -183,7 +185,7 @@ jobs:
         # NEWEST_IMAGE_PYTHON_MINOR in packages/core/canyonos_core/stub_generator.py. Bump the two together.
         python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -195,15 +197,15 @@ jobs:
 
       - run: uv sync --locked
 
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-core
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -211,12 +213,14 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-web
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/api/Dockerfile
           load: true
           tags: canyonos-api:ci
+          cache-from: type=gha,scope=canyonos-api
 
       # context-propagation is staged from examples/helloworld/helloworld, so its .python-version picks the agents' Python.
       - name: Run context-propagation with agents on Python ${{ matrix.python }}
@@ -248,14 +252,14 @@ jobs:
     # nothing runs the scenarios too.
     needs: workflows
     if: github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.workflows)
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         scenario: ${{ fromJson(needs.workflows.outputs.scenarios) }}
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -267,15 +271,15 @@ jobs:
 
       - run: uv sync --locked
 
-      - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-core
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -283,12 +287,14 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
-      - uses: useblacksmith/build-push-action@v2 # v7.4.0
+          cache-from: type=gha,scope=canyonos-web
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: packages/api/Dockerfile
           load: true
           tags: canyonos-api:ci
+          cache-from: type=gha,scope=canyonos-api
 
       - name: Run ${{ matrix.scenario }}
         env:
@@ -318,10 +324,10 @@ jobs:
     # results: one cut short before uploading any is reported as failed.
     needs: [workflows, workflow, scenarios]
     if: always() && (needs.workflow.result != 'skipped' || needs.scenarios.result != 'skipped')
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: useblacksmith/checkout@v1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
