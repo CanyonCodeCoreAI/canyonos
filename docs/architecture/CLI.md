@@ -39,7 +39,7 @@ On Kubernetes, the CLI makes the same calls to the cluster's CanyonOS API throug
 
 ## Talking to the CanyonOS API
 
-The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with the control key in `~/.canyonos/control_key`; on Kubernetes the cluster's, through a port-forward, with the kubectl login. `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
+The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with the control key in `~/.canyonos/control_key`; on Kubernetes the cluster's, through a port-forward, with the kubectl login as a bearer token: the kubeconfig's `token`, the one in its `tokenFile` (a pod's ServiceAccount), or its login plugin's, never a client certificate (`kubernetes_state` in `canyonos/kubernetes_target.py`). `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
 
 | Request | What it does |
 | --- | --- |
@@ -48,6 +48,7 @@ The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboar
 | `PUT G/workflows/<workflow_id>` | Uploads one workflow as a gzip tar; the API keeps it only if it passes `canyonos validate`'s checks, else answers their findings |
 | `GET G` | The deploy's phase, the last apply's outcome, the [endpoint record](ENDPOINT.md#where-callers-find-it) and each agent's replicas |
 | `GET G/workflows` | The uploaded workflows, with each one's `config/test_query.txt`, for `canyonos test` |
+| `GET G/workflows/<workflow_id>/graph` | Which agents each agent of the workflow can call, read from its code when it was uploaded; the platform's workflow page draws it |
 | `GET G/logs/controller?tail=N&follow=` | The Global Controller's log |
 | `GET G/logs/agents/<name>?tail=N` | The last log lines of an agent's (`<workflow>.<agent>`) replicas |
 | `GET G/health` | The checks `canyonos doctor` shows |

@@ -35,7 +35,12 @@ args = sys.argv[1:]
 with open(os.path.join(here, "kubectl.jsonl"), "a") as log:
     log.write(json.dumps(args) + "\\n")
 if args[:2] == ["config", "view"]:
-    print(json.dumps({"users": [{"user": {"token": "%(token)s"}}]}))
+    user_path = os.path.join(here, "user.json")
+    if os.path.exists(user_path):
+        user = json.load(open(user_path))
+    else:
+        user = {"token": "%(token)s"}
+    print(json.dumps({"users": [{"user": user}]}))
 elif args[:2] == ["config", "current-context"]:
     print("kind-e2e")
 elif "port-forward" in args:
@@ -76,11 +81,14 @@ def _said(result: subprocess.CompletedProcess[str]) -> str:
     return " ".join((result.stdout + result.stderr).split())
 
 
-def _kubernetes_group(case: CliCase, answers: dict) -> tuple[dict[str, str], Path]:
+def _kubernetes_group(
+    case: CliCase, answers: dict, user: dict | None = None
+) -> tuple[dict[str, str], Path]:
     """Write a `target: kubernetes` workflow group in the case's folder and the
     stand-in `kubectl` and `docker`, the API answering `answers` (by method, a status
-    and a JSON body); return the environment that puts them on PATH and the folder
-    the stand-in records into."""
+    and a JSON body) and the kubeconfig's user signing in as `user` (a token by
+    default); return the environment that puts them on PATH and the folder the
+    stand-in records into."""
     (case.cwd / "workflow_group.yaml").write_text(
         f"workflow_group_id: {WORKFLOW_GROUP_ID}\n"
         "target: kubernetes\n"
@@ -97,6 +105,8 @@ def _kubernetes_group(case: CliCase, answers: dict) -> tuple[dict[str, str], Pat
     records = case.root / "kubectl"
     records.mkdir()
     (records / "answers.json").write_text(json.dumps(answers))
+    if user is not None:
+        (records / "user.json").write_text(json.dumps(user))
     environment = {
         "PATH": f"{bin_dir}{os.pathsep}{case.env['PATH']}",
         "FAKE_KUBECTL_DIR": str(records),
@@ -177,6 +187,48 @@ def test_status_reaches_the_cluster_api_through_the_dashboard_api_forward(
             "authorization": f"Bearer {KUBE_TOKEN}",
         }
     ]
+
+
+UNKNOWN_GROUP = {
+    "GET": [
+        404,
+        {
+            "error": "workflow_groups.unknown_workflow_group",
+            "message": f'Workflow group "{WORKFLOW_GROUP_ID}" was not found',
+        },
+    ]
+}
+
+
+def test_a_token_file_signs_in_with_the_token_in_it(cli_case: CliCase, close_forwards):
+    # A pod's ServiceAccount, as a platform deploying from inside the cluster signs in.
+    token_file = cli_case.root / "serviceaccount-token"
+    token_file.write_text("e2e-file-token\n")
+    environment, records = _kubernetes_group(
+        cli_case, UNKNOWN_GROUP, user={"tokenFile": str(token_file)}
+    )
+
+    result = cli_case.run_cli(["status", "--json"], env=environment, timeout=60)
+
+    assert result.returncode == 3, _said(result)
+    _assert_forwarded_to_the_dashboard_api(records)
+    assert [r["authorization"] for r in _lines(records / "requests.jsonl")] == [
+        "Bearer e2e-file-token"
+    ]
+
+
+def test_a_context_without_a_token_fails_and_says_so(cli_case: CliCase):
+    environment, records = _kubernetes_group(
+        cli_case,
+        UNKNOWN_GROUP,
+        user={"client-certificate-data": "Y2VydA==", "client-key-data": "a2V5"},
+    )
+
+    result = cli_case.run_cli(["status", "--json"], env=environment, timeout=60)
+
+    assert result.returncode == 1, _said(result)
+    assert "signs in without a token" in _said(result), _said(result)
+    assert _port_forwards(records) == []
 
 
 @pytest.mark.parametrize(

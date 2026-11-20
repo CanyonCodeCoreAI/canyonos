@@ -15,11 +15,16 @@ import {
   record_change,
 } from './workflow-groups.apply';
 import { core_answer } from './workflow-groups.core';
-import { unknown_workflow, unknown_workflow_group } from './workflow-groups.errors';
+import {
+  graph_unavailable,
+  unknown_workflow,
+  unknown_workflow_group,
+} from './workflow-groups.errors';
 import { workflow_ids } from './workflow-groups.kubernetes';
 import { with_group_lock } from './workflow-groups.lock';
 import { workflow_groups_repo } from './workflow-groups.repo';
 import { target } from './workflow-groups.target';
+import { WorkflowGraphSchema } from './workflow-groups.types';
 import type { CoreReply } from './workflow-groups.core';
 import type { ApplyFailure } from './workflow-groups.target';
 import type {
@@ -30,6 +35,7 @@ import type {
   ReplicaLogs,
   Uploaded,
   Workflow,
+  WorkflowGraph,
   WorkflowGroupBodyInput,
   WorkflowGroups,
   WorkflowGroupStatus,
@@ -45,6 +51,9 @@ const PutWorkflowAnswerSchema = z.object({
   digests: z.record(z.string()),
   warnings: z.array(z.string()),
   test_query: z.string().nullable(),
+  // A core older than the graph sends none, and one this API can't read is dropped: either way
+  // the upload stands, without a graph.
+  graph: WorkflowGraphSchema.nullable().catch(null),
 });
 const PutWorkflowRefusalSchema = z.object({
   error: z.string(),
@@ -161,6 +170,7 @@ export async function put_workflow(
       name,
       digests: answer.digests,
       test_query: answer.test_query,
+      graph: answer.graph,
     });
     return { generation, warnings: answer.warnings };
   });
@@ -206,6 +216,19 @@ export async function list_workflows(workflow_group_id: string): Promise<Workflo
       .sort()
       .map((workflow_id) => workflow_view(workflow_id, workflows[workflow_id]!)),
   };
+}
+
+/** Which agents each agent of the workflow can call, as read from its code when it was last
+ * uploaded; 404 when it has none. */
+export async function get_workflow_graph(
+  workflow_group_id: string,
+  workflow_id: string
+): Promise<WorkflowGraph> {
+  const row = await workflow_groups_repo.find(workflow_group_id);
+  const workflow = (await target.uploaded_workflows(workflow_group_id, row))[workflow_id];
+  if (!workflow) throw unknown_workflow(workflow_id);
+  if (!workflow.graph) throw graph_unavailable(workflow_id);
+  return workflow.graph;
 }
 
 /** The workflow group's name and workflow_group.yaml as last uploaded, how far the apply loop

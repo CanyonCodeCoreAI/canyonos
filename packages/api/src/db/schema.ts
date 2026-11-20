@@ -13,6 +13,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+import type { WorkflowGraph } from '@api/modules/workflow-groups/workflow-groups.types';
+
 // snake_case column keys so `$inferSelect` matches the snake_case API payload directly — the repos
 // select the exact shape without a rename mapper.
 export const workflows = pgTable('workflows', {
@@ -37,12 +39,14 @@ export const workflows = pgTable('workflows', {
     .defaultNow(),
 });
 
-/** A workflow as its last upload left it: its name, each file's SHA-256 by `<name>/<path>`, and
- * its `config/test_query.txt`. */
+/** A workflow as its last upload left it: its name, each file's SHA-256 by `<name>/<path>`, its
+ * `config/test_query.txt`, and the agent graph read from its code, which uploads before the API
+ * read graphs, or one whose code couldn't be read, lack. */
 export interface StoredWorkflow {
   name: string;
   digests: Record<string, string>;
   test_query: string | null;
+  graph?: WorkflowGraph | null;
 }
 
 /** The fingerprints the Global Controller container was last started or reloaded with. */

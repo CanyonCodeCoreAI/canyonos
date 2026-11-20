@@ -216,6 +216,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/graph': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read a workflow's agent graph
+     * @description Which agents each agent of the workflow can call, and each call between them with the earlier calls it waits for, read from its code without running it when it was last uploaded. Whether a call runs, how often, and its order beyond that are what a request's trace shows. 404 `unknown_workflow` if it was never uploaded, `graph_unavailable` if its code couldn't be read then or it was uploaded before the API read graphs.
+     */
+    get: operations['getWorkflowGraph'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/v1/workflow-groups/{workflow_group_id}/logs/controller': {
     parameters: {
       query?: never;
@@ -961,6 +981,48 @@ export interface components {
     Workflows: {
       workflows: components['schemas']['Workflow'][];
     };
+    WorkflowGraphRoute: {
+      agent: string;
+      method: string | null;
+    };
+    WorkflowGraphAgent: {
+      name: string;
+      entrypoint: string | null;
+      functions: string[];
+      endpoint: boolean;
+      read: boolean;
+    };
+    WorkflowGraphEdge: {
+      source: string;
+      target: string;
+      methods: string[];
+    };
+    WorkflowGraphCall: {
+      id: string;
+      source: string;
+      target: string;
+      method: string;
+      declared: boolean;
+      path: string;
+      line: number;
+      waits_on: string[];
+      after: string[];
+    };
+    WorkflowGraphNote: {
+      agent: string;
+      path: string;
+      line: number;
+      note: string;
+    };
+    WorkflowGraph: {
+      version: number;
+      workflow: string;
+      routes: components['schemas']['WorkflowGraphRoute'][];
+      agents: components['schemas']['WorkflowGraphAgent'][];
+      edges: components['schemas']['WorkflowGraphEdge'][];
+      calls: components['schemas']['WorkflowGraphCall'][];
+      notes: components['schemas']['WorkflowGraphNote'][];
+    };
     RedisClientTls: {
       ca: string;
       cert: string;
@@ -995,6 +1057,7 @@ export interface components {
         | 'workflow_groups.upload_too_large'
         | 'workflow_groups.unknown_workflow_group'
         | 'workflow_groups.unknown_workflow'
+        | 'workflow_groups.graph_unavailable'
         | 'workflow_groups.unknown_agent'
         | 'workflow_groups.not_running'
         | 'workflow_groups.replicas_unreadable'
@@ -2825,6 +2888,137 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Workflows'];
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  getWorkflowGraph: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorkflowGraph'];
         };
       };
       /** @description Response for status 400 */

@@ -26,6 +26,7 @@ import {
   delete_workflow,
   delete_workflow_group,
   get_status,
+  get_workflow_graph,
   list_workflow_groups,
   list_workflows,
   put_workflow,
@@ -232,6 +233,26 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
       description: 'Every uploaded workflow, by workflow_id.',
     },
   })
+  .get(
+    '/:workflow_group_id/workflows/:workflow_id/graph',
+    ({ params }) => get_workflow_graph(params.workflow_group_id, params.workflow_id),
+    {
+      params: GroupWorkflowParams,
+      response: { 200: 'WorkflowGraph', ...refusals, 404: refused },
+      detail: {
+        ...doc,
+        operationId: 'getWorkflowGraph',
+        summary: "Read a workflow's agent graph",
+        description:
+          'Which agents each agent of the workflow can call, and each call between them with ' +
+          'the earlier calls it waits for, read from its code without running it when it was ' +
+          'last uploaded. Whether a call runs, how often, and its order beyond that are what a ' +
+          "request's trace shows. 404 `unknown_workflow` if it was never uploaded, " +
+          "`graph_unavailable` if its code couldn't be read then or it was uploaded before the " +
+          'API read graphs.',
+      },
+    }
+  )
   .get(
     '/:workflow_group_id/logs/controller',
     (context) => {

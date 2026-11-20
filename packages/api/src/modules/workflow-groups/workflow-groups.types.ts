@@ -160,6 +160,62 @@ export const WorkflowSchema = z.object({
 
 export const WorkflowsSchema = z.object({ workflows: z.array(WorkflowSchema) });
 
+// Which agents each agent of a workflow can call, read from its code without running it when it
+// was uploaded (canyonos_core/graph.py). `version` changes when a field changes meaning.
+export const WorkflowGraphRouteSchema = z.object({
+  agent: z.string(),
+  method: z.string().nullable(),
+});
+
+// `read` is false for an agent with no code of its own, such as a database.
+export const WorkflowGraphAgentSchema = z.object({
+  name: z.string(),
+  entrypoint: z.string().nullable(),
+  functions: z.array(z.string()),
+  endpoint: z.boolean(),
+  read: z.boolean(),
+});
+
+// One agent can call another, with the methods it calls on it.
+export const WorkflowGraphEdgeSchema = z.object({
+  source: z.string(),
+  target: z.string(),
+  methods: z.array(z.string()),
+});
+
+// One call in the code from an agent to another, and the earlier calls it can't start before:
+// those whose results it takes (`waits_on`), and those its caller waited on first (`after`).
+// `declared` is whether the method is among the target's `functions:`.
+export const WorkflowGraphCallSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  target: z.string(),
+  method: z.string(),
+  declared: z.boolean(),
+  path: z.string(),
+  line: z.number().int(),
+  waits_on: z.array(z.string()),
+  after: z.array(z.string()),
+});
+
+// What reading the code can't tell, such as a module loaded by name.
+export const WorkflowGraphNoteSchema = z.object({
+  agent: z.string(),
+  path: z.string(),
+  line: z.number().int(),
+  note: z.string(),
+});
+
+export const WorkflowGraphSchema = z.object({
+  version: z.number().int(),
+  workflow: z.string(),
+  routes: z.array(WorkflowGraphRouteSchema),
+  agents: z.array(WorkflowGraphAgentSchema),
+  edges: z.array(WorkflowGraphEdgeSchema),
+  calls: z.array(WorkflowGraphCallSchema),
+  notes: z.array(WorkflowGraphNoteSchema),
+});
+
 // What `canyonos deploy` registers with the dashboard on Docker, before the Global Controller
 // starts: each workflow's name by its workflow_id, and the Redis the dashboard reads them from.
 export const DashboardRegistrationSchema = WorkflowGroupRegistrationSchema;
@@ -181,6 +237,7 @@ export const WORKFLOW_GROUP_ERRORS = [
   'workflow_groups.upload_too_large',
   'workflow_groups.unknown_workflow_group',
   'workflow_groups.unknown_workflow',
+  'workflow_groups.graph_unavailable',
   'workflow_groups.unknown_agent',
   'workflow_groups.not_running',
   'workflow_groups.replicas_unreadable',
@@ -237,6 +294,12 @@ export const WORKFLOW_GROUP_MODELS = {
   Fingerprints: FingerprintsSchema,
   Workflow: WorkflowSchema,
   Workflows: WorkflowsSchema,
+  WorkflowGraphRoute: WorkflowGraphRouteSchema,
+  WorkflowGraphAgent: WorkflowGraphAgentSchema,
+  WorkflowGraphEdge: WorkflowGraphEdgeSchema,
+  WorkflowGraphCall: WorkflowGraphCallSchema,
+  WorkflowGraphNote: WorkflowGraphNoteSchema,
+  WorkflowGraph: WorkflowGraphSchema,
   RedisClientTls: RedisClientTlsSchema,
   DashboardRegistration: DashboardRegistrationSchema,
   DashboardWorkflow: DashboardWorkflowSchema,
@@ -263,6 +326,7 @@ export type ReplicaLogs = z.infer<typeof ReplicaLogsSchema>;
 export type Fingerprints = z.infer<typeof FingerprintsSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type Workflows = z.infer<typeof WorkflowsSchema>;
+export type WorkflowGraph = z.infer<typeof WorkflowGraphSchema>;
 export type DashboardRegistration = z.infer<typeof DashboardRegistrationSchema>;
 export type DashboardWorkflows = z.infer<typeof DashboardWorkflowsSchema>;
 export type WorkflowGroupError = z.infer<typeof WorkflowGroupErrorSchema>;

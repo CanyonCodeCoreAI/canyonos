@@ -144,6 +144,54 @@ class Workflows(TypedDict, closed=True):
     workflows: list[Workflow]
 
 
+class WorkflowGraphRoute(TypedDict, closed=True):
+    agent: str
+    method: str | None
+
+
+class WorkflowGraphAgent(TypedDict, closed=True):
+    name: str
+    entrypoint: str | None
+    functions: list[str]
+    endpoint: bool
+    read: bool
+
+
+class WorkflowGraphEdge(TypedDict, closed=True):
+    source: str
+    target: str
+    methods: list[str]
+
+
+class WorkflowGraphCall(TypedDict, closed=True):
+    id: str
+    source: str
+    target: str
+    method: str
+    declared: bool
+    path: str
+    line: int
+    waits_on: list[str]
+    after: list[str]
+
+
+class WorkflowGraphNote(TypedDict, closed=True):
+    agent: str
+    path: str
+    line: int
+    note: str
+
+
+class WorkflowGraph(TypedDict, closed=True):
+    version: int
+    workflow: str
+    routes: list[WorkflowGraphRoute]
+    agents: list[WorkflowGraphAgent]
+    edges: list[WorkflowGraphEdge]
+    calls: list[WorkflowGraphCall]
+    notes: list[WorkflowGraphNote]
+
+
 class RedisClientTls(TypedDict, closed=True):
     ca: str
     cert: str

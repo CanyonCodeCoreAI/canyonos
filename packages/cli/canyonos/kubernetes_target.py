@@ -104,22 +104,40 @@ def _exec_plugin_token(plugin):
     return json.loads(result.stdout)["status"].get("token")
 
 
+def _token_file_token(path):
+    """The token in the kubeconfig's `tokenFile` at `path`, as kubectl reads it: read on
+    each use, since a pod's ServiceAccount token there is rotated in place. kubectl
+    prints the path absolute, resolved against the kubeconfig that names it."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError as error:
+        raise RuntimeError(
+            f"Could not read the token file the current kubectl context names, {path}: "
+            f"{error.strerror}"
+        ) from None
+
+
 def kubernetes_state():
     """This folder's workflow group as `canyonos.api` takes it on Kubernetes: the local
     URL of a forward to the cluster's CanyonOS API (the chart's
     `canyonos-dashboard-api`), its workflow_group_id, and the user's kubectl login, a
-    token or one from its login plugin, in the headers every request sends."""
+    token, a token file (a pod's ServiceAccount) or a token from its login plugin, in
+    the headers every request sends."""
     user = json.loads(
         kubectl(["config", "view", "--raw", "--minify", "-o", "json"]).stdout
     )["users"][0]["user"]
     token = user.get("token")
+    if not token and user.get("tokenFile"):
+        token = _token_file_token(user["tokenFile"])
     if not token and "exec" in user:
         token = _exec_plugin_token(user["exec"])
     if not token:
         raise RuntimeError(
-            "The current kubectl context signs in with a client certificate, and "
-            "canyonos can only send the cluster a token. Switch to a context that "
-            "signs in with a token or a login plugin: kubectl config use-context <name>"
+            "The current kubectl context signs in without a token (with a client "
+            "certificate, say), and canyonos can only send the cluster a token. Switch "
+            "to a context that signs in with a token, a token file or a login plugin: "
+            "kubectl config use-context <name>"
         )
     try:
         port = open_forward(

@@ -16,3 +16,11 @@ export function unknown_workflow_group(workflow_group_id: string): AppError {
 export function unknown_workflow(workflow_id: string): AppError {
   return notFound('workflow_groups.unknown_workflow', `No workflow has the id ${workflow_id}`);
 }
+
+export function graph_unavailable(workflow_id: string): AppError {
+  return notFound(
+    'workflow_groups.graph_unavailable',
+    `Workflow ${workflow_id} has no agent graph: its code couldn't be read when it was ` +
+      'uploaded, or it was uploaded before the API read graphs. Run `canyonos deploy` again'
+  );
+}

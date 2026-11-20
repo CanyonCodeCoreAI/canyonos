@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { workflows } from '@api/db/schema';
+import { workflowGroups, workflows } from '@api/db/schema';
 import { join_controller_networks } from '@api/modules/registry/registry.network';
 import { registry_repo } from '@api/modules/registry/registry.repo';
 import type {
@@ -351,6 +351,9 @@ describe('the workflow groups API drives the Global Controller container', () =>
       });
 
       expect((await group().workflows.get({ $headers: control })).data).toEqual({ workflows: [] });
+      const no_graph = await v1(`/${workflow_group_id}/workflows/${helloworld_id}/graph`);
+      expect(no_graph.status).toBe(404);
+      expect(await no_graph.json()).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
       expect((await status()).generation).toBe(1);
     },
     APPLY_TIMEOUT_MS
@@ -377,6 +380,28 @@ describe('the workflow groups API drives the Global Controller container', () =>
           },
         ],
       });
+
+      const graph = await v1(`/${workflow_group_id}/workflows/${helloworld_id}/graph`);
+      expect(graph.status).toBe(200);
+      expect(await graph.json()).toMatchObject({
+        version: 1,
+        workflow: 'helloworld',
+        routes: [{ agent: 'Workflow', method: 'main' }],
+        edges: [{ source: 'Workflow', target: 'HelloAgent', methods: ['hello'] }],
+        calls: [{ source: 'Workflow', target: 'HelloAgent', method: 'hello', declared: true }],
+        notes: [],
+      });
+
+      // An upload from before the API read graphs, or one whose code couldn't be read, has none.
+      await db
+        .update(workflowGroups)
+        .set({
+          workflows: sql`jsonb_set(${workflowGroups.workflows}, ARRAY[${helloworld_id}::text, 'graph'], 'null'::jsonb)`,
+        })
+        .where(eq(workflowGroups.id, workflow_group_id));
+      const unread = await v1(`/${workflow_group_id}/workflows/${helloworld_id}/graph`);
+      expect(unread.status).toBe(404);
+      expect(await unread.json()).toMatchObject({ error: 'workflow_groups.graph_unavailable' });
 
       const started = await status_when(
         ({ applied_generation }) => applied_generation >= 2,
@@ -733,5 +758,260 @@ describe("the API's container joins the network of a workflow group's Global Con
     ).toHaveLength(1);
     // A workflow group with no Global Controller container has no network to join.
     expect(await join_controller_networks(api_name, crypto.randomUUID())).toBeNull();
+  }, 60_000);
+});
+
+describe("put-workflow reads each upload's agent graph from its code", () => {
+  const EXAMPLES = new URL('../../../../examples/', import.meta.url).pathname;
+
+  type Graph = {
+    agents: { name: string; endpoint: boolean; read: boolean }[];
+    edges: { source: string; target: string; methods: string[] }[];
+    calls: {
+      id: string;
+      source: string;
+      target: string;
+      method: string;
+      declared: boolean;
+      path: string;
+      waits_on: string[];
+      after: string[];
+    }[];
+    notes: { agent: string; path: string }[];
+    routes: { agent: string; method: string | null }[];
+  };
+
+  /** What `put-workflow` answers for `files` uploaded as workflow `workflow`, run as the API
+   * runs it: in a job container of the core image, with no network, in its /workspace.
+   * `python` runs `canyonos_core.cli` with the arguments after it. */
+  async function put_workflow_job(
+    workflow: string,
+    files: Record<string, string>,
+    python = 'python -m canyonos_core.cli'
+  ): Promise<{ answer: { graph: Graph | null }; stderr: string }> {
+    const child = Bun.spawn(
+      [
+        'docker',
+        'run',
+        '--rm',
+        '-i',
+        '--network',
+        'none',
+        '--entrypoint',
+        'sh',
+        CORE_IMAGE,
+        '-c',
+        'mkdir -p /tmp/workspace && cd /tmp/workspace && cat > /tmp/upload.tar.gz && ' +
+          `${python} put-workflow ${workflow} --archive /tmp/upload.tar.gz`,
+      ],
+      { stdin: await gzip_tar(files), stdout: 'pipe', stderr: 'pipe' }
+    );
+    const [stdout, stderr, exit_code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    if (exit_code !== 0) throw new Error(`put-workflow exited ${exit_code}: ${stdout}${stderr}`);
+    return { answer: JSON.parse(stdout) as { graph: Graph | null }, stderr };
+  }
+
+  async function graph_of(workflow: string, files: Record<string, string>): Promise<Graph> {
+    const { answer, stderr } = await put_workflow_job(workflow, files);
+    if (!answer.graph) throw new Error(`put-workflow read no graph: ${stderr}`);
+    return answer.graph;
+  }
+
+  async function example(folder: string): Promise<Record<string, string>> {
+    const files: Record<string, string> = {};
+    for await (const path of new Bun.Glob('**/*').scan({ cwd: `${EXAMPLES}${folder}` })) {
+      if (path.includes('__pycache__')) continue;
+      files[path] = await Bun.file(`${EXAMPLES}${folder}/${path}`).text();
+    }
+    return files;
+  }
+
+  const edges = (graph: Graph) =>
+    new Set(graph.edges.map((e) => `${e.source} -> ${e.target}.${e.methods.join('/')}`));
+  const by_target = (graph: Graph) => Object.fromEntries(graph.calls.map((c) => [c.target, c]));
+
+  test('pr_review calls each agent from its endpoint, each taking the one before', async () => {
+    const graph = await graph_of('pr_review', await example('pr_review/pr_review'));
+
+    expect(graph.routes).toEqual([{ agent: 'Workflow', method: 'review' }]);
+    expect(graph.agents.filter((a) => a.endpoint).map((a) => a.name)).toEqual(['Workflow']);
+    expect(edges(graph)).toEqual(
+      new Set([
+        'Workflow -> TestRunnerAgent.run',
+        'Workflow -> ReviewAgent.review',
+        'Workflow -> MergeAgent.merge',
+      ])
+    );
+    const calls = Object.fromEntries(graph.calls.map((c) => [c.method, c]));
+    expect(calls.run!.waits_on).toEqual([]);
+    expect(calls.review!.waits_on).toEqual([calls.run!.id]);
+    expect(calls.merge!.waits_on).toEqual([calls.review!.id]);
+    expect(graph.calls.every((c) => c.declared)).toBe(true);
+    expect(graph.notes).toEqual([]);
+  }, 60_000);
+
+  test('portfolio has a call between two agents below the endpoint, and stages that take what the ones before built', async () => {
+    const graph = await graph_of('portfolio', await example('portfolio/portfolio'));
+
+    expect(edges(graph)).toContain('MetricsAgent -> PriceAgent.get_history');
+    const from_workflow = Object.fromEntries(
+      graph.calls.filter((c) => c.source === 'Workflow').map((c) => [c.method, c])
+    );
+    const [parse, compute, assess] = ['parse', 'compute', 'assess'].map(
+      (method) => from_workflow[method]!.id
+    );
+    expect(from_workflow.parse!.waits_on).toEqual([]);
+    expect(from_workflow.compute!.waits_on).toEqual([parse!]);
+    expect(from_workflow.assess!.waits_on).toEqual([parse!, compute!].sort());
+    expect(from_workflow.summarize!.waits_on).toEqual([parse!, compute!, assess!].sort());
+  }, 60_000);
+
+  test('it reads every way an agent reaches another, and says what it cannot read', async () => {
+    const graph = await graph_of('reach', {
+      'config/workflow_config.yaml': [
+        'agents:',
+        '  - name: Alpha',
+        '    entrypoint: agents/alpha.py',
+        '    functions: [{name: go, returns: {type: str}}]',
+        '  - name: Beta',
+        '    entrypoint: agents/beta.py',
+        '    functions:',
+        '      - {name: run, arguments: [{name: x, type: str}], returns: {type: str}}',
+        '  - name: Gamma',
+        '    entrypoint: agents/gamma.py',
+        '    functions:',
+        '      - {name: run, arguments: [{name: query, type: str}], returns: {type: str}}',
+        '  - name: Delta',
+        '    entrypoint: agents/delta.py',
+        '    functions: [{name: run, returns: {type: str}}]',
+        '  - name: Store',
+        '    type: database',
+        '    image: redis:8',
+        '  - name: Workflow',
+        '    entrypoint: agents/workflow.py',
+        '    functions:',
+        '      - {name: main, arguments: [{name: query, type: str}], returns: {type: str}}',
+        'endpoint:',
+        '  routes:',
+        '    - {agent: Workflow, method: main}',
+        '',
+      ].join('\n'),
+      'agents/alpha.py': 'class Alpha(object):\n    def go(self):\n        return "done"\n',
+      'agents/beta.py': 'class Beta(object):\n    def run(self, x):\n        return x\n',
+      'agents/gamma.py': 'class Gamma(object):\n    def run(self, query):\n        return query\n',
+      // Loading a module by name: what it reaches only running the code can tell.
+      'agents/delta.py':
+        'import importlib\n\n\nclass Delta(object):\n    def run(self):\n' +
+        '        return str(importlib.import_module("agents.alpha"))\n',
+      // A helper module that calls an agent is read through.
+      'agents/helpers.py':
+        'from agents.gamma import Gamma\n\n\ndef ask(query):\n' +
+        '    return Gamma().run(query=query)\n',
+      // A module alias, an agent's object kept on `self`, and the helper.
+      'agents/workflow.py': [
+        'import agents.alpha as alpha_module',
+        'from agents.beta import Beta',
+        'from agents.helpers import ask',
+        '',
+        '',
+        'class Workflow(object):',
+        '    def __init__(self):',
+        '        self.beta = Beta()',
+        '',
+        '    def main(self, query: str):',
+        '        first = alpha_module.Alpha().go()',
+        '        second = self.beta.run(x=first)',
+        '        return ask(second)',
+        '',
+      ].join('\n'),
+    });
+
+    expect(edges(graph)).toEqual(
+      new Set(['Workflow -> Alpha.go', 'Workflow -> Beta.run', 'Workflow -> Gamma.run'])
+    );
+    const calls = by_target(graph);
+    expect(calls.Beta!.waits_on).toEqual([calls.Alpha!.id]);
+    expect(calls.Gamma!.path).toBe('agents/helpers.py');
+    expect(graph.agents.find((a) => a.name === 'Store')).toMatchObject({ read: false });
+    expect(graph.notes.map((n) => [n.agent, n.path])).toEqual([['Delta', 'agents/delta.py']]);
+  }, 60_000);
+
+  test('a call starts after the results its caller used before it, though it takes none of them', async () => {
+    const agent = (name: string, returns: string) =>
+      `class ${name}(object):\n    def run(self, q):\n        return ${returns}\n`;
+    const graph = await graph_of('chain', {
+      'config/workflow_config.yaml': [
+        'agents:',
+        ...[
+          ['Decide', 'dict'],
+          ['Write', 'str'],
+          ['Publish', 'dict'],
+        ].flatMap(([name, returns]) => [
+          `  - name: ${name}`,
+          `    entrypoint: agents/${name!.toLowerCase()}.py`,
+          '    functions:',
+          `      - {name: run, arguments: [{name: q, type: str}], returns: {type: ${returns}}}`,
+        ]),
+        '  - name: Workflow',
+        '    entrypoint: agents/workflow.py',
+        '    functions:',
+        '      - {name: main, arguments: [{name: query, type: str}], returns: {type: dict}}',
+        'endpoint:',
+        '  routes:',
+        '    - {agent: Workflow, method: main}',
+        '',
+      ].join('\n'),
+      'agents/decide.py': agent('Decide', '{"skip": False, "text": q}'),
+      'agents/write.py': agent('Write', 'q'),
+      'agents/publish.py': agent('Publish', '{"published": q}'),
+      // CanyonOS waits at `decision["skip"]`, so Publish starts after Decide; `print`, a
+      // library call, waits on Write's result as `.value()` would.
+      'agents/workflow.py': [
+        'from agents.decide import Decide',
+        'from agents.write import Write',
+        'from agents.publish import Publish',
+        '',
+        '',
+        'class Workflow(object):',
+        '    def main(self, query: str):',
+        '        decision = Decide().run(q=query)',
+        '        if decision["skip"]:',
+        '            return {}',
+        '        draft = Write().run(q=decision["text"])',
+        '        print(draft)',
+        '        return Publish().run(q=query)',
+        '',
+      ].join('\n'),
+    });
+
+    const calls = by_target(graph);
+    expect(calls.Decide).toMatchObject({ waits_on: [], after: [] });
+    expect(calls.Write!.waits_on).toEqual([calls.Decide!.id]);
+    expect(calls.Publish!.waits_on).toEqual([]);
+    expect(calls.Publish!.after).toEqual([calls.Decide!.id, calls.Write!.id].sort());
+  }, 60_000);
+
+  test('an upload whose graph cannot be read is kept, without a graph', async () => {
+    // Reading the graph fails however the code is written, so the upload alone decides.
+    const failing_read = [
+      "python -c 'import runpy, sys, canyonos_core.graph as graph",
+      'def unreadable(*args): raise RuntimeError("unreadable")',
+      'graph.build_graph = unreadable',
+      'sys.argv[0] = "canyonos_core.cli"',
+      'runpy.run_module("canyonos_core.cli", run_name="__main__")\'',
+    ].join('\n');
+
+    const { answer, stderr } = await put_workflow_job(
+      'helloworld',
+      await helloworld_files(),
+      failing_read
+    );
+
+    expect(answer).toMatchObject({ graph: null, test_query: 'CanyonOS' });
+    expect(stderr).toContain("Could not read helloworld's agent graph");
   }, 60_000);
 });

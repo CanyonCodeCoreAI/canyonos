@@ -66,7 +66,7 @@ export function core_error(reply: CoreReply, exit_code: number): string | null {
 }
 
 /** The answer of a command that succeeded, as `schema` reads it. */
-export function core_answer<T>(reply: CoreReply, schema: z.ZodType<T>): T {
+export function core_answer<T>(reply: CoreReply, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
   const parsed = schema.safeParse(reply.answer);
   if (reply.exit_code !== 0 || !parsed.success) {
     throw core_failed(reply.runner, reply.command, reply.exit_code, JSON.stringify(reply.answer));

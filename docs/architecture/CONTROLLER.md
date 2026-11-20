@@ -126,7 +126,7 @@ JSON object:
 
 | Commands                                                | Where they run                                                                                       | What they do                                                                                                                             |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `write-group-files`, `put-workflow`, `remove-workflows` | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it, remove workflows (`workspace_jobs.py`) |
+| `write-group-files`, `put-workflow`, `remove-workflows` | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it and read its agent graph (`graph.py`), remove workflows (`workspace_jobs.py`) |
 | `check`, `health`, `agent-logs`                         | `docker exec` in the running container                                                               | The config check before a reload, the health checks, a replica's logs (`controller_status.py`)                                           |
 
 Every `/v1/workflow-groups` request needs this machine's control key as
@@ -394,6 +394,7 @@ All paths are under `packages/core/canyonos_core/`.
 | `cli.py`                                  | `deploy`: the build, then `GlobalController`; the commands the API runs  |
 | `deploy_runner.py`, `deploy_progress.py`  | `run-deploy`, the container's main process, and its progress file        |
 | `workspace_jobs.py`, `controller_status.py` | The commands the CanyonOS API runs in a job container or by `docker exec` |
+| `graph.py`                                | Which agents each agent of an upload can call, read from its code without running it; `put-workflow` keeps it for `GET .../workflows/<workflow_id>/graph` |
 | `job_worker.py`, `kubernetes/commands.py` | On Kubernetes, the CanyonOS API's `core` container: its job queue, and the Kubernetes-only commands it runs |
 | `controller/global_controller.py`         | `GlobalController`: config publishing, poll loop, cleanup, teardown      |
 | `controller/orchestrator.py`              | `CanyonOrchestrator`, and `orchestrator_for`                             |

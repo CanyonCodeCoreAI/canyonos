@@ -459,6 +459,177 @@
         "required": ["workflows"],
         "additionalProperties": false
       },
+      "WorkflowGraphRoute": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": ["agent", "method"],
+        "additionalProperties": false
+      },
+      "WorkflowGraphAgent": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "entrypoint": {
+            "type": "string",
+            "nullable": true
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "endpoint": {
+            "type": "boolean"
+          },
+          "read": {
+            "type": "boolean"
+          }
+        },
+        "required": ["name", "entrypoint", "functions", "endpoint", "read"],
+        "additionalProperties": false
+      },
+      "WorkflowGraphEdge": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["source", "target", "methods"],
+        "additionalProperties": false
+      },
+      "WorkflowGraphCall": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "declared": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "waits_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "after": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "target",
+          "method",
+          "declared",
+          "path",
+          "line",
+          "waits_on",
+          "after"
+        ],
+        "additionalProperties": false
+      },
+      "WorkflowGraphNote": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": ["agent", "path", "line", "note"],
+        "additionalProperties": false
+      },
+      "WorkflowGraph": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "workflow": {
+            "type": "string"
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphRoute"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphAgent"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphEdge"
+            }
+          },
+          "calls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphCall"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphNote"
+            }
+          }
+        },
+        "required": ["version", "workflow", "routes", "agents", "edges", "calls", "notes"],
+        "additionalProperties": false
+      },
       "RedisClientTls": {
         "type": "object",
         "properties": {
@@ -554,6 +725,7 @@
               "workflow_groups.upload_too_large",
               "workflow_groups.unknown_workflow_group",
               "workflow_groups.unknown_workflow",
+              "workflow_groups.graph_unavailable",
               "workflow_groups.unknown_agent",
               "workflow_groups.not_running",
               "workflow_groups.replicas_unreadable",
@@ -2937,6 +3109,174 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Workflows"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response for status 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Response for status 401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Response for status 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response for status 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Response for status 409",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Response for status 413",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Response for status 422",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Response for status 429",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Response for status 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Response for status 502",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Response for status 503",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Response for status 504",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/graph": {
+      "get": {
+        "tags": ["WorkflowGroups"],
+        "security": [
+          {
+            "controlKey": []
+          },
+          {
+            "kubernetesToken": []
+          }
+        ],
+        "operationId": "getWorkflowGraph",
+        "summary": "Read a workflow's agent graph",
+        "description": "Which agents each agent of the workflow can call, and each call between them with the earlier calls it waits for, read from its code without running it when it was last uploaded. Whether a call runs, how often, and its order beyond that are what a request's trace shows. 404 `unknown_workflow` if it was never uploaded, `graph_unavailable` if its code couldn't be read then or it was uploaded before the API read graphs.",
+        "parameters": [
+          {
+            "name": "workflow_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "workflow_group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response for status 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowGraph"
                 }
               }
             }

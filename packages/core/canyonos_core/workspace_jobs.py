@@ -9,10 +9,12 @@ The CanyonOS API puts each command's input under `/tmp` of that container."""
 
 import json
 import os
+import sys
 import tarfile
 import tempfile
 
 from canyonos_core.controller.utils.config_env import read_dotenv
+from canyonos_core.graph import build_graph
 from canyonos_core.schema import CONFIG_PATH, DEPLOYMENT_CONFIG
 from canyonos_core.validate import ManifestNotFound, finding_text, validate_root
 from canyonos_core.workspace_upload import (
@@ -75,8 +77,9 @@ def put_workflow(workspace, name, archive_path):
     """Check the gzip tar of workflow `name` at `archive_path` as `canyonos validate`
     does, then unpack it into `workspace/<name>`, removing what its last upload had and
     this one lacks. Return its files' digests, keyed `<name>/<path>`, a warning when its
-    `.env` lacks values its `.env.example` names, and its test query. On a bad archive,
-    an unsafe path or findings, raise CommandError and leave the old files in place."""
+    `.env` lacks values its `.env.example` names, its test query, and its agent graph
+    (graph.py), null when it can't be read. On a bad archive, an unsafe path or
+    findings, raise CommandError and leave the old files in place."""
     _check_name(name, code="workflow_invalid", findings=[], warnings=[])
     workflow_dir = os.path.join(workspace, name)
     try:
@@ -89,6 +92,7 @@ def put_workflow(workspace, name, archive_path):
                 archive.extractall(checked, members, filter="tar")
                 warnings = _env_warnings(checked, name)
                 _validate(checked, name, warnings)
+                graph = _graph(checked, name)
             previous = _read_entries(workspace, name) or {}
             # Kept first with both uploads' entries, so an unpack cut short is still
             # cleaned up by the next upload.
@@ -109,7 +113,18 @@ def put_workflow(workspace, name, archive_path):
         },
         "warnings": warnings,
         "test_query": _test_query(workflow_dir),
+        "graph": graph,
     }
+
+
+def _graph(workflow_dir, name):
+    """Workflow `name`'s agent graph, read from `workflow_dir`, or None when reading it
+    fails: the graph only describes the workflow, so it never refuses an upload."""
+    try:
+        return build_graph(workflow_dir, name)
+    except Exception as e:  # noqa: BLE001 - any failure here leaves the upload as is
+        print(f"Could not read {name}'s agent graph: {e!r}", file=sys.stderr)
+        return None
 
 
 def _env_warnings(workflow_dir, name):
