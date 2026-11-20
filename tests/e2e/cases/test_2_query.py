@@ -96,8 +96,6 @@ def test_canyonos_test_without_a_query_sends_test_query_txt(recorder, deployed, 
 
 @pytest.mark.trait("quick")
 def test_twenty_queries_in_a_row_all_finish(recorder, deployed, check):
-    if "llm" in deployed.workflow.traits:
-        pytest.skip("the AWS account's model rate limit can't take 20 queries in a row")
     timeout = deployed.workflow.timeout
     for _ in range(20):
         request_id, result = result_of(

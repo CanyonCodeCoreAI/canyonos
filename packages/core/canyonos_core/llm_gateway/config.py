@@ -23,7 +23,7 @@ class Config:
     read_timeout: float
 
     bedrock_region: str
-    bedrock_upstream_host: str
+    bedrock_upstream_url: str
 
     redis_host: str
     redis_port: int
@@ -43,8 +43,9 @@ class Config:
             connect_timeout=float(os.getenv("GATEWAY_CONNECT_TIMEOUT", "10")),
             read_timeout=float(os.getenv("GATEWAY_READ_TIMEOUT", "600")),
             bedrock_region=region,
-            bedrock_upstream_host=os.getenv(
-                "BEDROCK_UPSTREAM_HOST", f"bedrock-runtime.{region}.amazonaws.com"
+            bedrock_upstream_url=os.getenv(
+                "BEDROCK_UPSTREAM_URL",
+                f"https://bedrock-runtime.{region}.amazonaws.com",
             ),
             redis_host=os.getenv("CANYONOS_REDIS_HOST", "localhost"),
             redis_port=int(os.getenv("CANYONOS_REDIS_PORT", "6379")),

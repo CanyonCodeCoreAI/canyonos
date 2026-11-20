@@ -62,8 +62,8 @@ scripts/kind/e2e.sh
 ```
 
 `e2e.sh` tests the whole path, on the cluster from [Kubernetes on
-kind](DEVELOPMENT.md#kubernetes-on-kind). CI runs it (`Kubernetes E2E`) on each pull
-request, and on `main`, for changes to Core, the CLI, the API, the operator (the chart
+kind](DEVELOPMENT.md#kubernetes-on-kind). CI runs it (`Kubernetes E2E`) on `main` and
+on a pull request with the `e2e` label, for changes to Core, the CLI, the API, the operator (the chart
 included) or `scripts/kind`. It builds the images with `bun run canyonos:dev
 --images-only`, installs them (`operator.sh`), and deploys `examples/helloworld` with
 the real CLI as a user who may only edit one namespace. It then checks requests, the

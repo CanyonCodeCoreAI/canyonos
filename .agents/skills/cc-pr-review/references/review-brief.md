@@ -56,8 +56,8 @@ report each conflicting hunk. Review what would actually land.
    conflict situation, whether CI has run on the PR merged with current
    `main` (if not, ask to push the merge so CI runs during the review), and
    the test plan. Wait for the owner's OK.
-2. Tests on real infra: CI's "E2E", "API E2E" and "CI" runs are the evidence
-   when they ran on the current merge with no conflicts; run locally only
+2. Tests on real infra: CI's "E2E", "API E2E" (both only while the PR has the
+   `e2e` label) and "CI" runs are the evidence when they ran on the current merge with no conflicts; run locally only
    what they miss, or all of this when they are stale or absent. Build
    `canyonos-core:<tag>` from the merged branch,
    run the real CLI against it on copies of `examples/helloworld` (no LLM)

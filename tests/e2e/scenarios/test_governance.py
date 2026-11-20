@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The governance rules on examples/pr_review, with real agents and a real Bedrock
-call: the deploy seeds `governance.yaml` as written, a required agent going down
-refuses its dependents (an inner call, then the endpoint's root call with a 403
+"""The governance rules on examples/pr_review, with real agents and a call to the
+fake Bedrock: the deploy seeds `governance.yaml` as written, a required agent going
+down refuses its dependents (an inner call, then the endpoint's root call with a 403
 that `/status` repeats), the query passes again once it is back, spend under the
 threshold leaves ReviewAgent's model alone, over it switches the model and over a
 deny rule refuses the agent, a config reload seeds the file's new agents without
@@ -11,10 +11,9 @@ touching the rules edited in Redis, and a crash-looping replica counts as down.
 
 Rules and spend are written straight to the controller's Redis, as the dashboard
 API does, so the deploy runs without the dashboard: its spend publisher would
-overwrite the forged figures every minute. It needs AWS keys allowed to invoke both
-Bedrock models in us-east-1; BEDROCK_SWITCH_MODEL_ID names the model the spend rule
-switches to. The cases are steps on one deploy: once one fails, the rest are
-skipped."""
+overwrite the forged figures every minute. BEDROCK_SWITCH_MODEL_ID names the model
+the spend rule switches to. The cases are steps on one deploy: once one fails, the
+rest are skipped."""
 
 import copy
 import json
@@ -245,9 +244,9 @@ def check():
 
 @pytest.fixture(scope="module")
 def governed(recorder, images, tmp_path_factory):
-    """pr_review staged with the real AWS keys and deployed without the dashboard;
-    the cases start once the reconciler counts every agent up. Stopped afterwards,
-    whatever the cases did to it."""
+    """pr_review staged with the AWS keys from the environment and deployed without
+    the dashboard; the cases start once the reconciler counts every agent up. Stopped
+    afterwards, whatever the cases did to it."""
     workflow = load_workflow("pr_review")
     switch_model = os.environ.get("BEDROCK_SWITCH_MODEL_ID") or DEFAULT_SWITCH_MODEL
     directory = stage(

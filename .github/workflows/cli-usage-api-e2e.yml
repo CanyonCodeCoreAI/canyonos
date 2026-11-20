@@ -17,6 +17,7 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'packages/cli-usage-api/**'
       - 'packages/cli/**'
@@ -29,7 +30,8 @@ on:
       - 'uv.lock'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Adding a label other than `e2e` gets a group of its own, so it cancels nothing.
+  group: ${{ github.workflow }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'e2e') && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -37,7 +39,12 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    # A pull request runs this only while it has the `e2e` label.
+    if: >-
+      github.event_name != 'pull_request' || (
+        contains(github.event.pull_request.labels.*.name, 'e2e') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 15
 
     steps:

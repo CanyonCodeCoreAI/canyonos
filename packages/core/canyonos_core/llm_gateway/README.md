@@ -82,7 +82,7 @@ boto3.client("bedrock-runtime").invoke_model(
 | `GATEWAY_HOST` / `GATEWAY_PORT` | `127.0.0.1` / `8080` | where the gateway listens |
 | `GATEWAY_CONNECT_TIMEOUT` / `GATEWAY_READ_TIMEOUT` | `10` / `600` | upstream timeouts (s) |
 | `BEDROCK_REGION` (or `AWS_REGION`) | `us-east-1` | Bedrock region |
-| `BEDROCK_UPSTREAM_HOST` | `bedrock-runtime.<region>.amazonaws.com` | override Bedrock host |
+| `BEDROCK_UPSTREAM_URL` | `https://bedrock-runtime.<region>.amazonaws.com` | override Bedrock address |
 
 ## Telemetry & Metrics
 

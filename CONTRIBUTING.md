@@ -55,8 +55,8 @@ A pull request can merge once all of these pass:
 - **CI**: the checks in step 3, as `CI / test`, `CLI on …` and, for the operator,
   `Operator / test`.
 - **Build**: the container images still build (`CanyonOS images`, `Core image`).
-- **E2E**: the deploy suites need model and AWS keys, so they skip on a pull request
-  from a fork. Run them locally (see [Testing](docs/contributing/TESTING.md)); a
+- **E2E**: the deploy suites run on a pull request only while it has the `e2e` label,
+  and need model and AWS keys, so they skip on a pull request from a fork. Run them locally (see [Testing](docs/contributing/TESTING.md)); a
   maintainer runs them before merging.
 - **Code scanning**: no new CodeQL or Semgrep alerts at the blocking severity.
 

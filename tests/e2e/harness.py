@@ -33,6 +33,8 @@ import redis
 import requests
 import yaml
 
+from . import fake_bedrock
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_API = "canyonos-dashboard-api"
 DASHBOARD_WEB = "canyonos-dashboard-web"
@@ -566,8 +568,8 @@ def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -
     at its pinned commit, with the `workflow_group.yaml` of the workflow group folder a
     source from this repo sits in; then its committed port as `.canyon`; then its
     overlay files; then its `workflow_group.yaml`, if any, moved up into the workflow group
-    folder; then the workflow's `env` and `secrets` added to the workflow folder's
-    `.env`."""
+    folder; then the workflow's `env` and `secrets`, and the fake Bedrock's address as
+    `BEDROCK_UPSTREAM_URL`, added to the workflow folder's `.env`."""
     from .workflows import Git
 
     deployment = parent / workflow.name
@@ -594,7 +596,10 @@ def stage(recorder: Recorder, workflow, parent: Path, secrets: dict[str, str]) -
         shutil.copy(file, staged / target)
     if (staged / "workflow_group.yaml").is_file():
         (staged / "workflow_group.yaml").rename(deployment / "workflow_group.yaml")
-    _write_env(staged / ".env", {**workflow.env, **secrets})
+    _write_env(
+        staged / ".env",
+        {**workflow.env, **secrets, "BEDROCK_UPSTREAM_URL": fake_bedrock.url()},
+    )
     return deployment
 
 

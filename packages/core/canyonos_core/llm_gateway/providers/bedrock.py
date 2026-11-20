@@ -109,7 +109,7 @@ class BedrockProvider(Provider):
         self._client = boto3.client(
             "bedrock-runtime",
             region_name=cfg.bedrock_region,
-            endpoint_url=f"https://{cfg.bedrock_upstream_host}",
+            endpoint_url=cfg.bedrock_upstream_url,
         )
 
     def forward(self, req, subpath, body):

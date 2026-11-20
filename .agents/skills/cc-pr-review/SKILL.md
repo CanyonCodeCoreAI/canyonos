@@ -38,7 +38,7 @@ filled in: the brief is that session's only context.
    PR branch only when the owner says "push"; "merge it" or "get it in" is
    not that word, and the owner merges the PR on GitHub.
 3. **Real infra.** PR workflows run on the PR merged with `main` as of its
-   last push: "E2E" deploys `portfolio` and `helloworld` with the real CLI,
+   last push, "E2E" and "API E2E" only while the PR has the `e2e` label: "E2E" deploys `portfolio` and `helloworld` with the real CLI,
    "API E2E" runs `api:test:e2e`, "CI" runs `check` and `test`. When the
    local merge had no conflicts and nothing landed on `main` after those runs
    started, they are the evidence; do not rerun them. A conflicting PR runs

@@ -5,12 +5,14 @@ name: E2E
 
 # Deploys the workflows under tests/e2e/workflows with the CLI and images from this
 # checkout, runs tests/e2e/cases against each one, and runs tests/e2e/scenarios.
-# A pull request and a push to main run every workflow not marked release_only.
-# Before a release, run it by hand with `release` to add those workflows too.
+# A pull request with the `e2e` label and a push to main run every workflow not marked
+# release_only. Before a release, run it by hand with `release` to add those workflows too.
+# Each night it runs only the agents on every supported Python.
 # The paths are everything the CLI, the three images and the workflows are built from.
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'packages/cli/**'
       - 'packages/core/**'
@@ -56,11 +58,13 @@ on:
         required: false
         default: release
         type: string
+  schedule:
+    - cron: "0 7 * * *"
 
-# A new push cancels the run it replaces; a run by hand has a group of its own, so
-# a merge to main never cancels a release check.
+# A new push cancels the run it replaces; a run by hand, the nightly run, or adding a
+# label other than `e2e`, has a group of its own, so it cancels nothing.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event.action == 'labeled' && github.event.label.name != 'e2e')) && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -69,11 +73,14 @@ permissions:
 jobs:
   workflows:
     # Fork and Dependabot PRs get no secrets, and without the model keys the runs
-    # cannot be real.
+    # cannot be real. A pull request runs only while it has the `e2e` label.
     if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+      github.actor != 'dependabot[bot]' && github.event_name != 'schedule' &&
+      (github.event_name != 'pull_request' || (
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'e2e') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'e2e')))
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
@@ -96,7 +103,7 @@ jobs:
 
   workflow:
     needs: workflows
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -116,15 +123,15 @@ jobs:
       - run: uv sync --locked
 
       # Each job builds the three images once; the harness builds only the ones not named here.
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
-          cache-from: type=gha,scope=canyonos-core
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -132,14 +139,12 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
-          cache-from: type=gha,scope=canyonos-web
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
           file: packages/api/Dockerfile
           load: true
           tags: canyonos-api:ci
-          cache-from: type=gha,scope=canyonos-api
 
       - name: Run the cases for ${{ matrix.workflow }}
         env:
@@ -167,11 +172,9 @@ jobs:
 
   python:
     name: Agents on Python ${{ matrix.python }}
-    # The same rule as `workflows`.
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    # Nightly and by hand; pull requests and main cover the default Python through `workflow`.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -192,15 +195,15 @@ jobs:
 
       - run: uv sync --locked
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: packages/core
           file: packages/core/Dockerfile
           load: true
           tags: canyonos-core:ci
-          cache-from: type=gha,scope=canyonos-core
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
           file: packages/web/Dockerfile
@@ -208,14 +211,12 @@ jobs:
           build-args: VITE_API_URL=/api
           load: true
           tags: canyonos-web:ci
-          cache-from: type=gha,scope=canyonos-web
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - uses: useblacksmith/build-push-action@v2 # v7.4.0
         with:
           context: .
           file: packages/api/Dockerfile
           load: true
           tags: canyonos-api:ci
-          cache-from: type=gha,scope=canyonos-api
 
       # context-propagation is staged from examples/helloworld/helloworld, so its .python-version picks the agents' Python.
       - name: Run context-propagation with agents on Python ${{ matrix.python }}
@@ -243,14 +244,11 @@ jobs:
           retention-days: 14
 
   scenarios:
-    # The same rule as `workflows`. A run by hand with workflow names runs only those
-    # workflows; `pr`, `release` or nothing runs the scenarios too.
+    # A run by hand with workflow names runs only those workflows; `pr`, `release` or
+    # nothing runs the scenarios too.
     needs: workflows
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.workflows))
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    if: github.event_name != 'workflow_dispatch' || contains(fromJson('["", "pr", "release"]'), inputs.workflows)
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -320,7 +318,7 @@ jobs:
     # results: one cut short before uploading any is reported as failed.
     needs: [workflows, workflow, scenarios]
     if: always() && (needs.workflow.result != 'skipped' || needs.scenarios.result != 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2604
+    runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 10
     steps:
       - uses: useblacksmith/checkout@v1 # v7.0.1

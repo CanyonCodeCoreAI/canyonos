@@ -27,7 +27,7 @@ def main() -> None:
         "llm_gateway on http://%s:%d  (bedrock=%s [%s])",
         cfg.host,
         cfg.port,
-        cfg.bedrock_upstream_host,
+        cfg.bedrock_upstream_url,
         cfg.bedrock_region,
     )
     # threaded so concurrent callers don't serialize; dev server is fine for a

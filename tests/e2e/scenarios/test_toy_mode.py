@@ -44,8 +44,8 @@ LLM_CALLS = ("IntentAgent.parse", "AdvisorAgent.summarize")
 
 @pytest.fixture
 def toy(recorder, images, tmp_path):
-    """portfolio staged with the real AWS keys and `deploy_mode: toy`, and deployed;
-    stopped afterwards."""
+    """portfolio staged with the AWS keys from the environment and `deploy_mode: toy`,
+    and deployed; stopped afterwards."""
     workflow = load_workflow(WORKFLOW)
     directory = stage(recorder, workflow, tmp_path, secrets_of(workflow))
     settings = directory / "workflow_group.yaml"
