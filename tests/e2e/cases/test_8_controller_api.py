@@ -35,6 +35,7 @@ ROUTES = {
     (f"{PREFIX}/{{workflow_group_id}}/logs/agents/{{agent_id}}", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/health", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/workflows", "get"),
+    (f"{WORKFLOW}/graph", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/dashboard", "put"),
     # The dashboard's routes of one workflow, which take the API key, not the control key.
     (f"{WORKFLOW}/requests", "get"),

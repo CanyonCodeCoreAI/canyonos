@@ -79,7 +79,18 @@ elif "port-forward" in args:
                 name = self.path.rsplit("/", 1)[1]
                 with open(os.path.join(here, name + ".tar.gz"), "wb") as kept:
                     kept.write(upload)
-            status, body = answers[self.command]
+            # A list under "<method> <path>" is answered in order, its last answer
+            # again once it runs out; any other request gets its method's answer.
+            listed = answers.get(f"{self.command} {self.path.split('?')[0]}")
+            if listed:
+                count = os.path.join(here, "answered.json")
+                answered = json.load(open(count)) if os.path.exists(count) else {}
+                key = f"{self.command} {self.path.split('?')[0]}"
+                answered[key] = answered.get(key, 0) + 1
+                json.dump(answered, open(count, "w"))
+                status, body = listed[min(answered[key], len(listed)) - 1]
+            else:
+                status, body = answers[self.command]
             data = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -405,6 +416,73 @@ def test_a_deploy_uploads_the_config_the_workflow_group_s_record_keeps(
         _uploaded(records, kept)["config/workflow_config.yaml"]
         == (kept / "workflow_config.yaml").read_text()
     )
+
+
+def test_a_deploy_that_is_up_waits_for_its_endpoint(cli_case: CliCase, close_forwards):
+    """The CanyonOS API reads a deploy's endpoint from its Redis only once the deploy is
+    up, and that first read can fail. A deploy whose first `up` status has no endpoint
+    and names why polls on until one has it, and prints that endpoint, not a warning
+    that it could not be read."""
+    status_path = f"/v1/workflow-groups/{WORKFLOW_GROUP_ID}"
+    unread = {
+        **APPLIED,
+        "message": None,
+        "steps": ["Build complete", "1 agent(s) ready"],
+        "slowest_step": None,
+        "idle_seconds": 1,
+        "error": None,
+        "error_code": None,
+        "root_cause": None,
+        "agents": None,
+        "machine_errors": None,
+        "endpoint": None,
+        "errors": [
+            "Could not read the deploy's state in Redis: The running controller "
+            "could not be reached"
+        ],
+    }
+    endpoint = {
+        "public_host": "10.0.0.7",
+        "api_port": 8080,
+        "routes": [
+            {
+                "workflow": "alpha",
+                "workflow_id": "alpha",
+                "agent": "Echo",
+                "method": "POST",
+                "arguments": ["query"],
+                "url": "http://10.0.0.7:8080/alpha",
+            }
+        ],
+    }
+    environment, records = _kubernetes_group(
+        cli_case,
+        {
+            "GET": [200, unread],
+            "PUT": [200, UPLOADED],
+            f"GET {status_path}": [
+                [200, unread],
+                [200, unread],
+                [200, {**unread, "endpoint": endpoint, "errors": []}],
+            ],
+        },
+    )
+    _workflow(cli_case.cwd / "alpha")
+
+    result = cli_case.run_cli(
+        ["deploy", "alpha", "--yes", "--serve", "false"], env=environment, timeout=90
+    )
+
+    said = _said(result)
+    assert result.returncode == 0, said
+    assert "Could not read the running workflow group's endpoint" not in said, said
+    assert "/alpha -H" in said, said
+    reads = [
+        request
+        for request in _lines(records / "requests.jsonl")
+        if request["method"] == "GET" and request["path"].split("?")[0] == status_path
+    ]
+    assert len(reads) >= 3, reads
 
 
 def test_stop_in_a_workflow_folder_reaches_its_workflow_group_s_cluster(

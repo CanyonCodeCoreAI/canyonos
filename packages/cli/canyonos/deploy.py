@@ -75,6 +75,11 @@ from canyonos.serve import (
 from canyonos.sync import run_sync
 
 _STATUS_POLL_SECONDS = 1.0
+# How long a deploy that is up waits for the CanyonOS API to read its endpoint. The API
+# reads the workflow group's Redis only once the deploy is up, and its first read can
+# fail for a few seconds after the Redis container starts; the status it answers then
+# has no endpoint, which a deploy that just came up does not take for its verdict.
+_ENDPOINT_WAIT_SECONDS = 30.0
 _IDLE_WARN_SECONDS = 180.0
 
 
@@ -367,17 +372,27 @@ def _interrupted():
 
 def wait_for_verdict(state, show=lambda status: None):
     """Poll the CanyonOS API's status of the deploy about once a second, handing each
-    answer to `show`, until the deploy is up or its process has exited, so a failed
-    deploy's log and root cause are complete, and return that answer. None when the
-    API stops answering."""
+    answer to `show`, until the deploy is up with its endpoint read, or up for
+    _ENDPOINT_WAIT_SECONDS without it, or its process has exited, so a failed deploy's
+    log and root cause are complete, and return that answer. None when the API stops
+    answering."""
     misses = 0
+    up_since = None
     while misses < 2:
         status = deploy_status(state)
         misses = 0 if status else misses + 1
         if status:
             show(status)
-            if status["phase"] == "up" or not status["running"]:
+            if not status["running"]:
                 return status
+            if status["phase"] == "up":
+                up_since = up_since or time.monotonic()
+                waited = time.monotonic() - up_since
+                if (
+                    status.get("endpoint") is not None
+                    or waited >= _ENDPOINT_WAIT_SECONDS
+                ):
+                    return status
         time.sleep(_STATUS_POLL_SECONDS)
     return None
 
