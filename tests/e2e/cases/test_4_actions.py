@@ -10,7 +10,7 @@ container exits 0, and the reconciler starts a replica in its place.
 Deleting a policy does not lower replicas: the controller keeps the last count
 it was given until a restart or reload, so the cases scale back with a policy
 first and only then delete it, or put back the workflow's own policy. A policy
-is set per workflow, at `/workflows/<workflow_id>/scaling`, and applies to every agent of it, so a port whose agents start at different counts is
+is set per workflow, at `/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/scaling`, and applies to every agent of it, so a port whose agents start at different counts is
 brought back to one replica each, not to its exact starting counts."""
 
 from concurrent.futures import ThreadPoolExecutor
@@ -45,14 +45,20 @@ HOLD_LIMIT = 12
 
 
 def _agents(deployed):
-    path = f"/workflows/{deployed.workflow_id}/scaling/agents"
+    path = (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}/scaling/agents"
+    )
     return deployed.api.get(path).json()["agents"]
 
 
 def _policy(deployed):
     """The workflow's scaling policy as the dashboard reports it: its `status`, and
     its `policy` once applied."""
-    path = f"/workflows/{deployed.workflow_id}/scaling"
+    path = (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}/scaling"
+    )
     return deployed.api.get(path).json()["workflows"][
         workflow_name(deployed.workflow_dir)
     ]
@@ -114,7 +120,10 @@ def test_a_scaling_policy_adds_replicas_that_take_queries(recorder, deployed, ch
     """A policy pinning every agent at two replicas starts a second container of
     each. The endpoint picks the endpoint agent's replica at random for each
     request, so the one the reconciler added is routed to and runs the call."""
-    path = f"/workflows/{deployed.workflow_id}/scaling"
+    path = (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}/scaling"
+    )
     start = _policy(deployed)
     counts = {a["replicas_expected"] for a in _agents(deployed)}
     starting_count = counts.pop() if len(counts) == 1 else 1

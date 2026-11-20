@@ -5,26 +5,20 @@ import { conflict, notFound } from '@core/errors';
 
 import { assert_workflow_running, with_redis } from '../registry/registry.redis';
 import { workflows_repo } from './workflows.repo';
-import type { WorkflowDeleted, WorkflowStats, WorkflowSummary } from './workflows.types';
+import type { WorkflowDeleted, WorkflowSummary } from './workflows.types';
 
-function workflow_not_found(workflow_id: string) {
+export function workflow_not_found(workflow_id: string) {
   return notFound('workflows.not_found', `Workflow "${workflow_id}" was not found`);
 }
 
 export async function list_workflows(): Promise<WorkflowSummary[]> {
-  return workflows_repo.list_with_counts();
+  return workflows_repo.list();
 }
 
 export async function get_workflow(workflow_id: string): Promise<WorkflowSummary> {
-  const workflow = await workflows_repo.get_with_count(workflow_id);
+  const workflow = await workflows_repo.get(workflow_id);
   if (!workflow) throw workflow_not_found(workflow_id);
   return workflow;
-}
-
-export async function get_workflow_stats(workflow_id: string): Promise<WorkflowStats> {
-  const counts = await workflows_repo.get_component_counts(workflow_id);
-  if (!counts) throw workflow_not_found(workflow_id);
-  return { workflow_id, ...counts };
 }
 
 // A workflow whose Redis can't be reached counts as stopped: stopping it removes that Redis.

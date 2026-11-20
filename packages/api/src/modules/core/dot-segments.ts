@@ -9,10 +9,9 @@ import { badRequest, early_refusal } from './errors';
 
 // Bun resolves `.` and `..` in request.url, as the WHATWG URL parser does, but its router
 // matches the raw path of the request line and hands each `:param` over decoded: raw
-// `/workflows/../monitoring/logs` reaches `/workflows/:workflow_id/monitoring/logs` with
-// workflow_id `..`, while request.url says `/monitoring/logs`. So the key guards, which read
-// request.url, would judge another path than the route that answers. A dot segment is refused
-// before either looks at it.
+// `/v1/workflows/..` reaches `/v1/workflows/:workflow_id` with workflow_id `..`, while
+// request.url says `/v1`. So the key guards, which read request.url, would judge another path
+// than the route that answers. A dot segment is refused before either looks at it.
 
 const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
 // The separators the URL parser splits a path on; it takes a backslash for a slash.

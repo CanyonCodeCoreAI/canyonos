@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { config } from './env';
 import { AppError, badGateway } from './errors';
 
-// The few Kubernetes API calls /v1 makes on Kubernetes, as the API pod's service account, with
+// The few Kubernetes API calls /v1/workflow-groups makes on Kubernetes, as the API pod's service account, with
 // plain fetch, as @core/docker reaches the Docker Engine: no client library for a handful of
 // calls. The service account token is read again at most once a minute, since Kubernetes
 // rotates the projected file; CANYONOS_K8S_API points the client at another server instead,

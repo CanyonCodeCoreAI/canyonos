@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
     (url) => url.origin === apiOrigin,
     (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/auth/status') {
+      if (url.pathname === '/v1/auth/status') {
         return fulfillJson(route, { api_key_required: false } satisfies AuthStatus);
       }
       return route.continue({ url: `${noAuthApiBaseUrl}${url.pathname}${url.search}` });

@@ -266,7 +266,7 @@ class GlobalController(ControllerContext):
             self.orchestrator.register_background_processes(self.process_supervisor)
             self.process_supervisor.start_all()
             self._collector_destinations = self._otel_destinations(
-                self.config.get("otel", {})
+                self.config.get("otel", {}), self.config.get("workflow_group_id")
             )
             otel_collector.run(self.process_supervisor, self._collector_destinations)
 
@@ -320,9 +320,10 @@ class GlobalController(ControllerContext):
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _otel_destinations(otel_cfg):
+    def _otel_destinations(otel_cfg, workflow_group_id):
         """The destinations the collector forwards to: otel.destinations with ${ENV_VAR}
-        refs expanded, plus the dashboard CANYONOS_DASHBOARD_OTLP_ENDPOINT names.
+        refs expanded, plus the dashboard CANYONOS_DASHBOARD_OTLP_ENDPOINT names, which
+        takes workflow group `workflow_group_id`'s telemetry under that group's own path.
 
         The local dashboard is left out, since telemetry is written straight to its
         database, and so is host.docker.internal on Kubernetes, which no cluster has."""
@@ -346,7 +347,9 @@ class GlobalController(ControllerContext):
                 {
                     "name": "canyonos-dashboard",
                     "protocol": "http",
-                    "endpoint": dashboard,
+                    "endpoint": dashboard.rstrip("/")
+                    + f"/v1/workflow-groups/{workflow_group_id}",
+                    "signal_prefix": "",
                 }
             )
         return destinations
@@ -371,7 +374,7 @@ class GlobalController(ControllerContext):
 
         # The poll loop restarts the collector: only it touches the process supervisor.
         self._collector_destinations = self._otel_destinations(
-            self.config.get("otel", {})
+            self.config.get("otel", {}), self.config.get("workflow_group_id")
         )
 
     def _apply_config(self, config_files, manifest):
@@ -1181,7 +1184,7 @@ class GlobalController(ControllerContext):
                         [
                             {
                                 "kind": "agent",
-                                "agent_id": replica["replica_id"],
+                                "replica_id": replica["replica_id"],
                                 "agent_name": name,
                                 "host": host,
                                 "port": port,

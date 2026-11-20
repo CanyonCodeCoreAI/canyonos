@@ -103,7 +103,7 @@ def test_two_workflow_groups_deploy_one_after_the_other_and_answer(recorder, fle
         workflow_id = deployed_workflow_id(api, fleet.dirs[copy])
         fleet.ids[copy] = workflow_id
         poll(
-            lambda: traces(api, workflow_id),
+            lambda: traces(api, fleet.dirs[copy], workflow_id),
             timeout=TRACE_TIMEOUT,
             interval=2,
             what=f"{copy}'s traces on the dashboard",
@@ -134,10 +134,12 @@ def test_after_docker_stops_everything_serve_lists_both_with_their_history(
     canyonos(recorder, ["serve"], cwd=fleet.dirs["kept"])
 
     api = Api(recorder, api_url(recorder), dashboard_key(recorder))
-    listed = {workflow["id"] for workflow in api.get("/workflows").json()}
+    listed = {workflow["id"] for workflow in api.get("/v1/workflows").json()}
     assert set(fleet.ids.values()) <= listed, listed
     for copy in COPIES:
-        assert traces(api, fleet.ids[copy]), f"{copy}'s traces are gone"
+        assert traces(api, fleet.dirs[copy], fleet.ids[copy]), (
+            f"{copy}'s traces are gone"
+        )
 
 
 def test_stop_all_tears_down_a_workflow_group_whose_folder_is_gone(recorder, fleet):

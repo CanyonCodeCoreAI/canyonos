@@ -230,7 +230,7 @@ function demultiplexing(): TransformStream<Uint8Array, Uint8Array> {
 
 const decode = (data: Uint8Array) => Buffer.from(data).toString('utf8');
 
-/** Resolves when the daemon answers `GET /_ping` within PING_TIMEOUT_MS; what /readyz asks. */
+/** Resolves when the daemon answers `GET /_ping` within PING_TIMEOUT_MS; what /v1/readyz asks. */
 export function ping(): Promise<void> {
   return docker_request('/_ping', drain, { timeout_ms: PING_TIMEOUT_MS });
 }

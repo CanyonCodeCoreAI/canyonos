@@ -84,8 +84,8 @@ def _api_checks():
     port = running_api_port()
     api_ok = _print_check(
         "CanyonOS API",
-        port is not None and _endpoint_healthy(f"http://127.0.0.1:{port}/healthz"),
-        f"127.0.0.1:{port}/healthz",
+        port is not None and _endpoint_healthy(f"http://127.0.0.1:{port}/v1/healthz"),
+        f"127.0.0.1:{port}/v1/healthz",
         "the CanyonOS API isn't answering -- `canyonos serve` again",
     )
     return db_ok and api_ok

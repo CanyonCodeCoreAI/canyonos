@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-  '/healthz': {
+  '/v1/healthz': {
     parameters: {
       query?: never;
       header?: never;
@@ -12,7 +12,7 @@ export interface paths {
       cookie?: never;
     };
     /** Health Check */
-    get: operations['getHealthz'];
+    get: operations['getV1Healthz'];
     put?: never;
     post?: never;
     delete?: never;
@@ -21,7 +21,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/readyz': {
+  '/v1/readyz': {
     parameters: {
       query?: never;
       header?: never;
@@ -29,7 +29,7 @@ export interface paths {
       cookie?: never;
     };
     /** Ready once the database is migrated and answers; also says whether Docker does */
-    get: operations['getReadyz'];
+    get: operations['getV1Readyz'];
     put?: never;
     post?: never;
     delete?: never;
@@ -38,7 +38,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/auth/status': {
+  '/v1/auth/status': {
     parameters: {
       query?: never;
       header?: never;
@@ -46,7 +46,7 @@ export interface paths {
       cookie?: never;
     };
     /** Whether the API needs a key; asked before sign-in */
-    get: operations['getAuthStatus'];
+    get: operations['getV1AuthStatus'];
     put?: never;
     post?: never;
     delete?: never;
@@ -55,7 +55,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/auth/check': {
+  '/v1/auth/check': {
     parameters: {
       query?: never;
       header?: never;
@@ -63,7 +63,7 @@ export interface paths {
       cookie?: never;
     };
     /** Answers 200 when the request carries the API key; what sign-in checks a key with */
-    get: operations['getAuthCheck'];
+    get: operations['getV1AuthCheck'];
     put?: never;
     post?: never;
     delete?: never;
@@ -72,7 +72,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/resources/overview': {
+  '/v1/resources/overview': {
     parameters: {
       query?: never;
       header?: never;
@@ -83,7 +83,7 @@ export interface paths {
      * Fleet overview: per-workflow cost/requests/tokens over a time range
      * @description Counts the requests that started in the range, each whole.
      */
-    get: operations['getResourcesOverview'];
+    get: operations['getV1ResourcesOverview'];
     put?: never;
     post?: never;
     delete?: never;
@@ -92,14 +92,14 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/workflows/': {
+  '/v1/workflows/': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get: operations['getWorkflows'];
+    get: operations['getV1Workflows'];
     put?: never;
     post?: never;
     delete?: never;
@@ -108,556 +108,16 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/workflows/{workflow_id}': {
+  '/v1/workflows/{workflow_id}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get: operations['getWorkflowsByWorkflow_id'];
+    get: operations['getV1WorkflowsByWorkflow_id'];
     put?: never;
     post?: never;
-    /** Delete a workflow that is not running */
-    delete: operations['deleteWorkflowsByWorkflow_id'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/stats': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get workflow statistics */
-    get: operations['getWorkflowsByWorkflow_idStats'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/sample-data': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Add the recorded example run to this workflow
-     * @description Replays a run of the named bundled workflow that this API ships, spread across the week ending now, so a first run opens a dashboard with history rather than one request. The body names a workflow, never data: the only rows it can write are its own. Repeatable, and it never touches rows the workflow produced itself.
-     */
-    post: operations['postWorkflowsByWorkflow_idSample-data'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/requests': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List OTEL request traces with per-trace rollups */
-    get: operations['getWorkflowsByWorkflow_idRequests'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/requests/{request_id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get a single request trace
-     * @description The trace reads whole; its medians cover the requests that started in from/to.
-     */
-    get: operations['getWorkflowsByWorkflow_idRequestsByRequest_id'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/metrics/kpis': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Range-scoped KPI aggregates (tokens, costs, per-block latency) */
-    get: operations['getWorkflowsByWorkflow_idMetricsKpis'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/metrics/distribution': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Per-request distribution (histogram, mean, std, percentiles) for a KPI */
-    get: operations['getWorkflowsByWorkflow_idMetricsDistribution'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/metrics/timeseries': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Cost and volume per time bucket, each request in the bucket it started in */
-    get: operations['getWorkflowsByWorkflow_idMetricsTimeseries'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/metrics/blocks': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Per-agent, per-model cost breakdown with retry, failure, and latency rates */
-    get: operations['getWorkflowsByWorkflow_idMetricsBlocks'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/metrics/agents/{agent_id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Selected agent metrics across its replicas, with per-request histograms */
-    get: operations['getWorkflowsByWorkflow_idMetricsAgentsByAgent_id'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/series': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Golden-signal series on one shared time grid
-     * @description Traffic, errors and latency count each request whole in the bucket it started in; saturation samples sit at their own time.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringSeries'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/logs': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Recent log records for the workflow, newest first
-     * @description Each log record is in the range by its own timestamp.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringLogs'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/logs/sources': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Agents and replicas that wrote logs in the range
-     * @description Each log record is in the range by its own timestamp.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringLogsSources'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/llm': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Spans carrying a model call, newest first
-     * @description The model calls of the requests that started in the range, each whole.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringLlm'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/traces': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Recent traces with their spans, newest first
-     * @description The requests that started in the range, each whole.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringTraces'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/errors/summary': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Error counts grouped by exception type and by agent
-     * @description Counts error log records, each in the range by its own timestamp.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringErrorsSummary'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/resources': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Resource utilization per machine and per agent
-     * @description Machine samples sit at their own time; agent CPU comes from the requests that started in the range, in the bucket each started in.
-     */
-    get: operations['getWorkflowsByWorkflow_idMonitoringResources'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/replicas': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Replicas reporting up, with their queue lengths */
-    get: operations['getWorkflowsByWorkflow_idMonitoringReplicas'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/monitoring/endpoint': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Where the running endpoint answers */
-    get: operations['getWorkflowsByWorkflow_idMonitoringEndpoint'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/prompts': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List the prompts of the running workflow with the system prompt agents get */
-    get: operations['getWorkflowsByWorkflow_idPrompts'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/prompts/{name}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get one prompt with every stored system prompt */
-    get: operations['getWorkflowsByWorkflow_idPromptsByName'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/prompts/{name}/versions': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Store a new system prompt for a prompt without making it live */
-    post: operations['postWorkflowsByWorkflow_idPromptsByNameVersions'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/prompts/{name}/live': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Make one stored system prompt the live one */
-    put: operations['putWorkflowsByWorkflow_idPromptsByNameLive'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/scaling': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get the workflow's autoscaling policy */
-    get: operations['getWorkflowsByWorkflow_idScaling'];
-    /** Create or replace a workflow's autoscaling policy, applied to each of its agents */
-    put: operations['putWorkflowsByWorkflow_idScaling'];
-    post?: never;
-    /** Delete a workflow's autoscaling policy */
-    delete: operations['deleteWorkflowsByWorkflow_idScaling'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/scaling/agents': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List the agents the policy applies to and their current replicas */
-    get: operations['getWorkflowsByWorkflow_idScalingAgents'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/governance': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get every agent state, rules and spend, and who calls whom */
-    get: operations['getWorkflowsByWorkflow_idGovernance'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/governance/agents/{agent}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Replace one agent's requirements and spend rules */
-    put: operations['putWorkflowsByWorkflow_idGovernanceAgentsByAgent'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/workflows/{workflow_id}/governance/agents/{agent}/stopped': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Stop an agent, or start it again with its configured replicas */
-    put: operations['putWorkflowsByWorkflow_idGovernanceAgentsByAgentStopped'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/v1/traces': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Ingest an OTLP trace export as `application/x-protobuf` */
-    post: operations['postV1Traces'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/v1/metrics': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Ingest an OTLP metric export as `application/x-protobuf` */
-    post: operations['postV1Metrics'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/v1/logs': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Ingest an OTLP logs export as `application/x-protobuf` */
-    post: operations['postV1Logs'];
     delete?: never;
     options?: never;
     head?: never;
@@ -712,27 +172,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/workflow-groups/{workflow_group_id}/workflows/{name}': {
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /**
-     * Read a workflow
-     * @description Uploaded workflow `name`; 404 if it was never uploaded.
-     */
-    get: operations['getWorkflow'];
+    get?: never;
     /**
      * Upload a workflow
-     * @description Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it into the workflow group's workspace, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.
+     * @description Checks the gzip tar of the workflow as `canyonos validate` does, then unpacks it into the workflow group's workspace, removing what its last upload had and this one lacks; on a 400 (bad archive, unsafe path or findings) the old files stay. 404 when the uploaded `workflow_group.yaml` gives no workflow this workflow_id.
      */
     put: operations['putWorkflow'];
     post?: never;
     /**
      * Remove a workflow
-     * @description Removes from the workflow group's workspace what workflow `name`'s last upload put there; 404 if it was never uploaded.
+     * @description Removes from the workflow group's workspace what the workflow's last upload put there; 404 if it was never uploaded.
      */
     delete: operations['deleteWorkflow'];
     options?: never;
@@ -749,7 +205,7 @@ export interface paths {
     };
     /**
      * List the uploaded workflows
-     * @description Every uploaded workflow, by name.
+     * @description Every uploaded workflow, by workflow_id.
      */
     get: operations['listWorkflows'];
     put?: never;
@@ -780,7 +236,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/v1/workflow-groups/{workflow_group_id}/logs/agents/{name}': {
+  '/v1/workflow-groups/{workflow_group_id}/logs/agents/{agent_id}': {
     parameters: {
       query?: never;
       header?: never;
@@ -789,7 +245,7 @@ export interface paths {
     };
     /**
      * Read an agent's replica logs
-     * @description The last `tail` lines of each running replica of agent `name`, or of the one replica whose ID is `name`, read on its machine; 409 if the deploy is not running, 404 naming the agents when `name` is neither, 503 when its Redis cannot be read.
+     * @description The last `tail` lines of each running replica of the agent whose ID is `agent_id`, or of the one replica whose ID it is, read on its machine; 409 if the deploy is not running, 404 naming the agents when it is neither, 503 when its Redis cannot be read.
      */
     get: operations['getAgentLogs'];
     put?: never;
@@ -840,6 +296,545 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/requests': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List OTEL request traces with per-trace rollups */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idRequests'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/requests/{request_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get a single request trace
+     * @description The trace reads whole; its medians cover the requests that started in from/to.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idRequestsByRequest_id'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/metrics/kpis': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Range-scoped KPI aggregates (tokens, costs, per-block latency) */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsKpis'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/metrics/distribution': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Per-request distribution (histogram, mean, std, percentiles) for a KPI */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsDistribution'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/metrics/timeseries': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Cost and volume per time bucket, each request in the bucket it started in */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsTimeseries'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/metrics/blocks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Per-agent, per-model cost breakdown with retry, failure, and latency rates */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsBlocks'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/metrics/agents/{agent_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Selected agent metrics across its replicas, with per-request histograms */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsAgentsByAgent_id'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/series': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Golden-signal series on one shared time grid
+     * @description Traffic, errors and latency count each request whole in the bucket it started in; saturation samples sit at their own time.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringSeries'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/logs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Recent log records for the workflow, newest first
+     * @description Each log record is in the range by its own timestamp.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLogs'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/logs/sources': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Agents and replicas that wrote logs in the range
+     * @description Each log record is in the range by its own timestamp.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLogsSources'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/llm': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Spans carrying a model call, newest first
+     * @description The model calls of the requests that started in the range, each whole.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLlm'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/traces': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Recent traces with their spans, newest first
+     * @description The requests that started in the range, each whole.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringTraces'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/errors/summary': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Error counts grouped by exception type and by agent
+     * @description Counts error log records, each in the range by its own timestamp.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringErrorsSummary'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/resources': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Resource utilization per machine and per agent
+     * @description Machine samples sit at their own time; agent CPU comes from the requests that started in the range, in the bucket each started in.
+     */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringResources'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/replicas': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Replicas reporting up, with their queue lengths */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringReplicas'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/monitoring/endpoint': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Where the running endpoint answers */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringEndpoint'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/prompts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the prompts of the running workflow with the system prompt agents get */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPrompts'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/prompts/{name}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get one prompt with every stored system prompt */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByName'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/prompts/{name}/versions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Store a new system prompt for a prompt without making it live */
+    post: operations['postV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByNameVersions'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/prompts/{name}/live': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Make one stored system prompt the live one */
+    put: operations['putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByNameLive'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/scaling': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the workflow's autoscaling policy */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling'];
+    /** Create or replace a workflow's autoscaling policy, applied to each of its agents */
+    put: operations['putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling'];
+    post?: never;
+    /** Delete a workflow's autoscaling policy */
+    delete: operations['deleteV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/scaling/agents': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the agents the policy applies to and their current replicas */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScalingAgents'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/governance': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get every agent state, rules and spend, and who calls whom */
+    get: operations['getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernance'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/governance/agents/{agent_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Replace one agent's requirements and spend rules */
+    put: operations['putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernanceAgentsByAgent_id'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/governance/agents/{agent_id}/stopped': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Stop an agent, or start it again with its configured replicas */
+    put: operations['putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernanceAgentsByAgent_idStopped'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/history': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete a workflow that is not running, with its telemetry */
+    delete: operations['deleteV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idHistory'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/workflows/{workflow_id}/sample-data': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Add the recorded example run to this workflow
+     * @description Replays a run of the named bundled workflow that this API ships, spread across the week ending now, so a first run opens a dashboard with history rather than one request. The body names a workflow, never data: the only rows it can write are its own. Repeatable, and it never touches rows the workflow produced itself.
+     */
+    post: operations['postV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idSample-data'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/traces': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Ingest an OTLP trace export of the workflow group's as `application/x-protobuf` */
+    post: operations['postV1Workflow-groupsByWorkflow_group_idTraces'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/metrics': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Ingest an OTLP metric export of the workflow group's as `application/x-protobuf` */
+    post: operations['postV1Workflow-groupsByWorkflow_group_idMetrics'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/workflow-groups/{workflow_group_id}/logs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Ingest an OTLP logs export of the workflow group's as `application/x-protobuf` */
+    post: operations['postV1Workflow-groupsByWorkflow_group_idLogs'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -883,6 +878,8 @@ export interface components {
       routes: components['schemas']['EndpointRoute'][];
     };
     AgentStatus: {
+      agent_id: string | null;
+      name: string;
       desired_replicas: number;
       running_replicas: number;
       launch_error: string | null;
@@ -925,9 +922,7 @@ export interface components {
         | null;
       root_cause: string | null;
       endpoint: components['schemas']['Endpoint'] | null;
-      agents: {
-        [key: string]: components['schemas']['AgentStatus'];
-      } | null;
+      agents: components['schemas']['AgentStatus'][] | null;
       machine_errors: {
         [key: string]: string;
       } | null;
@@ -958,6 +953,7 @@ export interface components {
       config: string;
     };
     Workflow: {
+      workflow_id: string;
       name: string;
       fingerprints: components['schemas']['Fingerprints'];
       test_query: string | null;
@@ -1051,7 +1047,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  getHealthz: {
+  getV1Healthz: {
     parameters: {
       query?: never;
       header?: never;
@@ -1184,7 +1180,7 @@ export interface operations {
       };
     };
   };
-  getReadyz: {
+  getV1Readyz: {
     parameters: {
       query?: never;
       header?: never;
@@ -1321,7 +1317,7 @@ export interface operations {
       };
     };
   };
-  getAuthStatus: {
+  getV1AuthStatus: {
     parameters: {
       query?: never;
       header?: never;
@@ -1451,7 +1447,7 @@ export interface operations {
       };
     };
   };
-  getAuthCheck: {
+  getV1AuthCheck: {
     parameters: {
       query?: never;
       header?: never;
@@ -1582,7 +1578,7 @@ export interface operations {
       };
     };
   };
-  getResourcesOverview: {
+  getV1ResourcesOverview: {
     parameters: {
       query: {
         from: string;
@@ -1748,7 +1744,7 @@ export interface operations {
       };
     };
   };
-  getWorkflows: {
+  getV1Workflows: {
     parameters: {
       query?: never;
       header?: never;
@@ -1767,7 +1763,8 @@ export interface operations {
             /** Format: uuid */
             id: string;
             name: string;
-            file_count: number;
+            /** Format: uuid */
+            workflow_group_id: string | null;
             created_at: string;
             updated_at: string;
           }[];
@@ -1883,7 +1880,7 @@ export interface operations {
       };
     };
   };
-  getWorkflowsByWorkflow_id: {
+  getV1WorkflowsByWorkflow_id: {
     parameters: {
       query?: never;
       header?: never;
@@ -1904,5164 +1901,13 @@ export interface operations {
             /** Format: uuid */
             id: string;
             name: string;
-            file_count: number;
+            /** Format: uuid */
+            workflow_group_id: string | null;
             created_at: string;
             updated_at: string;
           };
         };
       };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  deleteWorkflowsByWorkflow_id: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idStats: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            file_count: number;
-            agent_count: number;
-            tool_count: number;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  'postWorkflowsByWorkflow_idSample-data': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          /** @enum {string} */
-          workflow: 'helloworld' | 'portfolio';
-        };
-        'application/x-www-form-urlencoded': {
-          /** @enum {string} */
-          workflow: 'helloworld' | 'portfolio';
-        };
-        'multipart/form-data': {
-          /** @enum {string} */
-          workflow: 'helloworld' | 'portfolio';
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            spans: number;
-            logs: number;
-            metrics: number;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idRequests: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        limit?: number;
-        offset?: number;
-        sort?: 'created_at' | 'total_cost' | 'token_count' | 'duration_ms' | 'error_count';
-        order?: 'asc' | 'desc';
-        status?: 'running' | 'completed' | 'failed';
-        metric?: 'tokens_per_request' | 'cost_per_request' | 'latency';
-        min?: number;
-        max?: number;
-        created_from?: string;
-        created_to?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            total: number;
-            items: {
-              session_id: string;
-              /** @enum {string} */
-              status: 'running' | 'completed' | 'failed';
-              created_at: string;
-              started_at: string | null;
-              finished_at: string | null;
-              duration_ms: number | null;
-              block_count: number;
-              failed_block_count: number;
-              error_count: number;
-              token_count: number;
-              llm_cost: string;
-              harness_cost: string;
-              total_cost: string;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idRequestsByRequest_id: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-        request_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            session_id: string;
-            /** @enum {string} */
-            status: 'running' | 'completed' | 'failed';
-            created_at: string;
-            started_at: string | null;
-            finished_at: string | null;
-            duration_ms: number | null;
-            error_count: number;
-            token_count: number;
-            total_cost: string;
-            /** Format: uuid */
-            workflow_id: string;
-            input?: unknown;
-            output?: unknown;
-            median_cost: string | null;
-            harness_cost: string;
-            median_harness_cost: string | null;
-            median_token_count: number | null;
-            cost_vs_median: number | null;
-            harness_cost_vs_median: number | null;
-            token_count_vs_median: number | null;
-            blocks: {
-              future_id: string;
-              label: string;
-              /** @enum {string} */
-              kind: 'model' | 'harness';
-              model: string | null;
-              prompt_name: string | null;
-              prompt_version: string | null;
-              started_offset_ms: number;
-              execution_time_ms: number | null;
-              input_token_count: number;
-              output_token_count: number;
-              total_cost: string;
-              errors: number;
-              failed: boolean;
-              error_name: string | null;
-              error_message: string | null;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMetricsKpis: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            request_count: number;
-            block_count: number;
-            failed_block_count: number;
-            tokens: number;
-            per_block_tokens: number | null;
-            harness_cost: string;
-            llm_cost: string;
-            total_cost: string;
-            recoverable_cost: string;
-            per_block_cost: string | null;
-            per_block_latency_ms: number | null;
-            costed_block_count: number;
-            costed_request_count: number;
-            per_costed_request_cost: string | null;
-            /** Format: uuid */
-            workflow_id: string;
-            run_rate: string | null;
-            /** @enum {string} */
-            run_rate_per: 'hour' | 'day';
-            generated_at: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMetricsDistribution: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        metric: 'tokens_per_request' | 'cost_per_request' | 'latency';
-        buckets?: number;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            request_count: number;
-            mean: number | null;
-            std: number | null;
-            min: number | null;
-            max: number | null;
-            p50: number | null;
-            p95: number | null;
-            p99: number | null;
-            buckets: {
-              lower: number;
-              upper: number;
-              count: number;
-            }[];
-            /** Format: uuid */
-            workflow_id: string;
-            /** @enum {string} */
-            metric: 'tokens_per_request' | 'cost_per_request' | 'latency';
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMetricsTimeseries: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        time_zone?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            bucket_seconds: number;
-            points: {
-              start_at: string;
-              llm_cost: string;
-              harness_cost: string;
-              total_cost: string;
-              request_count: number;
-              block_count: number;
-              tokens: number;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMetricsBlocks: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            total_cost: string;
-            blocks: {
-              agent_id: string;
-              model: string | null;
-              label: string;
-              /** @enum {string} */
-              kind: 'model' | 'harness';
-              cost: string;
-              llm_cost: string;
-              harness_cost: string;
-              recoverable_cost: string;
-              block_count: number;
-              token_count: number;
-              retry_rate: number | null;
-              failed_rate: number | null;
-              p95_latency_ms: number | null;
-              cache_hit_ratio: number | null;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMetricsAgentsByAgent_id: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        time_zone?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-        agent_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            agent_id: string;
-            label: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            workflow: {
-              request_count: number;
-              total_cost: string;
-            };
-            agent: {
-              cost: string;
-              llm_cost: string;
-              harness_cost: string;
-              recoverable_cost: string;
-              block_count: number;
-              token_count: number;
-              retry_rate: number | null;
-              failed_rate: number | null;
-              p95_latency_ms: number | null;
-              cache_hit_ratio: number | null;
-              request_count: number;
-              replica_count: number;
-            };
-            timeseries: {
-              bucket_seconds: number;
-              points: {
-                start_at: string;
-                llm_cost: string;
-                harness_cost: string;
-                total_cost: string;
-                request_count: number;
-                block_count: number;
-                tokens: number;
-              }[];
-            };
-            tokens_per_request: {
-              request_count: number;
-              mean: number | null;
-              std: number | null;
-              min: number | null;
-              max: number | null;
-              p50: number | null;
-              p95: number | null;
-              p99: number | null;
-              buckets: {
-                lower: number;
-                upper: number;
-                count: number;
-              }[];
-            };
-            cost_per_request: {
-              request_count: number;
-              mean: number | null;
-              std: number | null;
-              min: number | null;
-              max: number | null;
-              p50: number | null;
-              p95: number | null;
-              p99: number | null;
-              buckets: {
-                lower: number;
-                upper: number;
-                count: number;
-              }[];
-            };
-            latency: {
-              request_count: number;
-              mean: number | null;
-              std: number | null;
-              min: number | null;
-              max: number | null;
-              p50: number | null;
-              p95: number | null;
-              p99: number | null;
-              buckets: {
-                lower: number;
-                upper: number;
-                count: number;
-              }[];
-            };
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringSeries: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        time_zone?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            bucket_seconds: number;
-            bucket_start_ats: string[];
-            series: {
-              values: (number | null)[];
-              average: number | null;
-              peak: number | null;
-              latest: number | null;
-              samples: number;
-              /** @enum {string} */
-              signal: 'traffic' | 'errors' | 'latency' | 'saturation';
-              /** @enum {string} */
-              unit: 'requests' | 'ms' | 'percent';
-              /** @enum {string} */
-              kind: 'flow' | 'stock';
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringLogs: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        limit?: number;
-        errors_only?: boolean | ('true' | 'false');
-        agent?: string;
-        replica?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            logs: {
-              at: string;
-              severity: string | null;
-              severity_number: number | null;
-              agent: string | null;
-              replica: string | null;
-              body: string | null;
-              trace_id: string | null;
-              span_id: string | null;
-              attributes: {
-                [key: string]: unknown;
-              };
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringLogsSources: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            sources: {
-              agent: string;
-              replicas: string[];
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringLlm: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        limit?: number;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            calls: {
-              span_id: string;
-              name: string;
-              agent: string | null;
-              failed: boolean;
-              status_message: string | null;
-              model: string | null;
-              input_tokens: number | null;
-              output_tokens: number | null;
-              cost: number | null;
-              input: string | null;
-              output: string | null;
-              at: string;
-              trace_id: string;
-              duration_ms: number | null;
-              cache_hit_ratio: number | null;
-              attributes: {
-                [key: string]: unknown;
-              };
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringTraces: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        limit?: number;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            traces: {
-              name: string;
-              duration_ms: number;
-              failed: boolean;
-              at: string;
-              trace_id: string;
-              agents: string[];
-              span_count: number;
-              total_cost: number | null;
-              spans: {
-                span_id: string;
-                parent_span_id: string | null;
-                name: string;
-                agent: string | null;
-                offset_ms: number;
-                duration_ms: number;
-                failed: boolean;
-                status_message: string | null;
-                llm: {
-                  model: string | null;
-                  input_tokens: number | null;
-                  output_tokens: number | null;
-                  cost: number | null;
-                  input: string | null;
-                  output: string | null;
-                } | null;
-              }[];
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringErrorsSummary: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            total: number;
-            by_type: {
-              key: string;
-              count: number;
-            }[];
-            by_agent: {
-              key: string;
-              count: number;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringResources: {
-    parameters: {
-      query: {
-        from: string;
-        to: string;
-        time_zone?: string;
-      };
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            /** Format: date-time */
-            from: string;
-            /** Format: date-time */
-            to: string;
-            bucket_seconds: number;
-            bucket_start_ats: string[];
-            machines: {
-              key: string;
-              series: {
-                values: (number | null)[];
-                average: number;
-                peak: number;
-                latest: number;
-                samples: number;
-                /** @enum {string} */
-                resource: 'cpu' | 'memory' | 'disk' | 'gpu';
-              }[];
-            }[];
-            agents: {
-              key: string;
-              series: {
-                values: (number | null)[];
-                average: number;
-                peak: number;
-                latest: number;
-                samples: number;
-                /** @enum {string} */
-                resource: 'cpu' | 'memory' | 'disk' | 'gpu';
-              }[];
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringReplicas: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            replicas: {
-              agent: string;
-              replica: string;
-              queue_length: number | null;
-              active_requests: number | null;
-              draining: boolean;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idMonitoringEndpoint: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** Format: uuid */
-            workflow_id: string;
-            endpoint: {
-              status_url: string;
-              routes: {
-                url: string;
-                workflow: string;
-                workflow_id?: string | null;
-                agent: string;
-                method: string;
-                arguments: string[];
-                example_body: {
-                  [key: string]: string;
-                };
-              }[];
-            } | null;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idPrompts: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            name: string;
-            live: {
-              version?: string;
-              content: string;
-              /** @default null */
-              updated_at: string | null;
-            };
-          }[];
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idPromptsByName: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-        name: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            name: string;
-            live: {
-              version?: string;
-              content: string;
-              /** @default null */
-              updated_at: string | null;
-            };
-            versions: {
-              version?: string;
-              content: string;
-              /** @default null */
-              updated_at: string | null;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  postWorkflowsByWorkflow_idPromptsByNameVersions: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-        name: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          content: string;
-        };
-        'application/x-www-form-urlencoded': {
-          content: string;
-        };
-        'multipart/form-data': {
-          content: string;
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 201 */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            version?: string;
-            content: string;
-            /** @default null */
-            updated_at: string | null;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  putWorkflowsByWorkflow_idPromptsByNameLive: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-        name: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          version?: string;
-        };
-        'application/x-www-form-urlencoded': {
-          version?: string;
-        };
-        'multipart/form-data': {
-          version?: string;
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            name: string;
-            live: {
-              version?: string;
-              content: string;
-              /** @default null */
-              updated_at: string | null;
-            };
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idScaling: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            workflows: {
-              [key: string]:
-                | {
-                    /** @enum {string} */
-                    status: 'none';
-                  }
-                | {
-                    /** @enum {string} */
-                    status: 'applied';
-                    policy: {
-                      min_replicas: number;
-                      max_replicas: number;
-                      /** @enum {string} */
-                      metric: 'queue_length_total' | 'requests_per_minute_per_replica';
-                      scale_up_above: number;
-                      scale_down_below: number;
-                    };
-                  }
-                | {
-                    /** @enum {string} */
-                    status: 'invalid';
-                    reason: string;
-                  };
-            };
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  putWorkflowsByWorkflow_idScaling: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          min_replicas: number;
-          max_replicas: number;
-          /** @enum {string} */
-          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
-          scale_up_above: number;
-          scale_down_below: number;
-        };
-        'application/x-www-form-urlencoded': {
-          min_replicas: number;
-          max_replicas: number;
-          /** @enum {string} */
-          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
-          scale_up_above: number;
-          scale_down_below: number;
-        };
-        'multipart/form-data': {
-          min_replicas: number;
-          max_replicas: number;
-          /** @enum {string} */
-          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
-          scale_up_above: number;
-          scale_down_below: number;
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            min_replicas: number;
-            max_replicas: number;
-            /** @enum {string} */
-            metric: 'queue_length_total' | 'requests_per_minute_per_replica';
-            scale_up_above: number;
-            scale_down_below: number;
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  deleteWorkflowsByWorkflow_idScaling: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            /** @enum {string} */
-            status: 'none';
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idScalingAgents: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            agents: {
-              name: string;
-              replicas_expected: number;
-              replicas_running: number;
-              load: {
-                queue_length_total: number;
-                requests_per_minute_per_replica: number;
-                /** Format: date-time */
-                observed_at: string;
-              } | null;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  getWorkflowsByWorkflow_idGovernance: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            agents: {
-              name: string;
-              replicas_running: number;
-              replicas_expected: number;
-              desired_replicas: number;
-              /** @enum {string} */
-              status: 'up' | 'down' | 'stopped' | 'unknown';
-              unmet_requires: string[];
-              models: string[] | null;
-              rules: {
-                requires: string[];
-                spend: {
-                  /** Format: date-time */
-                  since?: string;
-                  rules: {
-                    above_usd: number;
-                    action:
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        };
-                  }[];
-                } | null;
-              };
-              spend: {
-                /** Format: date-time */
-                since: string;
-                usd: number;
-                tripped_action:
-                  | (
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        }
-                    )
-                  | null;
-              } | null;
-              scaling_policy_present: boolean;
-            }[];
-            edges: {
-              source: string;
-              target: string;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  putWorkflowsByWorkflow_idGovernanceAgentsByAgent: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-        agent: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          requires: string[];
-          spend: {
-            /** Format: date-time */
-            since?: string;
-            rules: {
-              above_usd: number;
-              action:
-                | {
-                    /** @enum {string} */
-                    kind: 'switch_model';
-                    model: string;
-                  }
-                | {
-                    /** @enum {string} */
-                    kind: 'deny';
-                  };
-            }[];
-          } | null;
-        };
-        'application/x-www-form-urlencoded': {
-          requires: string[];
-          spend: {
-            /** Format: date-time */
-            since?: string;
-            rules: {
-              above_usd: number;
-              action:
-                | {
-                    /** @enum {string} */
-                    kind: 'switch_model';
-                    model: string;
-                  }
-                | {
-                    /** @enum {string} */
-                    kind: 'deny';
-                  };
-            }[];
-          } | null;
-        };
-        'multipart/form-data': {
-          requires: string[];
-          spend: {
-            /** Format: date-time */
-            since?: string;
-            rules: {
-              above_usd: number;
-              action:
-                | {
-                    /** @enum {string} */
-                    kind: 'switch_model';
-                    model: string;
-                  }
-                | {
-                    /** @enum {string} */
-                    kind: 'deny';
-                  };
-            }[];
-          } | null;
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            agents: {
-              name: string;
-              replicas_running: number;
-              replicas_expected: number;
-              desired_replicas: number;
-              /** @enum {string} */
-              status: 'up' | 'down' | 'stopped' | 'unknown';
-              unmet_requires: string[];
-              models: string[] | null;
-              rules: {
-                requires: string[];
-                spend: {
-                  /** Format: date-time */
-                  since?: string;
-                  rules: {
-                    above_usd: number;
-                    action:
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        };
-                  }[];
-                } | null;
-              };
-              spend: {
-                /** Format: date-time */
-                since: string;
-                usd: number;
-                tripped_action:
-                  | (
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        }
-                    )
-                  | null;
-              } | null;
-              scaling_policy_present: boolean;
-            }[];
-            edges: {
-              source: string;
-              target: string;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  putWorkflowsByWorkflow_idGovernanceAgentsByAgentStopped: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_id: string;
-        agent: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': {
-          stopped: boolean;
-        };
-        'application/x-www-form-urlencoded': {
-          stopped: boolean;
-        };
-        'multipart/form-data': {
-          stopped: boolean;
-        };
-      };
-    };
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            agents: {
-              name: string;
-              replicas_running: number;
-              replicas_expected: number;
-              desired_replicas: number;
-              /** @enum {string} */
-              status: 'up' | 'down' | 'stopped' | 'unknown';
-              unmet_requires: string[];
-              models: string[] | null;
-              rules: {
-                requires: string[];
-                spend: {
-                  /** Format: date-time */
-                  since?: string;
-                  rules: {
-                    above_usd: number;
-                    action:
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        };
-                  }[];
-                } | null;
-              };
-              spend: {
-                /** Format: date-time */
-                since: string;
-                usd: number;
-                tripped_action:
-                  | (
-                      | {
-                          /** @enum {string} */
-                          kind: 'switch_model';
-                          model: string;
-                        }
-                      | {
-                          /** @enum {string} */
-                          kind: 'deny';
-                        }
-                    )
-                  | null;
-              } | null;
-              scaling_policy_present: boolean;
-            }[];
-            edges: {
-              source: string;
-              target: string;
-            }[];
-          };
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  postV1Traces: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  postV1Metrics: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
-  postV1Logs: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
       /** @description Response for status 400 */
       400: {
         headers: {
@@ -7694,144 +2540,13 @@ export interface operations {
       };
     };
   };
-  getWorkflow: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        workflow_group_id: string;
-        name: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Response for status 200 */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['Workflow'];
-        };
-      };
-      /** @description Response for status 400 */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 401 */
-      401: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 403 */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 404 */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 409 */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 413 */
-      413: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 422 */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 429 */
-      429: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 500 */
-      500: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 502 */
-      502: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 503 */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-      /** @description Response for status 504 */
-      504: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ApiError'];
-        };
-      };
-    };
-  };
   putWorkflow: {
     parameters: {
       query?: never;
       header?: never;
       path: {
+        workflow_id: string;
         workflow_group_id: string;
-        name: string;
       };
       cookie?: never;
     };
@@ -7966,8 +2681,8 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
+        workflow_id: string;
         workflow_group_id: string;
-        name: string;
       };
       cookie?: never;
     };
@@ -8363,7 +3078,7 @@ export interface operations {
       header?: never;
       path: {
         workflow_group_id: string;
-        name: string;
+        agent_id: string;
       };
       cookie?: never;
     };
@@ -8644,6 +3359,5062 @@ export interface operations {
           'application/json': components['schemas']['DashboardWorkflows'];
         };
       };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idRequests': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        limit?: number;
+        offset?: number;
+        sort?: 'created_at' | 'total_cost' | 'token_count' | 'duration_ms' | 'error_count';
+        order?: 'asc' | 'desc';
+        status?: 'running' | 'completed' | 'failed';
+        metric?: 'tokens_per_request' | 'cost_per_request' | 'latency';
+        min?: number;
+        max?: number;
+        created_from?: string;
+        created_to?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            total: number;
+            items: {
+              session_id: string;
+              /** @enum {string} */
+              status: 'running' | 'completed' | 'failed';
+              created_at: string;
+              started_at: string | null;
+              finished_at: string | null;
+              duration_ms: number | null;
+              block_count: number;
+              failed_block_count: number;
+              error_count: number;
+              token_count: number;
+              llm_cost: string;
+              harness_cost: string;
+              total_cost: string;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idRequestsByRequest_id': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        request_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            session_id: string;
+            /** @enum {string} */
+            status: 'running' | 'completed' | 'failed';
+            created_at: string;
+            started_at: string | null;
+            finished_at: string | null;
+            duration_ms: number | null;
+            error_count: number;
+            token_count: number;
+            total_cost: string;
+            /** Format: uuid */
+            workflow_id: string;
+            input?: unknown;
+            output?: unknown;
+            median_cost: string | null;
+            harness_cost: string;
+            median_harness_cost: string | null;
+            median_token_count: number | null;
+            cost_vs_median: number | null;
+            harness_cost_vs_median: number | null;
+            token_count_vs_median: number | null;
+            blocks: {
+              future_id: string;
+              label: string;
+              /** @enum {string} */
+              kind: 'model' | 'harness';
+              model: string | null;
+              prompt_name: string | null;
+              prompt_version: string | null;
+              started_offset_ms: number;
+              execution_time_ms: number | null;
+              input_token_count: number;
+              output_token_count: number;
+              total_cost: string;
+              errors: number;
+              failed: boolean;
+              error_name: string | null;
+              error_message: string | null;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsKpis': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            request_count: number;
+            block_count: number;
+            failed_block_count: number;
+            tokens: number;
+            per_block_tokens: number | null;
+            harness_cost: string;
+            llm_cost: string;
+            total_cost: string;
+            recoverable_cost: string;
+            per_block_cost: string | null;
+            per_block_latency_ms: number | null;
+            costed_block_count: number;
+            costed_request_count: number;
+            per_costed_request_cost: string | null;
+            /** Format: uuid */
+            workflow_id: string;
+            run_rate: string | null;
+            /** @enum {string} */
+            run_rate_per: 'hour' | 'day';
+            generated_at: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsDistribution': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        metric: 'tokens_per_request' | 'cost_per_request' | 'latency';
+        buckets?: number;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            request_count: number;
+            mean: number | null;
+            std: number | null;
+            min: number | null;
+            max: number | null;
+            p50: number | null;
+            p95: number | null;
+            p99: number | null;
+            buckets: {
+              lower: number;
+              upper: number;
+              count: number;
+            }[];
+            /** Format: uuid */
+            workflow_id: string;
+            /** @enum {string} */
+            metric: 'tokens_per_request' | 'cost_per_request' | 'latency';
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsTimeseries': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        time_zone?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            bucket_seconds: number;
+            points: {
+              start_at: string;
+              llm_cost: string;
+              harness_cost: string;
+              total_cost: string;
+              request_count: number;
+              block_count: number;
+              tokens: number;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsBlocks': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            total_cost: string;
+            blocks: {
+              agent_id: string;
+              model: string | null;
+              label: string;
+              /** @enum {string} */
+              kind: 'model' | 'harness';
+              cost: string;
+              llm_cost: string;
+              harness_cost: string;
+              recoverable_cost: string;
+              block_count: number;
+              token_count: number;
+              retry_rate: number | null;
+              failed_rate: number | null;
+              p95_latency_ms: number | null;
+              cache_hit_ratio: number | null;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMetricsAgentsByAgent_id': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        time_zone?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        agent_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            agent_id: string;
+            label: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            workflow: {
+              request_count: number;
+              total_cost: string;
+            };
+            agent: {
+              cost: string;
+              llm_cost: string;
+              harness_cost: string;
+              recoverable_cost: string;
+              block_count: number;
+              token_count: number;
+              retry_rate: number | null;
+              failed_rate: number | null;
+              p95_latency_ms: number | null;
+              cache_hit_ratio: number | null;
+              request_count: number;
+              replica_count: number;
+            };
+            timeseries: {
+              bucket_seconds: number;
+              points: {
+                start_at: string;
+                llm_cost: string;
+                harness_cost: string;
+                total_cost: string;
+                request_count: number;
+                block_count: number;
+                tokens: number;
+              }[];
+            };
+            tokens_per_request: {
+              request_count: number;
+              mean: number | null;
+              std: number | null;
+              min: number | null;
+              max: number | null;
+              p50: number | null;
+              p95: number | null;
+              p99: number | null;
+              buckets: {
+                lower: number;
+                upper: number;
+                count: number;
+              }[];
+            };
+            cost_per_request: {
+              request_count: number;
+              mean: number | null;
+              std: number | null;
+              min: number | null;
+              max: number | null;
+              p50: number | null;
+              p95: number | null;
+              p99: number | null;
+              buckets: {
+                lower: number;
+                upper: number;
+                count: number;
+              }[];
+            };
+            latency: {
+              request_count: number;
+              mean: number | null;
+              std: number | null;
+              min: number | null;
+              max: number | null;
+              p50: number | null;
+              p95: number | null;
+              p99: number | null;
+              buckets: {
+                lower: number;
+                upper: number;
+                count: number;
+              }[];
+            };
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringSeries': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        time_zone?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            bucket_seconds: number;
+            bucket_start_ats: string[];
+            series: {
+              values: (number | null)[];
+              average: number | null;
+              peak: number | null;
+              latest: number | null;
+              samples: number;
+              /** @enum {string} */
+              signal: 'traffic' | 'errors' | 'latency' | 'saturation';
+              /** @enum {string} */
+              unit: 'requests' | 'ms' | 'percent';
+              /** @enum {string} */
+              kind: 'flow' | 'stock';
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLogs': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        limit?: number;
+        errors_only?: boolean | ('true' | 'false');
+        agent_id?: string;
+        replica?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            logs: {
+              at: string;
+              severity: string | null;
+              severity_number: number | null;
+              agent: string | null;
+              replica: string | null;
+              body: string | null;
+              trace_id: string | null;
+              span_id: string | null;
+              attributes: {
+                [key: string]: unknown;
+              };
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLogsSources': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            sources: {
+              agent_id: string;
+              agent: string;
+              replicas: string[];
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringLlm': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            calls: {
+              span_id: string;
+              name: string;
+              replica: string | null;
+              failed: boolean;
+              status_message: string | null;
+              model: string | null;
+              input_tokens: number | null;
+              output_tokens: number | null;
+              cost: number | null;
+              input: string | null;
+              output: string | null;
+              at: string;
+              trace_id: string;
+              duration_ms: number | null;
+              cache_hit_ratio: number | null;
+              attributes: {
+                [key: string]: unknown;
+              };
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringTraces': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            traces: {
+              name: string;
+              duration_ms: number;
+              failed: boolean;
+              at: string;
+              trace_id: string;
+              replicas: string[];
+              span_count: number;
+              total_cost: number | null;
+              spans: {
+                span_id: string;
+                parent_span_id: string | null;
+                name: string;
+                replica: string | null;
+                offset_ms: number;
+                duration_ms: number;
+                failed: boolean;
+                status_message: string | null;
+                llm: {
+                  model: string | null;
+                  input_tokens: number | null;
+                  output_tokens: number | null;
+                  cost: number | null;
+                  input: string | null;
+                  output: string | null;
+                } | null;
+              }[];
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringErrorsSummary': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            total: number;
+            by_type: {
+              key: string;
+              count: number;
+            }[];
+            by_agent: {
+              key: string;
+              count: number;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringResources': {
+    parameters: {
+      query: {
+        from: string;
+        to: string;
+        time_zone?: string;
+      };
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            bucket_seconds: number;
+            bucket_start_ats: string[];
+            machines: {
+              key: string;
+              series: {
+                values: (number | null)[];
+                average: number;
+                peak: number;
+                latest: number;
+                samples: number;
+                /** @enum {string} */
+                resource: 'cpu' | 'memory' | 'disk' | 'gpu';
+              }[];
+            }[];
+            agents: {
+              key: string;
+              series: {
+                values: (number | null)[];
+                average: number;
+                peak: number;
+                latest: number;
+                samples: number;
+                /** @enum {string} */
+                resource: 'cpu' | 'memory' | 'disk' | 'gpu';
+              }[];
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringReplicas': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            replicas: {
+              agent: string;
+              replica: string;
+              queue_length: number | null;
+              active_requests: number | null;
+              draining: boolean;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idMonitoringEndpoint': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+            endpoint: {
+              status_url: string;
+              routes: {
+                url: string;
+                workflow: string;
+                workflow_id?: string | null;
+                agent: string;
+                method: string;
+                arguments: string[];
+                example_body: {
+                  [key: string]: string;
+                };
+              }[];
+            } | null;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPrompts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            name: string;
+            live: {
+              version?: string;
+              content: string;
+              /** @default null */
+              updated_at: string | null;
+            };
+          }[];
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByName': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            name: string;
+            live: {
+              version?: string;
+              content: string;
+              /** @default null */
+              updated_at: string | null;
+            };
+            versions: {
+              version?: string;
+              content: string;
+              /** @default null */
+              updated_at: string | null;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'postV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByNameVersions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          content: string;
+        };
+        'application/x-www-form-urlencoded': {
+          content: string;
+        };
+        'multipart/form-data': {
+          content: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 201 */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            version?: string;
+            content: string;
+            /** @default null */
+            updated_at: string | null;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idPromptsByNameLive': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          version?: string;
+        };
+        'application/x-www-form-urlencoded': {
+          version?: string;
+        };
+        'multipart/form-data': {
+          version?: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            name: string;
+            live: {
+              version?: string;
+              content: string;
+              /** @default null */
+              updated_at: string | null;
+            };
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            workflows: {
+              [key: string]:
+                | {
+                    /** @enum {string} */
+                    status: 'none';
+                  }
+                | {
+                    /** @enum {string} */
+                    status: 'applied';
+                    policy: {
+                      min_replicas: number;
+                      max_replicas: number;
+                      /** @enum {string} */
+                      metric: 'queue_length_total' | 'requests_per_minute_per_replica';
+                      scale_up_above: number;
+                      scale_down_below: number;
+                    };
+                  }
+                | {
+                    /** @enum {string} */
+                    status: 'invalid';
+                    reason: string;
+                  };
+            };
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          min_replicas: number;
+          max_replicas: number;
+          /** @enum {string} */
+          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
+          scale_up_above: number;
+          scale_down_below: number;
+        };
+        'application/x-www-form-urlencoded': {
+          min_replicas: number;
+          max_replicas: number;
+          /** @enum {string} */
+          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
+          scale_up_above: number;
+          scale_down_below: number;
+        };
+        'multipart/form-data': {
+          min_replicas: number;
+          max_replicas: number;
+          /** @enum {string} */
+          metric: 'queue_length_total' | 'requests_per_minute_per_replica';
+          scale_up_above: number;
+          scale_down_below: number;
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            min_replicas: number;
+            max_replicas: number;
+            /** @enum {string} */
+            metric: 'queue_length_total' | 'requests_per_minute_per_replica';
+            scale_up_above: number;
+            scale_down_below: number;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'deleteV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScaling': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** @enum {string} */
+            status: 'none';
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idScalingAgents': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            agents: {
+              agent_id: string;
+              name: string;
+              replicas_expected: number;
+              replicas_running: number;
+              load: {
+                queue_length_total: number;
+                requests_per_minute_per_replica: number;
+                /** Format: date-time */
+                observed_at: string;
+              } | null;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'getV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernance': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            agents: {
+              agent_id: string;
+              name: string;
+              replicas_running: number;
+              replicas_expected: number;
+              desired_replicas: number;
+              /** @enum {string} */
+              status: 'up' | 'down' | 'stopped' | 'unknown';
+              unmet_requires: string[];
+              models: string[] | null;
+              rules: {
+                requires: string[];
+                spend: {
+                  /** Format: date-time */
+                  since?: string;
+                  rules: {
+                    above_usd: number;
+                    action:
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        };
+                  }[];
+                } | null;
+              };
+              spend: {
+                /** Format: date-time */
+                since: string;
+                usd: number;
+                tripped_action:
+                  | (
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        }
+                    )
+                  | null;
+              } | null;
+              scaling_policy_present: boolean;
+            }[];
+            edges: {
+              source: string;
+              target: string;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernanceAgentsByAgent_id': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        agent_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          requires: string[];
+          spend: {
+            /** Format: date-time */
+            since?: string;
+            rules: {
+              above_usd: number;
+              action:
+                | {
+                    /** @enum {string} */
+                    kind: 'switch_model';
+                    model: string;
+                  }
+                | {
+                    /** @enum {string} */
+                    kind: 'deny';
+                  };
+            }[];
+          } | null;
+        };
+        'application/x-www-form-urlencoded': {
+          requires: string[];
+          spend: {
+            /** Format: date-time */
+            since?: string;
+            rules: {
+              above_usd: number;
+              action:
+                | {
+                    /** @enum {string} */
+                    kind: 'switch_model';
+                    model: string;
+                  }
+                | {
+                    /** @enum {string} */
+                    kind: 'deny';
+                  };
+            }[];
+          } | null;
+        };
+        'multipart/form-data': {
+          requires: string[];
+          spend: {
+            /** Format: date-time */
+            since?: string;
+            rules: {
+              above_usd: number;
+              action:
+                | {
+                    /** @enum {string} */
+                    kind: 'switch_model';
+                    model: string;
+                  }
+                | {
+                    /** @enum {string} */
+                    kind: 'deny';
+                  };
+            }[];
+          } | null;
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            agents: {
+              agent_id: string;
+              name: string;
+              replicas_running: number;
+              replicas_expected: number;
+              desired_replicas: number;
+              /** @enum {string} */
+              status: 'up' | 'down' | 'stopped' | 'unknown';
+              unmet_requires: string[];
+              models: string[] | null;
+              rules: {
+                requires: string[];
+                spend: {
+                  /** Format: date-time */
+                  since?: string;
+                  rules: {
+                    above_usd: number;
+                    action:
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        };
+                  }[];
+                } | null;
+              };
+              spend: {
+                /** Format: date-time */
+                since: string;
+                usd: number;
+                tripped_action:
+                  | (
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        }
+                    )
+                  | null;
+              } | null;
+              scaling_policy_present: boolean;
+            }[];
+            edges: {
+              source: string;
+              target: string;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernanceAgentsByAgent_idStopped': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+        agent_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          stopped: boolean;
+        };
+        'application/x-www-form-urlencoded': {
+          stopped: boolean;
+        };
+        'multipart/form-data': {
+          stopped: boolean;
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            agents: {
+              agent_id: string;
+              name: string;
+              replicas_running: number;
+              replicas_expected: number;
+              desired_replicas: number;
+              /** @enum {string} */
+              status: 'up' | 'down' | 'stopped' | 'unknown';
+              unmet_requires: string[];
+              models: string[] | null;
+              rules: {
+                requires: string[];
+                spend: {
+                  /** Format: date-time */
+                  since?: string;
+                  rules: {
+                    above_usd: number;
+                    action:
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        };
+                  }[];
+                } | null;
+              };
+              spend: {
+                /** Format: date-time */
+                since: string;
+                usd: number;
+                tripped_action:
+                  | (
+                      | {
+                          /** @enum {string} */
+                          kind: 'switch_model';
+                          model: string;
+                        }
+                      | {
+                          /** @enum {string} */
+                          kind: 'deny';
+                        }
+                    )
+                  | null;
+              } | null;
+              scaling_policy_present: boolean;
+            }[];
+            edges: {
+              source: string;
+              target: string;
+            }[];
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'deleteV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idHistory': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            /** Format: uuid */
+            workflow_id: string;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'postV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idSample-data': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_id: string;
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': {
+          /** @enum {string} */
+          workflow: 'helloworld' | 'portfolio';
+        };
+        'application/x-www-form-urlencoded': {
+          /** @enum {string} */
+          workflow: 'helloworld' | 'portfolio';
+        };
+        'multipart/form-data': {
+          /** @enum {string} */
+          workflow: 'helloworld' | 'portfolio';
+        };
+      };
+    };
+    responses: {
+      /** @description Response for status 200 */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            spans: number;
+            logs: number;
+            metrics: number;
+          };
+        };
+      };
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'postV1Workflow-groupsByWorkflow_group_idTraces': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'postV1Workflow-groupsByWorkflow_group_idMetrics': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Response for status 400 */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 401 */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 403 */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 404 */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 409 */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 413 */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 422 */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 429 */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 500 */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 502 */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 503 */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+      /** @description Response for status 504 */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiError'];
+        };
+      };
+    };
+  };
+  'postV1Workflow-groupsByWorkflow_group_idLogs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        workflow_group_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
       /** @description Response for status 400 */
       400: {
         headers: {

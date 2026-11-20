@@ -15,6 +15,7 @@ import type {
   MonitoringErrorSummaryResponse,
   MonitoringListQuery,
   MonitoringLlmCallsResponse,
+  MonitoringLogSource,
   MonitoringLogSourcesResponse,
   MonitoringLogsQuery,
   MonitoringLogsResponse,
@@ -88,15 +89,30 @@ export async function get_error_summary(
   return { workflow_id, from: query.from, to: query.to, ...row };
 }
 
+/** The agents and replicas that wrote logs in the range, each agent with its id. */
+async function log_sources(workflow_id: string, range: TimeRange): Promise<MonitoringLogSource[]> {
+  const sources = await monitoring_repo.log_sources(workflow_id, range);
+  return sources.map((source) => ({
+    agent_id: Bun.randomUUIDv5(source.agent, workflow_id),
+    ...source,
+  }));
+}
+
 export async function get_logs(
   workflow_id: string,
   query: MonitoringLogsQuery
 ): Promise<MonitoringLogsResponse> {
+  // The filter gives an agent's id and a log carries its name; an id no log's agent has keeps none.
+  const sources = query.agent_id === undefined ? [] : await log_sources(workflow_id, query);
+  const agent = sources.find(({ agent_id }) => agent_id === query.agent_id)?.agent;
   return {
     workflow_id,
     from: query.from,
     to: query.to,
-    logs: await monitoring_repo.logs(workflow_id, query),
+    logs:
+      query.agent_id !== undefined && agent === undefined
+        ? []
+        : await monitoring_repo.logs(workflow_id, query, agent),
   };
 }
 
@@ -132,7 +148,7 @@ export async function get_log_sources(
     workflow_id,
     from: query.from,
     to: query.to,
-    sources: await monitoring_repo.log_sources(workflow_id, query),
+    sources: await log_sources(workflow_id, query),
   };
 }
 

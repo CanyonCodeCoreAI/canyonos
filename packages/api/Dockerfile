@@ -34,6 +34,6 @@ EXPOSE 3000
 USER bun
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --start-interval=2s --retries=3 \
-    CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT??3000)+'/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT??3000)+'/v1/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["bun", "run", "src/server.ts"]

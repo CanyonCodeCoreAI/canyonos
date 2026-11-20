@@ -112,12 +112,14 @@ def register_workflows(state: dict) -> list[dict]:
 
 
 def add_sample_data(
+    workflow_group_id: str,
     workflow_id: str,
     workflow: str,
     api_port: int | None = None,
 ) -> dict:
     """Ask the dashboard, its API on `api_port` or where it is when that is None, to
-    add its recorded run of `workflow` to the workflow `workflow_id`.
+    add its recorded run of `workflow` to the workflow `workflow_id` of workflow group
+    `workflow_group_id`.
 
     The api replays a run of that bundled workflow it ships, spread across the
     week ending now, so a first request lands among a week of earlier ones
@@ -129,7 +131,10 @@ def add_sample_data(
     does not answer.
     """
     base_url = f"http://127.0.0.1:{api_port or _api_port()}"
-    url = f"{base_url}/workflows/{workflow_id}/sample-data"
+    url = (
+        f"{base_url}/v1/workflow-groups/{workflow_group_id}"
+        f"/workflows/{workflow_id}/sample-data"
+    )
     payload = json.dumps({"workflow": workflow}).encode()
     try:
         return _post(url, payload, SAMPLE_DATA_TIMEOUT_SECONDS)

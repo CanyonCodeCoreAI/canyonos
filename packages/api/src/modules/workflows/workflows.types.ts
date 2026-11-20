@@ -5,19 +5,18 @@ import { z } from 'zod';
 
 export const WorkflowIdParams = z.object({ workflow_id: z.string().uuid() });
 
+// A workflow under the workflow group it runs in.
+export const GroupWorkflowParams = WorkflowIdParams.extend({
+  workflow_group_id: z.string().uuid(),
+});
+
 export const WorkflowSummarySchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
-  file_count: z.number().int().nonnegative(),
+  // The workflow group it runs in, under which its requests, metrics and settings are read.
+  workflow_group_id: z.string().uuid().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
-});
-
-export const WorkflowStatsSchema = z.object({
-  workflow_id: z.string().uuid(),
-  file_count: z.number().int().nonnegative(),
-  agent_count: z.number().int().nonnegative(),
-  tool_count: z.number().int().nonnegative(),
 });
 
 export const WorkflowDeletedSchema = z.object({ workflow_id: z.string().uuid() });
@@ -36,6 +35,5 @@ export const SampleDataSchema = z.object({
 });
 
 export type WorkflowSummary = z.infer<typeof WorkflowSummarySchema>;
-export type WorkflowStats = z.infer<typeof WorkflowStatsSchema>;
 export type WorkflowDeleted = z.infer<typeof WorkflowDeletedSchema>;
 export type SampleWorkflow = z.infer<typeof SampleWorkflowSchema>;

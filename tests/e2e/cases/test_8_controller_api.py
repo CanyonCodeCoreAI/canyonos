@@ -16,19 +16,53 @@ import uuid
 from ..harness import canyonos, cli_python, controller_headers, http, poll
 
 PREFIX = "/v1/workflow-groups"
+WORKFLOW = f"{PREFIX}/{{workflow_group_id}}/workflows/{{workflow_id}}"
 ROUTES = {
     (PREFIX, "get"),
     (f"{PREFIX}/{{workflow_group_id}}", "put"),
     (f"{PREFIX}/{{workflow_group_id}}", "get"),
     (f"{PREFIX}/{{workflow_group_id}}", "delete"),
-    (f"{PREFIX}/{{workflow_group_id}}/workflows/{{name}}", "put"),
-    (f"{PREFIX}/{{workflow_group_id}}/workflows/{{name}}", "delete"),
+    (WORKFLOW, "put"),
+    (WORKFLOW, "delete"),
     (f"{PREFIX}/{{workflow_group_id}}/logs/controller", "get"),
-    (f"{PREFIX}/{{workflow_group_id}}/logs/agents/{{name}}", "get"),
+    (f"{PREFIX}/{{workflow_group_id}}/logs/agents/{{agent_id}}", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/health", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/workflows", "get"),
-    (f"{PREFIX}/{{workflow_group_id}}/workflows/{{name}}", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/dashboard", "put"),
+    # The dashboard's routes of one workflow, which take the API key, not the control key.
+    (f"{WORKFLOW}/requests", "get"),
+    (f"{WORKFLOW}/requests/{{request_id}}", "get"),
+    (f"{WORKFLOW}/metrics/kpis", "get"),
+    (f"{WORKFLOW}/metrics/distribution", "get"),
+    (f"{WORKFLOW}/metrics/timeseries", "get"),
+    (f"{WORKFLOW}/metrics/blocks", "get"),
+    (f"{WORKFLOW}/metrics/agents/{{agent_id}}", "get"),
+    (f"{WORKFLOW}/monitoring/series", "get"),
+    (f"{WORKFLOW}/monitoring/logs", "get"),
+    (f"{WORKFLOW}/monitoring/logs/sources", "get"),
+    (f"{WORKFLOW}/monitoring/llm", "get"),
+    (f"{WORKFLOW}/monitoring/traces", "get"),
+    (f"{WORKFLOW}/monitoring/errors/summary", "get"),
+    (f"{WORKFLOW}/monitoring/resources", "get"),
+    (f"{WORKFLOW}/monitoring/replicas", "get"),
+    (f"{WORKFLOW}/monitoring/endpoint", "get"),
+    (f"{WORKFLOW}/prompts", "get"),
+    (f"{WORKFLOW}/prompts/{{name}}", "get"),
+    (f"{WORKFLOW}/prompts/{{name}}/versions", "post"),
+    (f"{WORKFLOW}/prompts/{{name}}/live", "put"),
+    (f"{WORKFLOW}/scaling", "get"),
+    (f"{WORKFLOW}/scaling", "put"),
+    (f"{WORKFLOW}/scaling", "delete"),
+    (f"{WORKFLOW}/scaling/agents", "get"),
+    (f"{WORKFLOW}/governance", "get"),
+    (f"{WORKFLOW}/governance/agents/{{agent_id}}", "put"),
+    (f"{WORKFLOW}/governance/agents/{{agent_id}}/stopped", "put"),
+    (f"{WORKFLOW}/history", "delete"),
+    (f"{WORKFLOW}/sample-data", "post"),
+    # Where the Global Controller sends the workflow group's telemetry, with no key.
+    (f"{PREFIX}/{{workflow_group_id}}/traces", "post"),
+    (f"{PREFIX}/{{workflow_group_id}}/metrics", "post"),
+    (f"{PREFIX}/{{workflow_group_id}}/logs", "post"),
 }
 GZIP = {"Content-Type": "application/gzip"}
 JSON_TYPES = {
@@ -174,13 +208,8 @@ def test_reads_match_the_spec(recorder, deployed):
         f"{group}/workflows",
         "get",
     )["workflows"]
-    one = _answer(
-        spec,
-        http(recorder, "GET", f"{base}/workflows/{workflow}", headers=auth),
-        f"{group}/workflows/{{name}}",
-        "get",
-    )
-    assert one in listed, (one, listed)
+    names = {one["workflow_id"]: one["name"] for one in listed}
+    assert names.get(deployed.workflow_id) == workflow, listed
     health = _answer(
         spec,
         http(recorder, "GET", f"{base}/health", headers=auth),
@@ -188,14 +217,25 @@ def test_reads_match_the_spec(recorder, deployed):
         "get",
     )
     assert health["ok"], health
-    agent = deployed.agents[0]
+    namespace = uuid.UUID(deployed.workflow_id)
+    expected = {name: str(uuid.uuid5(namespace, name)) for name in deployed.agents}
+    ids = {agent["name"]: agent["agent_id"] for agent in status["agents"]}
+    assert expected.items() <= ids.items(), status
+    agent_id = expected[deployed.agents[0]]
+    logs_route = f"{group}/logs/agents/{{agent_id}}"
     logs = _answer(
         spec,
-        http(recorder, "GET", f"{base}/logs/agents/{agent}?tail=5", headers=auth),
-        f"{group}/logs/agents/{{name}}",
+        http(recorder, "GET", f"{base}/logs/agents/{agent_id}?tail=5", headers=auth),
+        logs_route,
         "get",
     )
     assert logs["logs"], logs
+    # A replica's id in place of the agent's reads that one replica.
+    replica = next(iter(logs["logs"]))
+    single = http(recorder, "GET", f"{base}/logs/agents/{replica}?tail=5", headers=auth)
+    assert list(_answer(spec, single, logs_route, "get")["logs"]) == [replica], (
+        single.output
+    )
     log = http(recorder, "GET", f"{base}/logs/controller?tail=5", headers=auth)
     assert log.headers["content-type"].startswith("text/plain"), log.headers
     assert 0 < len(log.output.splitlines()) <= 5, log.output
@@ -208,7 +248,6 @@ def test_errors_carry_their_code(recorder, deployed):
     group = f"{PREFIX}/{{workflow_group_id}}"
     prefix = f"{PREFIX}/{deployed.workflow_group_id}"
     status = _status(recorder, spec, url, deployed.workflow_group_id, auth)
-    workflow = status["endpoint"]["routes"][0]["workflow"]
     before = status["generation"]
     broken = io.BytesIO()
     with tarfile.open(fileobj=broken, mode="w:gz") as archive:
@@ -246,7 +285,7 @@ def test_errors_carry_their_code(recorder, deployed):
             "validation_error",
         ),
         (
-            f"{group}/logs/agents/{{name}}",
+            f"{group}/logs/agents/{{agent_id}}",
             "GET",
             f"{prefix}/logs/agents/NoSuchAgent",
             {},
@@ -263,33 +302,42 @@ def test_errors_carry_their_code(recorder, deployed):
             "workflow_groups.controller_missing",
         ),
         (
-            f"{group}/workflows/{{name}}",
-            "GET",
-            f"{prefix}/workflows/no-such",
-            {},
-            404,
-            "workflow_groups.unknown_workflow",
-        ),
-        (
-            f"{group}/workflows/{{name}}",
+            WORKFLOW,
             "DELETE",
             f"{prefix}/workflows/no-such",
             {},
+            422,
+            "validation_error",
+        ),
+        (
+            WORKFLOW,
+            "DELETE",
+            f"{prefix}/workflows/{unknown}",
+            {},
+            404,
+            "workflow_groups.unknown_workflow",
+        ),
+        # An ID workflow_group.yaml does not list, refused before the archive is read.
+        (
+            WORKFLOW,
+            "PUT",
+            f"{prefix}/workflows/{unknown}",
+            {"data": b"not a tar", "headers": {**GZIP, **auth}},
             404,
             "workflow_groups.unknown_workflow",
         ),
         (
-            f"{group}/workflows/{{name}}",
+            WORKFLOW,
             "PUT",
-            f"{prefix}/workflows/{workflow}",
+            f"{prefix}/workflows/{deployed.workflow_id}",
             {"data": b"not a tar", "headers": {**GZIP, **auth}},
             400,
             "workflow_groups.bad_archive",
         ),
         (
-            f"{group}/workflows/{{name}}",
+            WORKFLOW,
             "PUT",
-            f"{prefix}/workflows/{workflow}",
+            f"{prefix}/workflows/{deployed.workflow_id}",
             {"data": broken.getvalue(), "headers": {**GZIP, **auth}},
             400,
             "workflow_groups.workflow_invalid",
@@ -322,10 +370,14 @@ def test_uploading_what_runs_changes_nothing(recorder, deployed, tmp_path):
     spec = _spec(recorder, api)
     url = f"{api}{PREFIX}/{deployed.workflow_group_id}"
     auth = controller_headers(recorder, deployed.dir)
-    status = _status(recorder, spec, api, deployed.workflow_group_id, auth)
-    workflow = status["endpoint"]["routes"][0]["workflow"]
-    workflow_url = f"{url}/workflows/{workflow}"
-    before = http(recorder, "GET", workflow_url, headers=auth).json()["fingerprints"]
+    workflow_url = f"{url}/workflows/{deployed.workflow_id}"
+
+    def fingerprints():
+        listed = http(recorder, "GET", f"{url}/workflows", headers=auth).json()
+        by_id = {one["workflow_id"]: one["fingerprints"] for one in listed["workflows"]}
+        return by_id[deployed.workflow_id]
+
+    before = fingerprints()
     env = deployed.dir / ".env"
     body = {
         "name": deployed.dir.name,
@@ -349,9 +401,7 @@ def test_uploading_what_runs_changes_nothing(recorder, deployed, tmp_path):
         data=archive.read_bytes(),
         headers={**GZIP, **auth},
     )
-    generation = _answer(
-        spec, upload, f"{PREFIX}/{{workflow_group_id}}/workflows/{{name}}", "put"
-    )["generation"]
+    generation = _answer(spec, upload, WORKFLOW, "put")["generation"]
 
     def applied():
         status = _status(recorder, spec, api, deployed.workflow_group_id, auth)
@@ -360,5 +410,5 @@ def test_uploading_what_runs_changes_nothing(recorder, deployed, tmp_path):
     status = poll(applied, timeout=60, interval=1, what=f"generation {generation}")
     assert status["last_apply"]["action"] == "none", status["last_apply"]
     assert status["phase"] == "up", status
-    after = http(recorder, "GET", workflow_url, headers=auth).json()["fingerprints"]
+    after = fingerprints()
     assert after == before, (before, after)

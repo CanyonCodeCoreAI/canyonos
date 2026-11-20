@@ -19,6 +19,7 @@ import {
   spanErrorCount,
   spanFailed,
   spanModel,
+  spanReplicaId,
   spanServerCost,
   spanTokenCost,
   spanTotalTokens,
@@ -52,17 +53,14 @@ const recoverable_cost = (alias: string): string => `(case
       end)`;
 
 /**
- * The name is the identity; `gen_ai.agent.id` addresses it, taken only where every reporting span
- * agrees on one. `replica_count` is how many ids the store reported, so 0 means name-only.
+ * Each span name with the id of the agent that ran it, `gen_ai.agent.id`; a name whose spans
+ * carry none is addressed by the name. `replica_count` is how many replicas reported.
  */
 const AGENTS_CTE = `agents as (
     select
       s.name,
-      coalesce(
-        case when count(distinct ${spanAgentId('s')}) = 1 then min(${spanAgentId('s')}) end,
-        s.name
-      ) as agent_id,
-      count(distinct ${spanAgentId('s')})::int as replica_count
+      coalesce(min(${spanAgentId('s')}), s.name) as agent_id,
+      count(distinct ${spanReplicaId('s')})::int as replica_count
     from scoped s
     group by s.name
   )`;
@@ -299,7 +297,7 @@ export const metrics_repo = {
       agent_summary as (
         select
           count(distinct s.trace_id)::int as request_count,
-          count(distinct ${sql.raw(spanAgentId('s'))})::int as replica_count,
+          count(distinct ${sql.raw(spanReplicaId('s'))})::int as replica_count,
           ${sql.raw(block_aggregates())}
         from agent_rows s
       ),

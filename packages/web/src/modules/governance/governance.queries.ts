@@ -3,10 +3,11 @@
 
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query';
 
-import type { AgentRules, GovernanceResponse } from '@canyonos/api/governance';
+import type { AgentRules, GovernanceAgent, GovernanceResponse } from '@canyonos/api/governance';
 
 import { toast } from '@repo/ui/shadcn/sonner';
-import { apiCall, canyonosAuthApi } from '@/api';
+import { apiCall } from '@/api';
+import { groupWorkflowApi } from '@/modules/workflows/workflows.queries';
 import {
   dashboardPollInterval,
   workflowQueryKeys,
@@ -37,8 +38,10 @@ export function governanceErrorMessage(
 export const governanceQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.governance(workflow_id),
-    queryFn: () =>
-      apiCall<GovernanceResponse>(() => canyonosAuthApi.workflows[workflow_id]!.governance.get()),
+    queryFn: ({ client }) =>
+      apiCall<GovernanceResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.governance.get()
+      ),
     retry: false,
     refetchInterval: dashboardPollInterval,
   });
@@ -49,12 +52,12 @@ function useInvalidateGovernance(workflow_id: string) {
     query_client.invalidateQueries({ queryKey: workflowQueryKeys.governance(workflow_id) });
 }
 
-export function useSaveAgentRules(workflow_id: string, agent: string) {
+export function useSaveAgentRules(workflow_id: string, agent_id: string) {
   const invalidate = useInvalidateGovernance(workflow_id);
   return useMutation({
-    mutationFn: (rules: AgentRules) =>
-      apiCall<GovernanceResponse>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.governance.agents[agent]!.put(rules)
+    mutationFn: (rules: AgentRules, { client }) =>
+      apiCall<GovernanceResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.governance.agents[agent_id]!.put(rules)
       ),
     onSuccess: () => {
       toast.success("Governance rules saved. They apply on the controller's next poll.", TOAST);
@@ -63,18 +66,20 @@ export function useSaveAgentRules(workflow_id: string, agent: string) {
   });
 }
 
-export function useSetStopped(workflow_id: string, agent: string) {
+export function useSetStopped(workflow_id: string, { agent_id, name }: GovernanceAgent) {
   const invalidate = useInvalidateGovernance(workflow_id);
   return useMutation({
-    mutationFn: (stopped: boolean) =>
-      apiCall<GovernanceResponse>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.governance.agents[agent]!.stopped.put({ stopped })
+    mutationFn: (stopped: boolean, { client }) =>
+      apiCall<GovernanceResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.governance.agents[agent_id]!.stopped.put({
+          stopped,
+        })
       ),
     onSuccess: (_response, stopped) => {
       toast.success(
         stopped
-          ? `${agent} stopped. The controller removes its replicas on its next poll.`
-          : `${agent} started. The controller brings its replicas back on its next poll.`,
+          ? `${name} stopped. The controller removes its replicas on its next poll.`
+          : `${name} started. The controller brings its replicas back on its next poll.`,
         TOAST
       );
       return invalidate();

@@ -161,7 +161,9 @@ function parse_names(raw: string | null): string[] {
 }
 
 /** A scaling agent plus the replica count its spec configures. */
-export type AgentReading = ScalingAgent & { readonly replicas_configured: number };
+export type AgentReading = Omit<ScalingAgent, 'agent_id'> & {
+  readonly replicas_configured: number;
+};
 
 // A spec or sample the controller wrote badly hides that agent's figures, never the whole list.
 async function read_agent(
@@ -211,6 +213,11 @@ export async function read_agents(redis: RedisClient, workflow: string): Promise
 export async function list_scaling_agents(workflow_id: string): Promise<ScalingAgentsResponse> {
   return with_redis(workflow_id, async (redis) => {
     const agents = await read_agents(redis, await assert_workflow_running(redis, workflow_id));
-    return { agents: agents.map(({ replicas_configured: _, ...agent }) => agent) };
+    return {
+      agents: agents.map(({ replicas_configured: _, ...agent }) => ({
+        agent_id: Bun.randomUUIDv5(agent.name, workflow_id),
+        ...agent,
+      })),
+    };
   });
 }

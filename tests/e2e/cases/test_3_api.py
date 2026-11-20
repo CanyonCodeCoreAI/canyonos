@@ -11,6 +11,7 @@ API the CLI started holds only the hash of the session's API key and answers onl
 that key, through the dashboard's proxy too."""
 
 import re
+import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -43,7 +44,10 @@ RUN_STARTED = datetime.now(timezone.utc) - timedelta(minutes=1)
 
 
 def _workflow_path(deployed, suffix):
-    return f"/workflows/{deployed.workflow_id}{suffix}"
+    return (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}{suffix}"
+    )
 
 
 def _window():
@@ -206,7 +210,7 @@ def test_figures_agree_on_this_run(deployed, query_result):
                 (
                     workflow["requests"]
                     for workflow in deployed.api.get(
-                        f"/resources/overview?{window}"
+                        f"/v1/resources/overview?{window}"
                     ).json()["workflows"]
                     if workflow["id"] == deployed.workflow_id
                 ),
@@ -234,6 +238,8 @@ def test_blocks_and_agent_detail(deployed, query_result):
     )
     block = next(b for b in body["blocks"] if b["label"] == endpoint_call)
     assert {b["label"] for b in body["blocks"]} <= _declared_calls(deployed), body
+    agent_id = str(uuid.uuid5(uuid.UUID(deployed.workflow_id), deployed.endpoint.agent))
+    assert block["agent_id"] == agent_id, body
     detail = _wait_for(
         deployed,
         f"/metrics/agents/{block['agent_id']}",
@@ -262,7 +268,7 @@ def test_traces_hold_the_query_on_its_replicas(deployed, query_result):
     assert len(trace["spans"]) == expected, trace
     replica = _replica_id_pattern(deployed)
     for span in trace["spans"]:
-        match = replica.fullmatch(span["agent"] or "")
+        match = replica.fullmatch(span["replica"] or "")
         assert match and span["name"].startswith(f"{match[1]}."), span
 
 
@@ -326,7 +332,7 @@ def test_replicas_report_the_routed_ones(recorder, deployed):
 @pytest.mark.trait("logs")
 def test_logs_come_from_agent_replicas(deployed, query_result):
     replica = _replica_id_pattern(deployed)
-    _wait_for(
+    sources = _wait_for(
         deployed,
         "/monitoring/logs/sources",
         lambda b: any(
@@ -338,13 +344,13 @@ def test_logs_come_from_agent_replicas(deployed, query_result):
             for source in b["sources"]
         ),
         "a log source named after an agent replica",
-    )
-    _wait_for(
-        deployed,
-        "/monitoring/logs",
-        lambda b: any(log["agent"] in deployed.agents for log in b["logs"]),
-        "a log line of an agent",
-    )
+    )["sources"]
+    source = next(s for s in sources if s["agent"] in deployed.agents)
+    agent_id = str(uuid.uuid5(uuid.UUID(deployed.workflow_id), source["agent"]))
+    assert source["agent_id"] == agent_id, sources
+    query = urlencode({"agent_id": agent_id})
+    logs = _get(deployed, f"/monitoring/logs?{query}", _window())["logs"]
+    assert logs and {log["agent"] for log in logs} == {source["agent"]}, logs
 
 
 def test_endpoint(deployed):
@@ -395,9 +401,9 @@ def _refused(call, status, code):
 
 def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
     base_url = deployed.api.base_url
-    status = http(recorder, "GET", f"{base_url}/auth/status").json()
+    status = http(recorder, "GET", f"{base_url}/v1/auth/status").json()
     assert status == {"api_key_required": True}, status
-    workflows = f"{base_url}/workflows"
+    workflows = f"{base_url}/v1/workflows"
     _refused(http(recorder, "GET", workflows, check=False), 401, "auth.missing_key")
     wrong = bearer(f"{recorder.api_key}x")
     refused = http(recorder, "GET", workflows, headers=wrong, check=False)
@@ -406,18 +412,18 @@ def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
     refused = http(recorder, "GET", workflows, headers=hashed, check=False)
     _refused(refused, 401, "auth.invalid_key")
     checked = http(
-        recorder, "GET", f"{base_url}/auth/check", headers=deployed.api.headers
+        recorder, "GET", f"{base_url}/v1/auth/check", headers=deployed.api.headers
     )
     assert checked.json() == {"ok": True}, checked.output
     _refused(
-        http(recorder, "GET", f"{base_url}/auth/check", check=False),
+        http(recorder, "GET", f"{base_url}/v1/auth/check", check=False),
         401,
         "auth.missing_key",
     )
 
 
 def test_a_write_without_the_key_changes_nothing(recorder, deployed):
-    workflows = deployed.api.get("/workflows").json()
+    workflows = deployed.api.get("/v1/workflows").json()
     assert deployed.workflow_id in {workflow["id"] for workflow in workflows}, workflows
     scaling = _workflow_path(deployed, "/scaling")
     url = f"{deployed.api.base_url}{scaling}"
@@ -428,7 +434,7 @@ def test_a_write_without_the_key_changes_nothing(recorder, deployed):
 
 
 def test_the_dashboard_proxy_passes_the_key_on(recorder, deployed):
-    url = f"http://127.0.0.1:{dashboard_port(recorder)}/api/workflows"
+    url = f"http://127.0.0.1:{dashboard_port(recorder)}/api/v1/workflows"
     http(recorder, "GET", url, headers=deployed.api.headers)
     _refused(http(recorder, "GET", url, check=False), 401, "auth.missing_key")
 

@@ -111,7 +111,7 @@ export async function bootstrap_registry(): Promise<void> {
 
 // On Kubernetes nothing posts registrations: the dashboard stores the workflows each listed
 // workflow group's Global Controller publishes in its Redis (`controller:identity` `workflows`),
-// by workflow id, with their workflow group, so the /workflows/:workflow_id routes reach the
+// by workflow id, with their workflow group, so each workflow's routes reach the
 // group's Redis through it.
 
 // The name and workflow group stored for each workflow, so an unchanged one costs no query.

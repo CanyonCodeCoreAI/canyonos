@@ -17,7 +17,7 @@ import {
 } from '@api/modules/telemetry/telemetry.schema';
 import { SAMPLE_ATTRIBUTE } from '@api/modules/workflows/sample-data';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import { write_workflow_span } from './telemetry-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
@@ -33,7 +33,7 @@ const WORKFLOWS = ['helloworld', 'portfolio'] as const;
 const REPLAY_TIMEOUT_MS = 60_000;
 
 const add_sample_data = (workflow_id: string, token: string, workflow: string) =>
-  api.workflows[workflow_id]!['sample-data'].post(
+  group_workflow(workflow_id)['sample-data'].post(
     // Typed as the enum; the refusal test sends what the enum would not allow.
     { workflow } as { workflow: (typeof WORKFLOWS)[number] },
     { headers: key_headers }
@@ -77,6 +77,21 @@ describe('sample data refuses', () => {
     const refused = await add_sample_data(workflow_id, token, 'not-a-workflow');
 
     expect(refused.status).toBe(422);
+    expect(await workflow_spans(workflow_id)).toBe(0);
+    expect(await workflow_rows(otelMetrics, workflow_id)).toBe(0);
+  });
+
+  test('a workflow under a workflow group it is not in, 404 workflows.not_found, and writes nothing', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'Own Group' });
+    const { workflow_id: other_group_id } = await create_test_workflow({ name: 'Other Group' });
+
+    const refused = await group_workflow(workflow_id, other_group_id)['sample-data'].post(
+      { workflow: 'helloworld' },
+      { headers: key_headers }
+    );
+
+    expect(refused.error?.status as number).toBe(404);
+    expect((refused.error?.value as { error?: string })?.error).toBe('workflows.not_found');
     expect(await workflow_spans(workflow_id)).toBe(0);
     expect(await workflow_rows(otelMetrics, workflow_id)).toBe(0);
   });

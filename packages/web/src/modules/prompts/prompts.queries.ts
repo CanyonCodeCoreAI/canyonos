@@ -10,7 +10,8 @@ import type {
   SystemPromptCreate,
 } from '@canyonos/api/prompts';
 
-import { apiCall, canyonosAuthApi } from '@/api';
+import { apiCall } from '@/api';
+import { groupWorkflowApi } from '@/modules/workflows/workflows.queries';
 import { workflowQueryKeys } from '@/modules/workflows/workflows.query-cache';
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -29,16 +30,20 @@ export function promptErrorMessage(
 export const promptsQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.prompts(workflow_id),
-    queryFn: () =>
-      apiCall<PromptListItem[]>(() => canyonosAuthApi.workflows[workflow_id]!.prompts.get()),
+    queryFn: ({ client }) =>
+      apiCall<PromptListItem[]>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.prompts.get()
+      ),
     retry: false,
   });
 
 export const promptQueryOptions = (workflow_id: string, name: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.prompt(workflow_id, name),
-    queryFn: () =>
-      apiCall<Prompt>(() => canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.get()),
+    queryFn: ({ client }) =>
+      apiCall<Prompt>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.prompts[name]!.get()
+      ),
     retry: false,
   });
 
@@ -46,9 +51,9 @@ export function useCreateSystemPrompt(workflow_id: string, name: string) {
   const query_client = useQueryClient();
 
   return useMutation({
-    mutationFn: (body: SystemPromptCreate) =>
-      apiCall<SystemPrompt>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.versions.post(body)
+    mutationFn: (body: SystemPromptCreate, { client }) =>
+      apiCall<SystemPrompt>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.prompts[name]!.versions.post(body)
       ),
     onSuccess: () =>
       query_client.invalidateQueries({ queryKey: workflowQueryKeys.prompt(workflow_id, name) }),
@@ -59,9 +64,9 @@ export function useMakePromptLive(workflow_id: string, name: string) {
   const query_client = useQueryClient();
 
   return useMutation({
-    mutationFn: (version: string) =>
-      apiCall<PromptListItem>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.prompts[name]!.live.put({ version })
+    mutationFn: (version: string, { client }) =>
+      apiCall<PromptListItem>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.prompts[name]!.live.put({ version })
       ),
     // The listing carries each prompt's live version too, so both reads are stale.
     onSuccess: () =>

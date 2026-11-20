@@ -40,7 +40,7 @@ test('workflow navigation distinguishes loading, error, retry, and empty states'
 
   const apiOrigin = new URL(apiBaseUrl).origin;
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/workflows',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/workflows',
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       attempts += 1;

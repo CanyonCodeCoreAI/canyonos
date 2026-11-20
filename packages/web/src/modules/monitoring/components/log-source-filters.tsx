@@ -40,7 +40,7 @@ export function LogSourceFilters({
   const replicas =
     agent === ALL_SOURCES
       ? [...new Set(sources.flatMap((source) => source.replicas))].sort()
-      : (sources.find((source) => source.agent === agent)?.replicas ?? []);
+      : (sources.find((source) => source.agent_id === agent)?.replicas ?? []);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -61,7 +61,7 @@ export function LogSourceFilters({
         <SelectContent align="end">
           <SelectItem value={ALL_SOURCES}>All agents</SelectItem>
           {sources.map((source) => (
-            <SelectItem key={source.agent} value={source.agent}>
+            <SelectItem key={source.agent_id} value={source.agent_id}>
               {source.agent}
             </SelectItem>
           ))}

@@ -27,7 +27,7 @@
 #   - the dashboard lists the project's workflow by its own id, never the workflow
 #     group's, reads its Redis and receives its telemetry; its API takes the key whose
 #     hash is in the chart's Secret (api-key-hash), refuses a request with no key or
-#     another one, and reads and changes with it; its /readyz reports the database ok
+#     another one, and reads and changes with it; its /v1/readyz reports the database ok
 #     and Docker disabled;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
@@ -304,41 +304,41 @@ EOF
   }
 
   log "The dashboard's API verifies the key"
-  code="$(api_call GET /auth/status "")"
+  code="$(api_call GET /v1/auth/status "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json")) != {"api_key_required": True})' \
-    || fail "/auth/status answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /workflows "")"
+    || fail "/v1/auth/status answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET /v1/workflows "")"
   [ "${code}" = 401 ] && grep -q auth.missing_key /tmp/api.json \
-    || fail "/workflows with no key answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /workflows "not-${dashboard_key}")"
+    || fail "/v1/workflows with no key answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET /v1/workflows "not-${dashboard_key}")"
   [ "${code}" = 401 ] && grep -q auth.invalid_key /tmp/api.json \
-    || fail "/workflows with another key answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /auth/check "${dashboard_key}")"
-  [ "${code}" = 200 ] || fail "/auth/check with the key answered ${code}: $(cat /tmp/api.json)"
+    || fail "/v1/workflows with another key answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET /v1/auth/check "${dashboard_key}")"
+  [ "${code}" = 200 ] || fail "/v1/auth/check with the key answered ${code}: $(cat /tmp/api.json)"
   # The chart runs the API without Docker: ready means its database is, and Docker is off.
-  code="$(api_call GET /readyz "")"
+  code="$(api_call GET /v1/readyz "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json"))["checks"] != {"database": "ok", "docker": "disabled"})' \
-    || fail "/readyz answered ${code}: $(cat /tmp/api.json)"
+    || fail "/v1/readyz answered ${code}: $(cat /tmp/api.json)"
   get() { curl -s -m 10 -H "Authorization: Bearer ${dashboard_key}" "${api}$1"; }
   until_found() {  # path, text, what
     for _ in $(seq 40); do get "$1" | grep -q "$2" && return 0; sleep 5; done
     fail "$3: $(get "$1")"
   }
-  until_found /workflows "${workflow_id}" "the dashboard does not list the project's workflow"
-  get /workflows | python -c 'import sys, json; sys.exit(sys.argv[1] in {w["id"] for w in json.load(sys.stdin)})' \
-    "${project_id}" || fail "the dashboard lists the workflow group ${project_id} as a workflow: $(get /workflows)"
-  code="$(api_call GET "/workflows/${workflow_id}/scaling" "${dashboard_key}")"
+  until_found /v1/workflows "${workflow_id}" "the dashboard does not list the project's workflow"
+  get /v1/workflows | python -c 'import sys, json; sys.exit(sys.argv[1] in {w["id"] for w in json.load(sys.stdin)})' \
+    "${project_id}" || fail "the dashboard lists the workflow group ${project_id} as a workflow: $(get /v1/workflows)"
+  code="$(api_call GET "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "reading scaling answered ${code}: $(cat /tmp/api.json)"
   # One replica, as helloworld runs: the policy changes nothing, and goes right after.
   policy='{"min_replicas": 1, "max_replicas": 1, "metric": "queue_length_total", "scale_up_above": 10, "scale_down_below": 1}'
-  code="$(api_call PUT "/workflows/${workflow_id}/scaling" "${dashboard_key}" "${policy}")"
+  code="$(api_call PUT "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/scaling" "${dashboard_key}" "${policy}")"
   [ "${code}" = 200 ] || fail "saving a scaling policy answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call DELETE "/workflows/${workflow_id}/scaling" "${dashboard_key}")"
+  code="$(api_call DELETE "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "deleting the scaling policy answered ${code}: $(cat /tmp/api.json)"
 
-  until_found "/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard could not read the project's Redis"
-  until_found "/workflows/${workflow_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
+  until_found "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/monitoring/replicas" '"replica":' "no telemetry reached the dashboard"
   echo "listed, Redis read, telemetry in"
 
   log "A rotated Redis password restarts every pod that uses it"
@@ -362,7 +362,7 @@ EOF
   done
   [ -n "${rolled}" ] || fail "pods still sign in with the old password: $(pods_on)"
   requests || fail "requests after the rotation"
-  until_found "/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
+  until_found "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/monitoring/endpoint" "canyonos-endpoint.${NS}.svc" \
     "the dashboard lost the project's Redis after the rotation"
 
   log "A deploy with a new key refuses the old one"

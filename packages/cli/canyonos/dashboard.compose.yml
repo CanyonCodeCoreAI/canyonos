@@ -48,7 +48,7 @@ services:
       # nothing. Read once when the API starts.
       CANYONOS_API_KEY_HASH: ${CANYONOS_API_KEY_HASH}
       # The SHA-256 of this machine's control key (`~/.canyonos/control_key`), which
-      # the `/v1` routes that run each Global Controller require; unset, they refuse
+      # the `/v1/workflow-groups` routes that run each Global Controller require; unset, they refuse
       # every call.
       CANYONOS_CONTROL_KEY_HASH: ${CANYONOS_CONTROL_KEY_HASH}
       DOCKER_SOCKET: /var/run/docker.sock

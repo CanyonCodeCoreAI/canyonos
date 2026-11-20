@@ -81,35 +81,50 @@ async function read_governance(
     agents: agents.map((agent): GovernanceAgent => {
       const rules = rules_by_name.get(agent.name)!;
       return {
+        agent_id: Bun.randomUUIDv5(agent.name, workflow_id),
         name: agent.name,
         replicas_running: agent.replicas_running,
         replicas_expected: agent.replicas_configured,
         desired_replicas: agent.replicas_expected,
         status: status_by_name.get(agent.name)!,
-        unmet_requires: rules.requires.filter((name) => status_by_name.get(name) !== 'up'),
+        unmet_requires: rules.requires
+          .filter((name) => status_by_name.get(name) !== 'up')
+          .map((name) => Bun.randomUUIDv5(name, workflow_id)),
         models: llms === null ? null : models_for(llms, agent.name),
-        rules,
+        // Rules are stored by agent name and answered by agent_id.
+        rules: {
+          ...rules,
+          requires: rules.requires.map((name) => Bun.randomUUIDv5(name, workflow_id)),
+        },
         spend: spend_of(rules, spend.get(agent.name)),
         // Agents are named `<workflow>.<agent>`; each workflow has its own policy.
         scaling_policy_present: scaling_workflows.has(agent.name.split('.')[0]!),
       };
     }),
-    edges: edges.filter(({ source, target }) => names.has(source) && names.has(target)),
+    edges: edges
+      .filter(({ source, target }) => names.has(source) && names.has(target))
+      .map(({ source, target }) => ({
+        source: Bun.randomUUIDv5(source, workflow_id),
+        target: Bun.randomUUIDv5(target, workflow_id),
+      })),
   };
 }
 
-function unknown_agent(name: string) {
-  return unprocessable('governance.unknown_agent', `${name} is not an agent of this workflow`);
+function unknown_agent(agent_id: string) {
+  return unprocessable(
+    'governance.unknown_agent',
+    `No agent of this workflow has the id ${agent_id}`
+  );
 }
 
-async function find_agent(
+/** The workflow's agents, by their agent_id. */
+async function agents_by_id(
   redis: RedisClient,
   workflow: string,
-  name: string
-): Promise<AgentReading[]> {
+  workflow_id: string
+): Promise<Map<string, AgentReading>> {
   const agents = await read_agents(redis, workflow);
-  if (!agents.some((agent) => agent.name === name)) throw unknown_agent(name);
-  return agents;
+  return new Map(agents.map((agent) => [Bun.randomUUIDv5(agent.name, workflow_id), agent]));
 }
 
 export async function get_governance(workflow_id: string): Promise<GovernanceResponse> {
@@ -121,15 +136,16 @@ export async function get_governance(workflow_id: string): Promise<GovernanceRes
 /** Replaces one agent's rules, keeping its spend start unless the body moves it. */
 export async function save_agent_rules(
   workflow_id: string,
-  agent: string,
+  agent_id: string,
   rules: AgentRules
 ): Promise<GovernanceResponse> {
   return with_redis(workflow_id, async (redis) => {
     const workflow = await assert_workflow_running(redis, workflow_id);
-    const agents = await find_agent(redis, workflow, agent);
-    const names = new Set(agents.map(({ name }) => name));
-    const missing = rules.requires.find((name) => !names.has(name));
+    const agents = await agents_by_id(redis, workflow, workflow_id);
+    const missing = [agent_id, ...rules.requires].find((id) => !agents.has(id));
     if (missing !== undefined) throw unknown_agent(missing);
+    const agent = agents.get(agent_id)!.name;
+    const requires = rules.requires.map((required) => agents.get(required)!.name);
 
     const llms = await governance_repo.read_llms(redis);
     if (llms !== null) {
@@ -145,9 +161,9 @@ export async function save_agent_rules(
     }
 
     await governance_repo.write_agent_rules(redis, agent, (stored) => {
-      if (rules.spend === null) return rules;
+      if (rules.spend === null) return { ...rules, requires };
       const since = rules.spend.since ?? stored?.spend?.since ?? new Date().toISOString();
-      return { ...rules, spend: { ...rules.spend, since } };
+      return { requires, spend: { ...rules.spend, since } };
     });
     await publish_spend(redis, workflow_id);
     return read_governance(redis, workflow_id, workflow);
@@ -157,14 +173,17 @@ export async function save_agent_rules(
 /** Takes an agent out (0 desired replicas) or brings it back to its spec's count. */
 export async function set_stopped(
   workflow_id: string,
-  agent: string,
+  agent_id: string,
   stopped: boolean
 ): Promise<GovernanceResponse> {
   return with_redis(workflow_id, async (redis) => {
     const workflow = await assert_workflow_running(redis, workflow_id);
-    const agents = await find_agent(redis, workflow, agent);
-    const { replicas_configured } = agents.find(({ name }) => name === agent)!;
-    await redis.set(desired_replicas_key(agent), String(stopped ? 0 : replicas_configured));
+    const agent = (await agents_by_id(redis, workflow, workflow_id)).get(agent_id);
+    if (!agent) throw unknown_agent(agent_id);
+    await redis.set(
+      desired_replicas_key(agent.name),
+      String(stopped ? 0 : agent.replicas_configured)
+    );
     return read_governance(redis, workflow_id, workflow);
   });
 }

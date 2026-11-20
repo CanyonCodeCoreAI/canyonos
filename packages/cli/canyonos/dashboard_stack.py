@@ -499,7 +499,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
                 for service, port in stack.host_ports.items()
             },
             API_KEY_HASH_ENV: stack.api_key_hash,
-            # The CanyonOS API's `/v1` routes answer only the control key.
+            # The CanyonOS API's `/v1/workflow-groups` routes answer only the control key.
             CONTROL_KEY_HASH_ENV: control_key_hash(),
             # The API runs each workflow group's Global Controller through the same
             # engine the CLI created that container on.
@@ -736,10 +736,10 @@ def _health_urls(host_ports: dict[str, int], services: tuple[str, ...]) -> list[
     """What answers 200 once `services` are up: the API on its own port once its
     database is ready, and the web app with the API behind its proxy when the web app
     is among them."""
-    urls = [f"http://127.0.0.1:{host_ports['api']}/readyz"]
+    urls = [f"http://127.0.0.1:{host_ports['api']}/v1/readyz"]
     if "web" in services:
         web_url = f"http://127.0.0.1:{host_ports['web']}"
-        urls += [f"{web_url}/healthz", f"{web_url}/api/healthz"]
+        urls += [f"{web_url}/healthz", f"{web_url}/api/v1/healthz"]
     return urls
 
 
@@ -847,7 +847,7 @@ def run_dashboard(
     """Start `services` of the local stack, with what they depend on, for `canyonos
     serve` and `canyonos deploy`, reporting each step; on failure, save the logs and
     remove what this run started. Its API checks the API key whose hash is
-    `api_key_hash`, or nothing when it is "", and its `/v1` routes this machine's
+    `api_key_hash`, or nothing when it is "", and its `/v1/workflow-groups` routes this machine's
     control key. The `renewed` services start in new containers even when they run,
     as the api does for `canyonos serve` and for a deploy that changes a key or the
     API's image. The result's URL is the dashboard's when `services` hold the web app.

@@ -16,7 +16,7 @@ import {
   for_each_registered_workflow,
   start_registered_workflows_tick,
 } from '../modules/registry/registry.service';
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import {
   read_prompts_config,
   reconcile_prompts_now,
@@ -86,7 +86,7 @@ describe('workflow prompts', () => {
   test('the listing carries each prompt with its live version, the highest n', async () => {
     const { token, workflow_id } = await running_workflow();
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([
@@ -99,7 +99,7 @@ describe('workflow prompts', () => {
     const { token, workflow_id } = await running_workflow();
     const headers = bearer(token);
 
-    const res = await api.workflows[workflow_id]!.prompts['app.intent.parse']!.get({
+    const res = await group_workflow(workflow_id).prompts['app.intent.parse']!.get({
       $headers: headers,
     });
 
@@ -110,7 +110,7 @@ describe('workflow prompts', () => {
       versions: [INTENT_V3, stored(2, '2026-09-25T00:00:00.000Z')],
     });
 
-    const missing = await api.workflows[workflow_id]!.prompts.missing!.get({ $headers: headers });
+    const missing = await group_workflow(workflow_id).prompts.missing!.get({ $headers: headers });
     expect(missing.error?.status as number).toBe(404);
     expect(error_code(missing)).toBe('prompts.prompt_not_found');
   });
@@ -118,7 +118,7 @@ describe('workflow prompts', () => {
   test('creating a version appends the next revision and keeps the live one live', async () => {
     const { token, workflow_id } = await running_workflow();
     const headers = bearer(token);
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
     const created = await prompt.versions.post(EDIT, { headers: key_headers });
 
@@ -147,7 +147,7 @@ describe('workflow prompts', () => {
   test('setting an older version live moves the live flag to it', async () => {
     const { token, workflow_id } = await running_workflow();
     const headers = bearer(token);
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
     const res = await prompt.live.put(
       { version: 'app-intent-parse-00000002-v2' },
@@ -161,7 +161,7 @@ describe('workflow prompts', () => {
     });
     const config = await read_prompts_config();
     expect(config?.prompts['app.intent.parse']?.version).toBe('app-intent-parse-00000002-v2');
-    const listed = await api.workflows[workflow_id]!.prompts.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).prompts.get({ $headers: headers });
     expect(listed.data?.[0]?.live.version).toBe('app-intent-parse-00000002-v2');
 
     const unknown = await prompt.live.put(
@@ -185,7 +185,7 @@ describe('workflow prompts', () => {
     const { workflow_id } = await running_workflow();
 
     const before = await read_prompts_config();
-    const res = await api.workflows[workflow_id]!.prompts.missing!.versions.post(EDIT, {
+    const res = await group_workflow(workflow_id).prompts.missing!.versions.post(EDIT, {
       headers: key_headers,
     });
 
@@ -201,9 +201,9 @@ describe('workflow prompts', () => {
     const { workflow_id: running_id } = await create_test_workflow({ name: 'Running' });
     await seed_running_workflow(running_id, CONFIG);
     const before = await read_prompts_config();
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
-    const listed = await api.workflows[workflow_id]!.prompts.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).prompts.get({ $headers: headers });
     const read = await prompt.get({ $headers: headers });
     const created = await prompt.versions.post(EDIT, { headers: key_headers });
     const live = await prompt.live.put(
@@ -220,7 +220,7 @@ describe('workflow prompts', () => {
 
   test('an empty system prompt is rejected before anything is stored', async () => {
     const { workflow_id } = await running_workflow();
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
     const res = await prompt.versions.post({ content: '' }, { headers: key_headers });
@@ -231,11 +231,11 @@ describe('workflow prompts', () => {
 
   test('a caller with no API key is rejected on every route', async () => {
     const { workflow_id } = await running_workflow();
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
     const before = await read_prompts_config();
     const responses = [
-      await api.workflows[workflow_id]!.prompts.get(),
+      await group_workflow(workflow_id).prompts.get(),
       await prompt.get(),
       await prompt.versions.post(EDIT),
       await prompt.live.put({ version: 'app-intent-parse-00000002-v2' }),
@@ -251,7 +251,7 @@ describe('workflow prompts', () => {
     await seed_running_workflow(workflow_id, { prompts: {} });
     await reconcile_prompts_now(workflow_id);
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([]);
@@ -261,7 +261,7 @@ describe('workflow prompts', () => {
 
   test('a redeploy keeps stored prompts over prompts.yaml and stores a prompt new to it', async () => {
     const { workflow_id } = await running_workflow();
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
     const newest = (await prompt.versions.post(EDIT, { headers: key_headers })).data!.version;
     const added = { version: 'app-advise-00000001-v1', content: 'Advise.', updated_at: null };
 
@@ -301,7 +301,7 @@ describe('workflow prompts', () => {
       },
     });
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: headers });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: headers });
 
     expect(res.error).toBeNull();
     expect(res.data?.map(({ name, live }) => [name, live.version])).toEqual([
@@ -324,7 +324,7 @@ describe('workflow prompts', () => {
   test('the tick republishes the version made live in the dashboard after a redeploy', async () => {
     const { workflow_id } = await running_workflow();
     const older = 'app-intent-parse-00000002-v2';
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
     expect((await prompt.live.put({ version: older }, { headers: key_headers })).error).toBeNull();
     // A redeployed controller publishes prompts.yaml's live versions, beside another workflow's.
     const other = { version: 'other-x-00000001-v1', content: 'Other.', updated_at: null };
@@ -358,7 +358,7 @@ describe('workflow prompts', () => {
   test('the tick runs its first round as it starts, not an interval later', async () => {
     const { workflow_id } = await running_workflow();
     const older = 'app-intent-parse-00000002-v2';
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
     expect((await prompt.live.put({ version: older }, { headers: key_headers })).error).toBeNull();
     await seed_live_prompts({ 'app.intent.parse': INTENT_V3, 'app.summarize': SUMMARIZE_V1 });
 
@@ -395,7 +395,7 @@ describe('workflow prompts', () => {
 
   test('two versions created at once get distinct consecutive revisions', async () => {
     const { workflow_id } = await running_workflow();
-    const prompt = api.workflows[workflow_id]!.prompts['app.intent.parse']!;
+    const prompt = group_workflow(workflow_id).prompts['app.intent.parse']!;
 
     const [first, second] = await Promise.all([
       prompt.versions.post({ content: 'first' }, { headers: key_headers }),
@@ -425,7 +425,7 @@ describe('a prompt write whose publish to Redis fails', () => {
     const before = [await recorded(workflow_id), await read_prompts_config()];
 
     fail_publish();
-    const res = await api.workflows[workflow_id]!.prompts['app.intent.parse']!.versions.post(EDIT, {
+    const res = await group_workflow(workflow_id).prompts['app.intent.parse']!.versions.post(EDIT, {
       headers: key_headers,
     });
 
@@ -438,7 +438,7 @@ describe('a prompt write whose publish to Redis fails', () => {
     const before = [await recorded(workflow_id), await read_prompts_config()];
 
     fail_publish();
-    const res = await api.workflows[workflow_id]!.prompts['app.intent.parse']!.live.put(
+    const res = await group_workflow(workflow_id).prompts['app.intent.parse']!.live.put(
       { version: 'app-intent-parse-00000002-v2' },
       { headers: key_headers }
     );

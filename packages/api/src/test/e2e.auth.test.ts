@@ -9,10 +9,11 @@ import type { ScalingPolicy } from '@api/modules/scaling/scaling.types';
 import { config } from '@core/env';
 
 import { hashApiKey, TEST_CONTROL_KEY } from './api-key-test.utils';
-import { api, setupE2ETests } from './e2e.setup';
+import { api, group_workflow, setupE2ETests } from './e2e.setup';
 import { refused_start, spawn_api } from './process-test.utils';
 import { seed_active_agents, seed_running_workflow, TEST_WORKFLOW } from './redis-test.utils';
 import { OPEN_ROUTES, sweep_answer, sweep_routes } from './route-sweep.utils';
+import { post_otlp } from './telemetry-test.utils';
 import { createApi } from './test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 import type { SpawnedApi } from './process-test.utils';
@@ -67,42 +68,42 @@ const fetch_api = (path: string, init?: RequestInit) => fetch(`${config.app.apiU
 
 type Client = typeof api;
 
-/** Every GET under `workflow_id`, and the fleet overview, through `client` with `headers`. The
- * check is wired per routes module, so reaching each proves every composed module serves the
- * caller. */
+/** Every GET of `workflow_id`, under /v1/workflows and under its workflow group, and the fleet
+ * overview, through `client` with `headers`. The check is wired per routes module, so reaching
+ * each proves every composed module serves the caller. */
 function read_every_sub_resource(
   client: Client,
   workflow_id: string,
   headers: Record<string, string> = {}
 ) {
   const read = { $headers: headers };
-  const workflow = client.workflows[workflow_id]!;
+  const workflow = client.v1.workflows[workflow_id]!;
+  const dashboard = client.v1['workflow-groups'][workflow_id]!.workflows[workflow_id]!;
   return Promise.all([
     workflow.get(read),
-    workflow.stats.get(read),
-    workflow.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
-    workflow.metrics.kpis.get({ ...read, $query: RANGE }),
-    workflow.monitoring.series.get({ ...read, $query: RANGE }),
-    workflow.monitoring.logs.get({
+    dashboard.requests.get({ ...read, $query: { ...RANGE, limit: 20, offset: 0 } }),
+    dashboard.metrics.kpis.get({ ...read, $query: RANGE }),
+    dashboard.monitoring.series.get({ ...read, $query: RANGE }),
+    dashboard.monitoring.logs.get({
       ...read,
       $query: { ...RANGE, limit: 200, errors_only: false },
     }),
-    workflow.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
-    workflow.monitoring.resources.get({ ...read, $query: RANGE }),
-    workflow.monitoring.replicas.get(read),
-    workflow.monitoring.endpoint.get(read),
-    workflow.prompts.get(read),
-    workflow.prompts['app.greet']!.get(read),
-    workflow.scaling.get(read),
-    workflow.scaling.agents.get(read),
-    workflow.governance.get(read),
-    client.resources.overview.get({ ...read, $query: RANGE }),
+    dashboard.monitoring.traces.get({ ...read, $query: { ...RANGE, limit: 200 } }),
+    dashboard.monitoring.resources.get({ ...read, $query: RANGE }),
+    dashboard.monitoring.replicas.get(read),
+    dashboard.monitoring.endpoint.get(read),
+    dashboard.prompts.get(read),
+    dashboard.prompts['app.greet']!.get(read),
+    dashboard.scaling.get(read),
+    dashboard.scaling.agents.get(read),
+    dashboard.governance.get(read),
+    client.v1.resources.overview.get({ ...read, $query: RANGE }),
   ]);
 }
 
 /** The ids `client` lists with `headers`. */
 async function listed_ids(client: Client, headers: Record<string, string> = {}) {
-  const listed = await client.workflows.get({ $headers: headers });
+  const listed = await client.v1.workflows.get({ $headers: headers });
   expect(listed.error).toBeNull();
   return listed.data!.map(({ id }) => id);
 }
@@ -111,21 +112,28 @@ describe('the dashboard API checks the API key', () => {
   test('no Authorization header, or a Basic one, is 401 auth.missing_key', async () => {
     const basic = { authorization: `Basic ${Buffer.from('admin:admin').toString('base64')}` };
 
-    for (const res of [await api.workflows.get(), await api.workflows.get({ $headers: basic })]) {
+    for (const res of [
+      await api.v1.workflows.get(),
+      await api.v1.workflows.get({ $headers: basic }),
+    ]) {
       expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.missing_key' });
       expect(refusal(res).message).toBeString();
     }
   });
 
-  test('a key that is not the API key is 401 auth.invalid_key', async () => {
-    const res = await api.workflows.get({ $headers: bearer(WRONG_KEY) });
+  test('a key that is not the API key, the control key too, is 401 auth.invalid_key', async () => {
+    const res = await api.v1.workflows.get({ $headers: bearer(WRONG_KEY) });
+    const control = await group_workflow(UNKNOWN_WORKFLOW_ID).scaling.get({
+      $headers: bearer(TEST_CONTROL_KEY),
+    });
 
     expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
+    expect(refusal(control)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
   });
 
   test('a refusal says to send a bearer, and a pass does not', async () => {
-    const refused = await fetch_api('/workflows', { headers: bearer(WRONG_KEY) });
-    const passed = await fetch_api('/workflows', { headers: bearer(TEST_API_KEY) });
+    const refused = await fetch_api('/v1/workflows', { headers: bearer(WRONG_KEY) });
+    const passed = await fetch_api('/v1/workflows', { headers: bearer(TEST_API_KEY) });
 
     expect(refused.status).toBe(401);
     expect(refused.headers.get('www-authenticate')).toBe('Bearer');
@@ -134,7 +142,7 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('the Bearer scheme is matched in any case and the key is trimmed', async () => {
-    const res = await api.workflows.get({
+    const res = await api.v1.workflows.get({
       $headers: { authorization: `bearer   ${TEST_API_KEY}  ` },
     });
 
@@ -153,7 +161,18 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('a workflow id that does not exist is 404 workflows.not_found once the key is checked', async () => {
-    const res = await api.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get({
+    const res = await api.v1.workflows[UNKNOWN_WORKFLOW_ID]!.get({
+      $headers: bearer(TEST_API_KEY),
+    });
+
+    expect(refusal(res)).toMatchObject({ status: 404, error: 'workflows.not_found' });
+  });
+
+  test('a workflow under a workflow group it is not in is 404 workflows.not_found', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'Own Group' });
+    const { workflow_id: other_group_id } = await create_test_workflow({ name: 'Other Group' });
+
+    const res = await group_workflow(workflow_id, other_group_id).scaling.get({
       $headers: bearer(TEST_API_KEY),
     });
 
@@ -162,14 +181,14 @@ describe('the dashboard API checks the API key', () => {
 
   test('a caller with no API key is refused before any workflow is resolved', async () => {
     const { workflow_id } = await create_test_workflow({ name: 'No Key' });
-    const workflow = api.workflows[workflow_id]!;
+    const workflow = api.v1.workflows[workflow_id]!;
 
     const refused = await Promise.all([
       workflow.get(),
-      workflow.prompts.get(),
-      workflow.scaling.get(),
-      api.workflows.get(),
-      api.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get(),
+      group_workflow(workflow_id).prompts.get(),
+      group_workflow(workflow_id).scaling.get(),
+      api.v1.workflows.get(),
+      api.v1.workflows[UNKNOWN_WORKFLOW_ID]!.get(),
     ]);
 
     for (const res of refused) {
@@ -181,59 +200,80 @@ describe('the dashboard API checks the API key', () => {
     const workflow_id = await running_workflow('Key Writes');
     const headers = bearer(TEST_API_KEY);
     const wrong = bearer(WRONG_KEY);
-    const workflow = api.workflows[workflow_id]!;
+    const dashboard = group_workflow(workflow_id);
+    const greeter = dashboard.governance.agents[Bun.randomUUIDv5('app.Greeter', workflow_id)]!;
 
     const refused = await Promise.all([
-      workflow.scaling.put(POLICY, { headers: wrong }),
-      workflow.scaling.delete(undefined, { headers: wrong }),
-      workflow.delete(undefined, { headers: wrong }),
-      workflow['sample-data'].post({ workflow: 'helloworld' }, { headers: wrong }),
-      workflow.prompts['app.greet']!.versions.post({ content: 'Say goodbye.' }, { headers: wrong }),
-      workflow.prompts['app.greet']!.live.put({ version: 'greet-00000001-v1' }, { headers: wrong }),
-      workflow.governance.agents.Greeter!.put({ requires: [], spend: null }, { headers: wrong }),
-      workflow.governance.agents.Greeter!.stopped.put({ stopped: true }, { headers: wrong }),
+      dashboard.scaling.put(POLICY, { headers: wrong }),
+      dashboard.scaling.delete(undefined, { headers: wrong }),
+      dashboard.history.delete(undefined, { headers: wrong }),
+      dashboard['sample-data'].post({ workflow: 'helloworld' }, { headers: wrong }),
+      dashboard.prompts['app.greet']!.versions.post(
+        { content: 'Say goodbye.' },
+        { headers: wrong }
+      ),
+      dashboard.prompts['app.greet']!.live.put(
+        { version: 'greet-00000001-v1' },
+        { headers: wrong }
+      ),
+      greeter.put({ requires: [], spend: null }, { headers: wrong }),
+      greeter.stopped.put({ stopped: true }, { headers: wrong }),
     ]);
     for (const res of refused) {
       expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
     }
-    expect((await workflow.scaling.get({ $headers: headers })).data).toEqual({
+    expect((await dashboard.scaling.get({ $headers: headers })).data).toEqual({
       workflows: { app: { status: 'none' } },
     });
 
-    expect((await workflow.scaling.put(POLICY, { headers })).error).toBeNull();
-    expect((await workflow.scaling.get({ $headers: headers })).data).toEqual({
+    expect((await dashboard.scaling.put(POLICY, { headers })).error).toBeNull();
+    expect((await dashboard.scaling.get({ $headers: headers })).data).toEqual({
       workflows: { app: { status: 'applied', policy: POLICY } },
     });
-    expect((await workflow.scaling.delete(undefined, { headers })).error).toBeNull();
+    expect((await dashboard.scaling.delete(undefined, { headers })).error).toBeNull();
   });
 
-  test('/auth/check answers ok to the API key and 401 to anything else', async () => {
-    expect((await api.auth.check.get({ $headers: bearer(TEST_API_KEY) })).data).toEqual({
+  test('/v1/auth/check answers ok to the API key and 401 to anything else', async () => {
+    expect((await api.v1.auth.check.get({ $headers: bearer(TEST_API_KEY) })).data).toEqual({
       ok: true,
     });
-    expect(refusal(await api.auth.check.get())).toMatchObject({
+    expect(refusal(await api.v1.auth.check.get())).toMatchObject({
       status: 401,
       error: 'auth.missing_key',
     });
-    expect(refusal(await api.auth.check.get({ $headers: bearer(WRONG_KEY) }))).toMatchObject({
+    expect(refusal(await api.v1.auth.check.get({ $headers: bearer(WRONG_KEY) }))).toMatchObject({
       status: 401,
       error: 'auth.invalid_key',
     });
   });
 
-  test('/auth/status and /healthz answer with no key', async () => {
-    expect((await api.auth.status.get()).data).toEqual({ api_key_required: true });
-    expect((await api.healthz.get()).error).toBeNull();
+  test('/v1/auth/status and /v1/healthz answer with no key', async () => {
+    expect((await api.v1.auth.status.get()).data).toEqual({ api_key_required: true });
+    expect((await api.v1.healthz.get()).error).toBeNull();
   });
 
-  test('POST /v1/traces takes an empty OTLP export with no key', async () => {
-    const response = await fetch_api('/v1/traces', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-protobuf' },
-      body: new Uint8Array(),
-    });
+  test("a workflow group's POST traces takes an empty OTLP export with no key", async () => {
+    const response = await post_otlp(UNKNOWN_WORKFLOW_ID, 'traces', new Uint8Array());
 
     expect(response.status).toBe(200);
+  });
+
+  test("a workflow group's POST traces with a group id that is not a UUID is 422 with no key", async () => {
+    const response = await post_otlp('not-a-uuid', 'traces', new Uint8Array());
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: 'validation_error' });
+  });
+
+  test('POST /v1/traces, /v1/metrics and /v1/logs are gone: 404', async () => {
+    for (const signal of ['traces', 'metrics', 'logs']) {
+      const response = await fetch_api(`/v1/${signal}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-protobuf' },
+        body: new Uint8Array(),
+      });
+      expect(response.status).toBe(404);
+    }
   });
 
   test('tokens and password sign-in are gone: /auth/token, register, login and profile are 404', async () => {
@@ -252,17 +292,43 @@ describe('the dashboard API checks the API key', () => {
     }
   });
 
+  test('the old routes outside /v1 are gone: /workflows, /healthz, /readyz, /auth/status, /auth/check and /resources/overview are 404', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'Old Paths' });
+
+    for (const [method, path] of [
+      ['GET', '/workflows'],
+      ['GET', `/workflows/${workflow_id}`],
+      ['DELETE', `/workflows/${workflow_id}`],
+      ['POST', `/workflows/${workflow_id}/sample-data`],
+      ['GET', '/healthz'],
+      ['GET', '/readyz'],
+      ['GET', '/auth/status'],
+      ['GET', '/auth/check'],
+      ['GET', '/resources/overview'],
+    ] as const) {
+      const response = await fetch_api(path, {
+        method,
+        headers: { 'content-type': 'application/json', ...bearer(TEST_API_KEY) },
+        body: method === 'POST' ? JSON.stringify({ workflow: 'helloworld' }) : null,
+      });
+      expect(response.status).toBe(404);
+    }
+  });
+
   test('a CORS preflight needs no key', async () => {
     const workflow_id = await running_workflow('Preflight');
 
-    const response = await fetch_api(`/workflows/${workflow_id}/scaling`, {
-      method: 'OPTIONS',
-      headers: {
-        origin: 'http://localhost:5173',
-        'access-control-request-method': 'PUT',
-        'access-control-request-headers': 'authorization',
-      },
-    });
+    const response = await fetch_api(
+      `/v1/workflow-groups/${workflow_id}/workflows/${workflow_id}/scaling`,
+      {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'http://localhost:5173',
+          'access-control-request-method': 'PUT',
+          'access-control-request-headers': 'authorization',
+        },
+      }
+    );
 
     expect(response.status).toBeGreaterThanOrEqual(200);
     expect(response.status).toBeLessThan(300);
@@ -273,7 +339,7 @@ describe('the dashboard API checks the API key', () => {
 
   test('twenty concurrent requests alternating the key and a wrong one each get their own verdict', async () => {
     const workflow_id = await running_workflow('Concurrent');
-    const replicas = api.workflows[workflow_id]!.monitoring.replicas;
+    const replicas = group_workflow(workflow_id).monitoring.replicas;
 
     const responses = await Promise.all(
       Array.from({ length: 20 }, (_, i) =>
@@ -288,7 +354,7 @@ describe('the dashboard API checks the API key', () => {
   });
 
   test('a path that only starts like a guarded one is not guarded', async () => {
-    const response = await fetch_api('/workflows-x');
+    const response = await fetch_api('/v1/workflows-x');
 
     expect(response.status).toBe(404);
   });
@@ -320,6 +386,14 @@ describe('every route', () => {
     );
     expect(routes.filter(({ kind }) => kind === 'unguarded').map(({ route }) => route)).toEqual([]);
     expect(routes_of('api_key').length).toBeGreaterThan(30);
+    expect(routes_of('api_key').map(({ route }) => route)).toEqual(
+      expect.arrayContaining([
+        'GET /v1/workflows/',
+        'GET /v1/workflows/:workflow_id',
+        'DELETE /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/history',
+        'POST /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/sample-data',
+      ])
+    );
     expect(routes_of('control_key').length).toBeGreaterThan(10);
   });
 
@@ -360,9 +434,13 @@ describe('every route', () => {
   });
 });
 
-/** The status line and body of `GET <target>` sent as is over a socket to the running API, which
- * no URL parser resolves first. */
-async function raw_get(target: string): Promise<{ status: number; body: string }> {
+/** The status line and body of `<method> <target>` with `headers`, sent as is over a socket to
+ * the running API, which no URL parser resolves first. */
+async function raw_request(
+  method: string,
+  target: string,
+  headers: Record<string, string> = {}
+): Promise<{ status: number; body: string }> {
   const { promise, resolve } = Promise.withResolvers<string>();
   let received = '';
   await Bun.connect({
@@ -370,7 +448,10 @@ async function raw_get(target: string): Promise<{ status: number; body: string }
     port: config.app.port,
     socket: {
       open(socket) {
-        socket.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+        const lines = Object.entries(headers).map(([name, value]) => `${name}: ${value}\r\n`);
+        socket.write(
+          `${method} ${target} HTTP/1.1\r\nHost: localhost\r\n${lines.join('')}Connection: close\r\n\r\n`
+        );
       },
       data(_, data) {
         received += data.toString();
@@ -387,19 +468,20 @@ async function raw_get(target: string): Promise<{ status: number; body: string }
 describe('a path with a dot segment', () => {
   // Bun resolves these in request.url, but its router matches the raw path: each reaches a
   // guarded route with `..` or `.` as its id.
+  const group = `/v1/workflow-groups/${UNKNOWN_WORKFLOW_ID}`;
   const targets = [
-    '/workflows/../monitoring/logs',
-    '/workflows/%2e%2e/monitoring/logs',
-    '/workflows/%2E%2e/monitoring/logs?limit=1',
-    '/workflows/..',
-    '/workflows/.',
+    `${group}/workflows/../monitoring/logs`,
+    `${group}/workflows/%2e%2e/monitoring/logs`,
+    `${group}/workflows/%2E%2e/monitoring/logs?limit=1`,
+    '/v1/workflows/..',
+    '/v1/workflows/.',
     '/v1/workflow-groups/..',
-    '/v1/workflow-groups/%2e%2e/workflows/x',
+    '/v1/workflow-groups/%2e%2e/workflows',
   ];
 
   for (const target of targets) {
     test(`${target} is 400 bad_request with no key, before any guard`, async () => {
-      const { status, body } = await raw_get(target);
+      const { status, body } = await raw_request('GET', target);
 
       expect(status).toBe(400);
       expect(JSON.parse(body)).toMatchObject({
@@ -410,9 +492,31 @@ describe('a path with a dot segment', () => {
   }
 
   test('the same request with no dot segment is 401', async () => {
-    expect((await raw_get(`/workflows/${crypto.randomUUID()}/monitoring/logs`)).status).toBe(401);
-    expect((await raw_get(`/v1/workflow-groups/${crypto.randomUUID()}`)).status).toBe(401);
+    expect(
+      (await raw_request('GET', `${group}/workflows/${crypto.randomUUID()}/monitoring/logs`)).status
+    ).toBe(401);
+    expect((await raw_request('GET', `/v1/workflow-groups/${crypto.randomUUID()}`)).status).toBe(
+      401
+    );
   });
+});
+
+describe('a dashboard path with a backslash', () => {
+  // request.url reads `\` as `/` but the router does not: each reaches a workflow group's route.
+  const group = `/v1/workflow-groups/${UNKNOWN_WORKFLOW_ID}`;
+  const targets = [
+    ['GET', `${group}\\workflows\\${UNKNOWN_WORKFLOW_ID}\\requests`],
+    ['DELETE', `${group}/workflows/${UNKNOWN_WORKFLOW_ID}\\requests`],
+  ] as const;
+
+  for (const [method, target] of targets) {
+    test(`${method} ${target} still takes the control key, not the API key`, async () => {
+      const { status, body } = await raw_request(method, target, bearer(TEST_API_KEY));
+
+      expect(status).toBe(401);
+      expect(JSON.parse(body)).toMatchObject({ error: 'auth.invalid_key' });
+    });
+  }
 });
 
 describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
@@ -420,13 +524,13 @@ describe('the API reads CANYONOS_API_KEY_HASH at startup', () => {
     const other_key = 'another machine key';
     const other = await spawn_api({ CANYONOS_API_KEY_HASH: hashApiKey(other_key) });
     try {
-      const status = await fetch(`${other.url}/auth/status`);
+      const status = await fetch(`${other.url}/v1/auth/status`);
       expect(await status.json()).toEqual({ api_key_required: true });
-      expect((await fetch(`${other.url}/workflows`, { headers: bearer(other_key) })).status).toBe(
-        200
-      );
       expect(
-        (await fetch(`${other.url}/workflows`, { headers: bearer(TEST_API_KEY) })).status
+        (await fetch(`${other.url}/v1/workflows`, { headers: bearer(other_key) })).status
+      ).toBe(200);
+      expect(
+        (await fetch(`${other.url}/v1/workflows`, { headers: bearer(TEST_API_KEY) })).status
       ).toBe(401);
     } finally {
       await other.stop();
@@ -465,19 +569,20 @@ describe('an API started with an empty CANYONOS_API_KEY_HASH', () => {
     await open.stop();
   });
 
-  test('/auth/status reports that no key is needed', async () => {
-    expect((await client.auth.status.get()).data).toEqual({ api_key_required: false });
+  test('/v1/auth/status reports that no key is needed', async () => {
+    expect((await client.v1.auth.status.get()).data).toEqual({ api_key_required: false });
   });
 
-  test('/auth/check answers ok with no key', async () => {
-    expect((await client.auth.check.get()).data).toEqual({ ok: true });
+  test('/v1/auth/check answers ok with no key', async () => {
+    expect((await client.v1.auth.check.get()).data).toEqual({ ok: true });
   });
 
   test('a caller with no key lists workflows and changes scaling', async () => {
     const workflow_id = await running_workflow('Keyless Writes');
 
     expect(await listed_ids(client)).toContain(workflow_id);
-    expect((await client.workflows[workflow_id]!.scaling.put(POLICY)).error).toBeNull();
+    const dashboard = client.v1['workflow-groups'][workflow_id]!.workflows[workflow_id]!;
+    expect((await dashboard.scaling.put(POLICY)).error).toBeNull();
   });
 
   // A key left in a browser from before the API ran open must not turn into a 401.
@@ -485,9 +590,8 @@ describe('an API started with an empty CANYONOS_API_KEY_HASH', () => {
     const workflow_id = await running_workflow('Stale Bearer');
 
     expect(await listed_ids(client, STALE_BEARER)).toContain(workflow_id);
-    const saved = await client.workflows[workflow_id]!.scaling.put(POLICY, {
-      headers: STALE_BEARER,
-    });
+    const dashboard = client.v1['workflow-groups'][workflow_id]!.workflows[workflow_id]!;
+    const saved = await dashboard.scaling.put(POLICY, { headers: STALE_BEARER });
     expect(saved.error).toBeNull();
   });
 
@@ -501,12 +605,12 @@ describe('an API started with an empty CANYONOS_API_KEY_HASH', () => {
   });
 
   test('a workflow id that does not exist is 404 workflows.not_found', async () => {
-    const res = await client.workflows[UNKNOWN_WORKFLOW_ID]!.stats.get();
+    const res = await client.v1.workflows[UNKNOWN_WORKFLOW_ID]!.get();
 
     expect(refusal(res)).toMatchObject({ status: 404, error: 'workflows.not_found' });
   });
 
-  test('no route that takes the API key, or none, is 401 with no key or a stale bearer; /v1 still takes the control key', async () => {
+  test('no route that takes the API key, or none, is 401 with no key or a stale bearer; a route that takes the control key still does', async () => {
     const routes = [...routes_of('api_key'), ...routes_of('open')];
     for (const headers of [{}, STALE_BEARER]) {
       for (const answer of await sweep(open.url, routes, headers)) {

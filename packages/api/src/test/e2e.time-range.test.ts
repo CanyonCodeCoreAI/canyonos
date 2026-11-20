@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { api, group_workflow, setupE2ETests } from './e2e.setup';
 import { write_workflow_span } from './telemetry-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
@@ -82,7 +82,7 @@ const sum = <T>(rows: readonly T[], pick: (row: T) => number): number =>
 /** What every request-level reader reports for one range: the request count and the cost. */
 async function request_readers(token: string, workflow_id: string, range: Range) {
   const headers = bearer(token);
-  const scoped = api.workflows[workflow_id]!;
+  const scoped = group_workflow(workflow_id);
   const [kpis, timeseries, blocks, listing, traces, llm, fleet] = await Promise.all([
     scoped.metrics.kpis.get({ $query: range, $headers: headers }),
     scoped.metrics.timeseries.get({ $query: range, $headers: headers }),
@@ -90,7 +90,7 @@ async function request_readers(token: string, workflow_id: string, range: Range)
     scoped.requests.get({ $query: { ...range, limit: 100, offset: 0 }, $headers: headers }),
     scoped.monitoring.traces.get({ $query: { ...range, limit: 100 }, $headers: headers }),
     scoped.monitoring.llm.get({ $query: { ...range, limit: 100 }, $headers: headers }),
-    api.resources.overview.get({ $query: range, $headers: headers }),
+    api.v1.resources.overview.get({ $query: range, $headers: headers }),
   ]);
   const fleet_row = fleet.data!.workflows.find((row) => row.id === workflow_id);
   return {
@@ -180,7 +180,7 @@ describe('where the buckets sit', () => {
   const headers_for = (token: string) => bearer(token);
 
   const timeseries = (token: string, workflow_id: string, query: Range & { time_zone?: string }) =>
-    api.workflows[workflow_id]!.metrics.timeseries.get({
+    group_workflow(workflow_id).metrics.timeseries.get({
       $query: query,
       $headers: headers_for(token),
     });
@@ -256,7 +256,7 @@ describe('what the range rejects', () => {
 
   const ranged_reads = (token: string, workflow_id: string, query: Range) => {
     const headers = bearer(token);
-    const scoped = api.workflows[workflow_id]!;
+    const scoped = group_workflow(workflow_id);
     return {
       'metrics/kpis': () => scoped.metrics.kpis.get({ $query: query, $headers: headers }),
       'metrics/timeseries': () =>
@@ -281,7 +281,8 @@ describe('what the range rejects', () => {
         }),
       'monitoring/errors/summary': () =>
         scoped.monitoring.errors.summary.get({ $query: query, $headers: headers }),
-      'resources/overview': () => api.resources.overview.get({ $query: query, $headers: headers }),
+      'resources/overview': () =>
+        api.v1.resources.overview.get({ $query: query, $headers: headers }),
     };
   };
 
@@ -313,11 +314,11 @@ describe('what the range rejects', () => {
       const { token, workflow_id } = await workflow();
       const headers = bearer(token);
 
-      const kpis = await api.workflows[workflow_id]!.metrics.kpis.get({
+      const kpis = await group_workflow(workflow_id).metrics.kpis.get({
         $query: query as never,
         $headers: headers,
       });
-      const series = await api.workflows[workflow_id]!.monitoring.series.get({
+      const series = await group_workflow(workflow_id).monitoring.series.get({
         $query: query as never,
         $headers: headers,
       });
@@ -331,7 +332,7 @@ describe('what the range rejects', () => {
     const { token, workflow_id } = await workflow();
     const headers = bearer(token);
     const read = (time_zone: string) =>
-      api.workflows[workflow_id]!.metrics.timeseries.get({
+      group_workflow(workflow_id).metrics.timeseries.get({
         $query: { ...VALID, time_zone },
         $headers: headers,
       });
@@ -351,11 +352,11 @@ describe('what the range derives', () => {
     await write_request(workflow_id, { trace_id: 'hourly', start: nanos(hour.from), cost: 0.6 });
     await write_request(workflow_id, { trace_id: 'weekly', start: nanos(week.from), cost: 6.4 });
 
-    const hourly = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const hourly = await group_workflow(workflow_id).metrics.kpis.get({
       $query: hour,
       $headers: headers,
     });
-    const weekly = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const weekly = await group_workflow(workflow_id).metrics.kpis.get({
       $query: week,
       $headers: headers,
     });
@@ -374,17 +375,17 @@ describe('what the range derives', () => {
     await write_request(workflow_id, { trace_id: 'cheap', start: nanos(day_one.from), cost: 1 });
     await write_request(workflow_id, { trace_id: 'dear', start: nanos(day_one.to), cost: 3 });
 
-    const alone = await api.workflows[workflow_id]!.requests[trace_key(workflow_id, 'cheap')]!.get({
+    const alone = await group_workflow(workflow_id).requests[trace_key(workflow_id, 'cheap')]!.get({
       $query: day_one,
       $headers: headers,
     });
-    const together = await api.workflows[workflow_id]!.requests[
+    const together = await group_workflow(workflow_id).requests[
       trace_key(workflow_id, 'cheap')
     ]!.get({
       $query: both_days,
       $headers: headers,
     });
-    const unscoped = await api.workflows[workflow_id]!.requests[
+    const unscoped = await group_workflow(workflow_id).requests[
       trace_key(workflow_id, 'cheap')
     ]!.get({
       $headers: headers,

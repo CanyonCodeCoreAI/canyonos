@@ -100,7 +100,7 @@ def _all_replicas_up(recorder, directory: Path) -> bool:
     replicas; fails at once when the deploy has stopped."""
     report = canyonos(recorder, ["status", "--json"], cwd=directory, check=False).json()
     assert report["running"], f"the deploy stopped: {report}"
-    agents = (report["agents"] or {}).values()
+    agents = report["agents"] or []
     return bool(agents) and all(
         1 <= agent["running_replicas"] == agent["desired_replicas"] for agent in agents
     )
@@ -269,7 +269,7 @@ def test_dashboard_without_a_terminal_prints_a_link_that_signs_in_with_the_key(
     checked = http(
         recorder,
         "GET",
-        f"{api_url(recorder)}/auth/check",
+        f"{api_url(recorder)}/v1/auth/check",
         headers=bearer(recorder.api_key),
     )
     assert checked.json() == {"ok": True}, checked.output

@@ -124,13 +124,13 @@ function collect(streams: ReadableStream<Uint8Array>[]) {
 
 export interface SpawnOptions {
   /** The path that answers 200 once it is ready. */
-  readonly ready?: '/healthz' | '/readyz';
+  readonly ready?: '/v1/healthz' | '/v1/readyz';
   readonly timeout_ms?: number;
 }
 
 async function start_once(
   env: Record<string, string>,
-  { ready = '/readyz', timeout_ms = READY_TIMEOUT_MS }: SpawnOptions
+  { ready = '/v1/readyz', timeout_ms = READY_TIMEOUT_MS }: SpawnOptions
 ): Promise<SpawnedApi> {
   const port = free_port();
   const url = `http://127.0.0.1:${port}`;

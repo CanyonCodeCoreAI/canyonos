@@ -25,7 +25,7 @@ interface SeedSpan {
   readonly trace: string;
   readonly parent?: string;
   readonly name: string;
-  readonly agent_id?: string;
+  readonly replica_id?: string;
   readonly minutes_ago: bigint;
   readonly duration_minutes: bigint;
   readonly failed?: boolean;
@@ -45,7 +45,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     suffix: 'intake',
     trace: 'invoice',
     name: 'Intake',
-    agent_id: 'intake-0',
+    replica_id: 'intake-0',
     minutes_ago: 95n,
     duration_minutes: 1n,
     server_cost: 0.0004,
@@ -56,7 +56,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     trace: 'invoice',
     parent: 'intake',
     name: 'Report Writer',
-    agent_id: 'writer-0',
+    replica_id: 'writer-0',
     minutes_ago: 94n,
     duration_minutes: 3n,
     model: 'claude-opus-5',
@@ -70,7 +70,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     trace: 'invoice',
     parent: 'intake',
     name: 'Retrieval',
-    agent_id: 'retrieval-0',
+    replica_id: 'retrieval-0',
     minutes_ago: 94n,
     duration_minutes: 1n,
   },
@@ -78,7 +78,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     suffix: 'intake-b',
     trace: 'summary',
     name: 'Intake',
-    agent_id: 'intake-0',
+    replica_id: 'intake-0',
     minutes_ago: 50n,
     duration_minutes: 1n,
     server_cost: 0.0004,
@@ -89,7 +89,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     trace: 'summary',
     parent: 'intake-b',
     name: 'Report Writer',
-    agent_id: 'writer-1',
+    replica_id: 'writer-1',
     minutes_ago: 49n,
     duration_minutes: 2n,
     model: 'claude-haiku-4-5',
@@ -102,7 +102,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     suffix: 'intake-c',
     trace: 'failed',
     name: 'Intake',
-    agent_id: 'intake-0',
+    replica_id: 'intake-0',
     minutes_ago: 20n,
     duration_minutes: 1n,
     server_cost: 0.0004,
@@ -113,7 +113,7 @@ const SEED_SPANS: readonly SeedSpan[] = [
     trace: 'failed',
     parent: 'intake-c',
     name: 'Report Writer',
-    agent_id: 'writer-0',
+    replica_id: 'writer-0',
     minutes_ago: 19n,
     duration_minutes: 1n,
     failed: true,
@@ -144,17 +144,24 @@ function seedWorkflowId(): string {
 
 async function ensureDemoWorkflow(tx: SeedTx): Promise<string> {
   const id = seedWorkflowId();
-  await tx.insert(workflows).values({ id, name: DEMO_WORKFLOW_NAME }).onConflictDoNothing();
+  // Its own workflow group: no Global Controller runs the demo, and its routes need one.
+  await tx
+    .insert(workflows)
+    .values({ id, name: DEMO_WORKFLOW_NAME, workflow_group_id: id })
+    .onConflictDoNothing();
   return id;
 }
 
 function span_attributes(span: SeedSpan, workflow_id: string): Record<string, unknown> {
-  const { agent_id, model, input_tokens, output_tokens } = span;
+  const { replica_id, model, input_tokens, output_tokens } = span;
   const { token_cost, server_cost, error_count } = span;
   const cost = (token_cost ?? 0) + (server_cost ?? 0);
 
-  const attributes: Record<string, unknown> = { [WORKFLOW_ID_ATTRIBUTE]: workflow_id };
-  if (agent_id !== undefined) attributes[GEN_AI.AGENT_ID] = agent_id;
+  const attributes: Record<string, unknown> = {
+    [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
+    [GEN_AI.AGENT_ID]: Bun.randomUUIDv5(span.name, workflow_id),
+  };
+  if (replica_id !== undefined) attributes[RUNTIME_ATTRIBUTES.REPLICA_ID] = replica_id;
   if (model !== undefined) attributes[GEN_AI.REQUEST_MODEL] = model;
   if (input_tokens !== undefined) attributes[GEN_AI.INPUT_TOKENS] = input_tokens;
   if (output_tokens !== undefined) attributes[GEN_AI.OUTPUT_TOKENS] = output_tokens;

@@ -55,6 +55,8 @@ class Endpoint(TypedDict, closed=True):
 
 
 class AgentStatus(TypedDict, closed=True):
+    agent_id: str | None
+    name: str
     desired_replicas: int
     running_replicas: int
     launch_error: str | None
@@ -101,7 +103,7 @@ class WorkflowGroupStatus(TypedDict, closed=True):
     )
     root_cause: str | None
     endpoint: Endpoint | None
-    agents: dict[str, AgentStatus] | None
+    agents: list[AgentStatus] | None
     machine_errors: dict[str, str] | None
     generation: int
     applied_generation: int
@@ -132,6 +134,7 @@ class Fingerprints(TypedDict, closed=True):
 
 
 class Workflow(TypedDict, closed=True):
+    workflow_id: str
     name: str
     fingerprints: Fingerprints
     test_query: str | None

@@ -56,10 +56,10 @@ type EdenResponse<T> = Promise<{ data: T; error: null } | { data: null; error: a
  * Generic API call wrapper. Extracts errors, optionally parses with Zod.
  *
  * @example
- * const data = await apiCall<MyType>(() => canyonosApi.healthz.get());
+ * const data = await apiCall<MyType>(() => canyonosApi.v1.healthz.get());
  *
  * const workflow = await apiCall<Workflow>(
- *   () => canyonosAuthApi.workflows[workflow_id]!.get(),
+ *   () => canyonosAuthApi.v1.workflows[workflow_id]!.get(),
  *   workflowSchema
  * );
  */

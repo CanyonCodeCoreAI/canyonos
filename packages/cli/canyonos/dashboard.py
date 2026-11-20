@@ -28,7 +28,7 @@ def _requires_key():
         return True
     try:
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/auth/status", timeout=5
+            f"http://127.0.0.1:{port}/v1/auth/status", timeout=5
         ) as response:
             return (
                 json.loads(response.read()).get("api_key_required", True) is not False

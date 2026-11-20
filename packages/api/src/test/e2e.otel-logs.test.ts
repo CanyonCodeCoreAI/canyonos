@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import { WORKFLOW_GROUP_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
 import { otelLogs } from '@api/modules/telemetry/telemetry.schema';
 
 import { setupE2ETests } from './e2e.setup';
@@ -15,10 +16,12 @@ import {
   OTLP_CONTENT_TYPE,
   post_otlp,
 } from './telemetry-test.utils';
+import type { OtlpExportFixture } from './telemetry-test.utils';
 
 setupE2ETests();
 
 const SCOPE = 'canyonos.test.logs';
+const WORKFLOW_GROUP_ID = crypto.randomUUID();
 
 // `otel_logs` is an append-only log with no natural key, so each test reads back only its own rows
 // through a service name no other test sends.
@@ -27,6 +30,7 @@ const STRUCTURED_SERVICE = 'otlp-logs-structured';
 const OBSERVED_ONLY_SERVICE = 'otlp-logs-observed-only';
 const UNCORRELATED_SERVICE = 'otlp-logs-uncorrelated';
 const RESENT_SERVICE = 'otlp-logs-resent';
+const FOREIGN_GROUP_SERVICE = 'otlp-logs-foreign-group';
 
 const TIME_UNIX_NANO = 1_788_000_000_123_456_789n;
 const TIME_TEXT = String(TIME_UNIX_NANO);
@@ -44,9 +48,10 @@ describe('otlp log ingest', () => {
     const span_id = random_id(8);
 
     const response = await post_otlp(
-      '/v1/logs',
+      WORKFLOW_GROUP_ID,
+      'logs',
       encode_logs_export(
-        logs_export(CORRELATED_SERVICE, SCOPE, [
+        logs_export(WORKFLOW_GROUP_ID, CORRELATED_SERVICE, SCOPE, [
           {
             timeUnixNano: TIME_TEXT,
             observedTimeUnixNano: String(OBSERVED_UNIX_NANO),
@@ -82,9 +87,10 @@ describe('otlp log ingest', () => {
 
   test('a structured body is stored as its JSON encoding', async () => {
     const response = await post_otlp(
-      '/v1/logs',
+      WORKFLOW_GROUP_ID,
+      'logs',
       encode_logs_export(
-        logs_export(STRUCTURED_SERVICE, SCOPE, [
+        logs_export(WORKFLOW_GROUP_ID, STRUCTURED_SERVICE, SCOPE, [
           {
             timeUnixNano: TIME_TEXT,
             body: {
@@ -104,9 +110,10 @@ describe('otlp log ingest', () => {
 
   test('a record with only an observed time is stamped with it', async () => {
     const response = await post_otlp(
-      '/v1/logs',
+      WORKFLOW_GROUP_ID,
+      'logs',
       encode_logs_export(
-        logs_export(OBSERVED_ONLY_SERVICE, SCOPE, [
+        logs_export(WORKFLOW_GROUP_ID, OBSERVED_ONLY_SERVICE, SCOPE, [
           {
             observedTimeUnixNano: String(OBSERVED_UNIX_NANO),
             body: { stringValue: 'collected late' },
@@ -125,9 +132,10 @@ describe('otlp log ingest', () => {
 
   test('a record outside any span keeps null trace and span ids, zero-filled or absent', async () => {
     const response = await post_otlp(
-      '/v1/logs',
+      WORKFLOW_GROUP_ID,
+      'logs',
       encode_logs_export(
-        logs_export(UNCORRELATED_SERVICE, SCOPE, [
+        logs_export(WORKFLOW_GROUP_ID, UNCORRELATED_SERVICE, SCOPE, [
           { timeUnixNano: TIME_TEXT, body: { stringValue: 'agent level' } },
           {
             timeUnixNano: TIME_TEXT,
@@ -157,7 +165,7 @@ describe('otlp log ingest', () => {
   test('a record sent twice with the same log id is stored once', async () => {
     const log_id = hex(random_id(16));
     const payload = encode_logs_export(
-      logs_export(RESENT_SERVICE, SCOPE, [
+      logs_export(WORKFLOW_GROUP_ID, RESENT_SERVICE, SCOPE, [
         {
           timeUnixNano: TIME_TEXT,
           body: { stringValue: 'sent again' },
@@ -166,8 +174,8 @@ describe('otlp log ingest', () => {
       ])
     );
 
-    expect((await post_otlp('/v1/logs', payload)).status).toBe(200);
-    expect((await post_otlp('/v1/logs', payload)).status).toBe(200);
+    expect((await post_otlp(WORKFLOW_GROUP_ID, 'logs', payload)).status).toBe(200);
+    expect((await post_otlp(WORKFLOW_GROUP_ID, 'logs', payload)).status).toBe(200);
 
     const rows = await stored_logs(RESENT_SERVICE);
     expect(rows).toHaveLength(1);
@@ -175,8 +183,35 @@ describe('otlp log ingest', () => {
     expect(rows[0]?.attributes).not.toHaveProperty('canyonos.log.id');
   });
 
+  test("a resource with another workflow group's id, or none, is skipped and the answer is still empty", async () => {
+    const resource = (body: string, attributes: readonly OtlpExportFixture[]) => ({
+      resource: { attributes: [attribute('service.name', FOREIGN_GROUP_SERVICE), ...attributes] },
+      scopeLogs: [
+        {
+          scope: { name: SCOPE },
+          logRecords: [{ timeUnixNano: TIME_TEXT, body: { stringValue: body } }],
+        },
+      ],
+    });
+    const response = await post_otlp(
+      WORKFLOW_GROUP_ID,
+      'logs',
+      encode_logs_export({
+        resourceLogs: [
+          resource('other group', [attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, crypto.randomUUID())]),
+          resource('no group', []),
+          resource('kept', [attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, WORKFLOW_GROUP_ID)]),
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+    expect((await stored_logs(FOREIGN_GROUP_SERVICE)).map((row) => row.body)).toEqual(['kept']);
+  });
+
   test('an empty export is accepted with a zero-length protobuf body', async () => {
-    const response = await post_otlp('/v1/logs', encode_logs_export({}));
+    const response = await post_otlp(WORKFLOW_GROUP_ID, 'logs', encode_logs_export({}));
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(OTLP_CONTENT_TYPE);
@@ -184,7 +219,11 @@ describe('otlp log ingest', () => {
   });
 
   test('a payload that is not protobuf is rejected', async () => {
-    const response = await post_otlp('/v1/logs', new TextEncoder().encode('not a protobuf export'));
+    const response = await post_otlp(
+      WORKFLOW_GROUP_ID,
+      'logs',
+      new TextEncoder().encode('not a protobuf export')
+    );
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: 'telemetry.invalid_payload' });

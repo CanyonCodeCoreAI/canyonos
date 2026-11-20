@@ -100,28 +100,28 @@ export async function write_unattributed_span(span: SpanFixture): Promise<void> 
 // such as a metric with no name or a data point with no timestamp.
 export type OtlpExportFixture = Record<string, unknown>;
 
-// The metric and log tests drive the real OTLP boundary, so they build wire bytes from the same
+// The ingest tests drive the real OTLP boundary, so they build wire bytes from the same
 // vendored protos the receiver decodes. The decoder's loader is private, so this is its own `Root`.
 const PROTO_ROOT = fileURLToPath(new URL('../modules/telemetry/proto/', import.meta.url));
 
-type OtlpSignal = 'metrics' | 'logs';
+type OtlpSignal = 'trace' | 'metrics' | 'logs';
 
-const REQUEST_NAMES = { metrics: 'Metrics', logs: 'Logs' } as const;
+const SERVICE_NAMES = { trace: 'Trace', metrics: 'Metrics', logs: 'Logs' } as const;
 
-const request_types: Partial<Record<OtlpSignal, Type>> = {};
+const roots: Partial<Record<OtlpSignal, Root>> = {};
 
-const request_type = (signal: OtlpSignal): Type => {
-  const cached = request_types[signal];
-  if (cached) return cached;
-
-  const root = new Root();
-  root.resolvePath = (_origin, target) => PROTO_ROOT + target;
-  root.loadSync(`opentelemetry/proto/collector/${signal}/v1/${signal}_service.proto`);
-  const type = root.lookupType(
-    `opentelemetry.proto.collector.${signal}.v1.Export${REQUEST_NAMES[signal]}ServiceRequest`
+/** The `Export<Signal>Service<message>` type of `signal`. */
+const service_type = (signal: OtlpSignal, message: 'Request' | 'Response'): Type => {
+  let root = roots[signal];
+  if (!root) {
+    root = new Root();
+    root.resolvePath = (_origin, target) => PROTO_ROOT + target;
+    root.loadSync(`opentelemetry/proto/collector/${signal}/v1/${signal}_service.proto`);
+    roots[signal] = root;
+  }
+  return root.lookupType(
+    `opentelemetry.proto.collector.${signal}.v1.Export${SERVICE_NAMES[signal]}Service${message}`
   );
-  request_types[signal] = type;
-  return type;
 };
 
 /**
@@ -130,7 +130,7 @@ const request_type = (signal: OtlpSignal): Type => {
  * that a valid sibling in the same export was stored, which proves the export really arrived.
  */
 const encode_export = (signal: OtlpSignal, request: OtlpExportFixture): Uint8Array => {
-  const type = request_type(signal);
+  const type = service_type(signal, 'Request');
   return type.encode(type.fromObject(request)).finish();
 };
 
@@ -145,8 +145,10 @@ export const attribute = (key: string, value: string | number | boolean): OtlpEx
     : { key, value: { doubleValue: value } };
 };
 
-/** Wrap metrics in the resource/scope envelope an exporter sends. */
+/** Wrap metrics in the resource/scope envelope an exporter sends, its resource carrying
+ * workflow group `workflow_group_id`. */
 export const metrics_export = (
+  workflow_group_id: string,
   service_name: string,
   scope_name: string,
   metrics: readonly OtlpExportFixture[],
@@ -157,6 +159,7 @@ export const metrics_export = (
       resource: {
         attributes: [
           attribute(SERVICE_NAME_ATTRIBUTE, service_name),
+          attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, workflow_group_id),
           ...Object.entries(resource_attributes).map(([key, value]) => attribute(key, value)),
         ],
       },
@@ -165,19 +168,29 @@ export const metrics_export = (
   ],
 });
 
-/** Wrap log records in the resource/scope envelope an exporter sends. */
+/** Wrap log records in the resource/scope envelope an exporter sends, its resource carrying
+ * workflow group `workflow_group_id`. */
 export const logs_export = (
+  workflow_group_id: string,
   service_name: string,
   scope_name: string,
   logRecords: readonly OtlpExportFixture[]
 ): OtlpExportFixture => ({
   resourceLogs: [
     {
-      resource: { attributes: [attribute(SERVICE_NAME_ATTRIBUTE, service_name)] },
+      resource: {
+        attributes: [
+          attribute(SERVICE_NAME_ATTRIBUTE, service_name),
+          attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, workflow_group_id),
+        ],
+      },
       scopeLogs: [{ scope: { name: scope_name }, logRecords }],
     },
   ],
 });
+
+export const encode_trace_export = (request: OtlpExportFixture): Uint8Array =>
+  encode_export('trace', request);
 
 export const encode_metrics_export = (request: OtlpExportFixture): Uint8Array =>
   encode_export('metrics', request);
@@ -185,11 +198,22 @@ export const encode_metrics_export = (request: OtlpExportFixture): Uint8Array =>
 export const encode_logs_export = (request: OtlpExportFixture): Uint8Array =>
   encode_export('logs', request);
 
+/** Decode the `ExportTraceServiceResponse` a trace export is answered with; counts as numbers. */
+export const decode_trace_response = (body: ArrayBuffer): Record<string, unknown> => {
+  const type = service_type('trace', 'Response');
+  return type.toObject(type.decode(new Uint8Array(body)), { longs: Number });
+};
+
 export const OTLP_CONTENT_TYPE = 'application/x-protobuf';
 
-/** POST raw OTLP bytes the way an exporter does: `application/x-protobuf`, no JSON envelope. */
-export const post_otlp = (path: string, payload: Uint8Array): Promise<Response> =>
-  fetch(`${config.app.apiUrl}${path}`, {
+/** POST raw OTLP bytes to workflow group `workflow_group_id`'s `signal` route the way an exporter
+ * does: `application/x-protobuf`, no JSON envelope, no key. */
+export const post_otlp = (
+  workflow_group_id: string,
+  signal: 'traces' | 'metrics' | 'logs',
+  payload: Uint8Array
+): Promise<Response> =>
+  fetch(`${config.app.apiUrl}/v1/workflow-groups/${workflow_group_id}/${signal}`, {
     method: 'POST',
     headers: { 'content-type': OTLP_CONTENT_TYPE },
     // `fetch` takes a view over a plain `ArrayBuffer`; protobufjs writes into a pooled one.

@@ -9,7 +9,7 @@ import { TimeRangeQuerySchema } from '@core/time-range';
 import { get_fleet_overview } from './resources.service';
 import { FleetOverviewSchema } from './resources.types';
 
-export const resourcesRoutes = new Elysia({ prefix: '/resources', name: 'resources.routes' })
+export const resourcesRoutes = new Elysia({ prefix: '/v1/resources', name: 'resources.routes' })
   .use(databasePlugin)
   .get('/overview', ({ query }) => get_fleet_overview(query), {
     query: TimeRangeQuerySchema,

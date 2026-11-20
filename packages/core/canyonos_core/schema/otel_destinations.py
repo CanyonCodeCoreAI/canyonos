@@ -87,6 +87,9 @@ def normalize_destination(destination):
         "headers": dict(headers) if headers is not None else None,
         "insecure": destination.get("insecure"),
         "timeout": float(timeout) if timeout is not None else None,
+        # What an HTTP signal's name goes after, under the endpoint; the Global Controller
+        # sets it to nothing for the dashboard, which takes `<endpoint>/traces`.
+        "signal_prefix": destination.get("signal_prefix", "v1/"),
     }
 
 

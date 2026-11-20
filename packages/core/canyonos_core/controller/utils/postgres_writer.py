@@ -235,7 +235,7 @@ def span_record(row):
 
 def log_record(row):
     """A log row, as the Global Controller builds it, as an `otel_logs` record."""
-    resource = {"service.name": row["agent_id"]}
+    resource = {"service.name": row["replica_id"]}
     if row["workflow_group_id"]:
         resource["canyonos.workflow_group.id"] = row["workflow_group_id"]
     if row["workflow_id"]:
@@ -243,7 +243,7 @@ def log_record(row):
     time_unix_nano = round(float(row["observed_at"]) * 1e9)
     return {
         "log_id": row["log_id"],
-        "service_name": row["agent_id"],
+        "service_name": row["replica_id"],
         "resource_attributes": resource,
         "time_unix_nano": time_unix_nano,
         "observed_time_unix_nano": time_unix_nano,
@@ -266,7 +266,7 @@ def _sample_records(sample):
     if sample["kind"] == "agent":
         resource = {
             "service.name": sample["agent_name"],
-            "service.instance.id": sample["agent_id"],
+            "service.instance.id": sample["replica_id"],
             "host.name": host,
             "canyonos.agent.port": str(sample["port"]),
         }
@@ -314,7 +314,7 @@ def metric_records(samples):
     reads them from Redis. A sample no newer than the last one from its source is skipped."""
     records = []
     for sample in samples:
-        source = (sample["kind"], sample.get("agent_id") or sample["host"])
+        source = (sample["kind"], sample.get("replica_id") or sample["host"])
         observed_at = float(sample["metrics"]["observed_at"])
         if observed_at <= _last_sample_time.get(source, 0):
             continue

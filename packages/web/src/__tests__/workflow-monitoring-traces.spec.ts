@@ -19,19 +19,20 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const MONITORING_PATH = `/workflows/${WORKFLOW.id}/monitoring`;
-const API_BASE = `/workflows/${WORKFLOW.id}/monitoring`;
+const API_BASE = `${WORKFLOW_API}/monitoring`;
 const RANGE = { from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' };
 
 const PLAIN_TRACE: MonitoringTrace = {
   at: '2026-10-06 12:00:00',
   trace_id: 'trace-plain',
   name: 'checkout',
-  agents: ['CartAgent'],
+  replicas: ['CartAgent'],
   span_count: 1,
   duration_ms: 120,
   failed: false,
@@ -41,7 +42,7 @@ const PLAIN_TRACE: MonitoringTrace = {
       span_id: 'span-plain',
       parent_span_id: null,
       name: 'cart.total',
-      agent: 'CartAgent',
+      replica: 'CartAgent',
       offset_ms: 0,
       duration_ms: 120,
       failed: false,
@@ -55,7 +56,7 @@ const LLM_TRACE: MonitoringTrace = {
   at: '2026-10-06 12:05:00',
   trace_id: 'trace-llm',
   name: 'quote',
-  agents: ['PriceAgent'],
+  replicas: ['PriceAgent'],
   span_count: 3,
   duration_ms: 2400,
   failed: false,
@@ -65,7 +66,7 @@ const LLM_TRACE: MonitoringTrace = {
       span_id: 'span-root',
       parent_span_id: null,
       name: 'quote.run',
-      agent: 'PriceAgent',
+      replica: 'PriceAgent',
       offset_ms: 0,
       duration_ms: 2400,
       failed: false,
@@ -76,7 +77,7 @@ const LLM_TRACE: MonitoringTrace = {
       span_id: 'span-chat',
       parent_span_id: 'span-root',
       name: 'chat',
-      agent: 'PriceAgent',
+      replica: 'PriceAgent',
       offset_ms: 100,
       duration_ms: 1500,
       failed: false,
@@ -94,7 +95,7 @@ const LLM_TRACE: MonitoringTrace = {
       span_id: 'span-summary',
       parent_span_id: 'span-root',
       name: 'summarize',
-      agent: 'PriceAgent',
+      replica: 'PriceAgent',
       offset_ms: 1700,
       duration_ms: 600,
       failed: false,
@@ -115,7 +116,7 @@ const LLM_CALL: MonitoringLlmCall = {
   at: '2026-10-06 12:05:00',
   name: 'chat',
   model: 'gpt-test',
-  agent: 'PriceAgent',
+  replica: 'PriceAgent',
   duration_ms: 1500,
   input_tokens: 1200,
   output_tokens: 45,
@@ -183,7 +184,7 @@ async function openMonitoring(
       ...RANGE,
       calls: [LLM_CALL],
     } satisfies MonitoringLlmCallsResponse,
-    [`/workflows/${WORKFLOW.id}/requests/${LLM_TRACE.trace_id}`]: LLM_REQUEST,
+    [`${WORKFLOW_API}/requests/${LLM_TRACE.trace_id}`]: LLM_REQUEST,
   };
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname in answers,

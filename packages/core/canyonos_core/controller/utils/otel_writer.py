@@ -73,7 +73,8 @@ def _span_row(raw, redis_client, workflow_group_id):
             session_id,
         )
         return None
-    agent_id = raw.get("agent")
+    replica_id = raw.get("agent")
+    workflow_id = raw.get("workflow_id")
     started_at = int(raw.get("created_at") or 0)
     finished_at = int(raw["finished_at"])
     execution_time_ms = round((finished_at - started_at) / 1e6) if started_at else None
@@ -104,8 +105,8 @@ def _span_row(raw, redis_client, workflow_group_id):
         token_cost = 0.0
     try:
         hourly_cost = (
-            redis_client.get(f"agent:{agent_id}:hourly_cost")
-            if redis_client is not None and agent_id
+            redis_client.get(f"agent:{replica_id}:hourly_cost")
+            if redis_client is not None and replica_id
             else None
         )
         server_cost = float(hourly_cost or 0) * (finished_at - started_at) / 3600e9
@@ -118,8 +119,12 @@ def _span_row(raw, redis_client, workflow_group_id):
         "parent_span_id": raw.get("parent") or None,
         "trace_id": session_id,
         "canyonos.workflow_group.id": workflow_group_id,
-        "canyonos.workflow.id": raw.get("workflow_id"),
-        "gen_ai.agent.id": agent_id,
+        "canyonos.workflow.id": workflow_id,
+        # The agent's id: one per agent name in its workflow, whatever replica ran.
+        "gen_ai.agent.id": str(uuid.uuid5(uuid.UUID(workflow_id), service))
+        if workflow_id and service
+        else None,
+        "canyonos.replica.id": replica_id,
         "gen_ai.request.model": raw.get("gen_ai.request.model"),
         "prompt_name": raw.get("prompt_name"),
         "prompt_version": raw.get("prompt_version"),
@@ -143,7 +148,7 @@ def _span_row(raw, redis_client, workflow_group_id):
         "cache_hit_ratio": cached_tokens / token_count if token_count else 0.0,
         "exception.type": raw.get("error_name"),
         "status_message": raw.get("error"),
-        "name": name or agent_id or "unknown_agent",
+        "name": name or replica_id or "unknown_agent",
         "gen_ai.prompt": _normalize_json_text(raw.get("args")),
         "gen_ai.completion": _normalize_json_text(result),
     }
@@ -182,7 +187,7 @@ def _log_rows(rows, workflow_group_id):
 
 
 def _log_params(
-    entry, log_id, future_id, session_id, workflow_group_id, workflow_id, agent_id
+    entry, log_id, future_id, session_id, workflow_group_id, workflow_id, replica_id
 ):
     """One OTel-shaped log entry as a log row."""
     return {
@@ -191,7 +196,7 @@ def _log_params(
         "trace_id": session_id,
         "workflow_group_id": workflow_group_id,
         "workflow_id": workflow_id,
-        "agent_id": agent_id,
+        "replica_id": replica_id,
         "observed_at": entry.get("ObservedTimestamp") or entry.get("Timestamp"),
         "severity_number": entry.get("SeverityNumber"),
         "severity_text": entry.get("SeverityText"),

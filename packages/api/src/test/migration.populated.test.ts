@@ -72,13 +72,11 @@ async function seed_password_install(): Promise<PasswordSeeded> {
   return { workflow_id: seeded.workflow_id, prompt_id: prompt!.id };
 }
 
-/** The seeded rows of the tables 0013 keeps. */
+/** The seeded rows of the tables every migration keeps. */
 const survivors_left = async () =>
   (
     await sql<{ kind: string }[]>`
       SELECT 'workflow' AS kind FROM workflows WHERE id = ${seeded.workflow_id}
-      UNION ALL
-      SELECT 'file' FROM files WHERE id = ${seeded.file_id}
       UNION ALL
       SELECT 'prompt' FROM system_prompts WHERE id = ${password_seeded.prompt_id}
     `
@@ -231,7 +229,7 @@ describe('migration 0009 on a password install', () => {
 
   test('the API key lists the workflow', async () => {
     const response = await app.handle(
-      new Request('http://localhost/workflows', { headers: bearer(TEST_API_KEY) })
+      new Request('http://localhost/v1/workflows', { headers: bearer(TEST_API_KEY) })
     );
 
     expect(response.status).toBe(200);
@@ -259,22 +257,34 @@ describe('migration 0013 on a populated install', () => {
     expect(types).toHaveLength(0);
   });
 
-  test('the workflow, its file and prompt survive, and their ids take no database default', async () => {
+  test('the workflow and its prompt survive, and their ids take no database default', async () => {
     const [prompt] =
       await sql`SELECT content, live FROM system_prompts WHERE id = ${password_seeded.prompt_id}`;
     expect(prompt).toEqual({ content: 'Be brief.', live: true });
-    expect(await survivors_left()).toEqual(['workflow', 'file', 'prompt']);
+    expect(await survivors_left()).toEqual(['workflow', 'prompt']);
 
     const defaults = await sql<{ table_name: string; column_default: string | null }[]>`
       SELECT table_name, column_default FROM information_schema.columns
       WHERE table_schema = 'public' AND column_name = 'id'
-        AND table_name IN ('workflows', 'files', 'system_prompts')
+        AND table_name IN ('workflows', 'system_prompts')
       ORDER BY table_name
     `;
     expect(defaults.map((row) => ({ ...row }))).toEqual([
-      { table_name: 'files', column_default: null },
       { table_name: 'system_prompts', column_default: null },
       { table_name: 'workflows', column_default: null },
     ]);
+  });
+});
+
+describe('migration 0016 on a populated install', () => {
+  test('the file tables and their kind type are gone', async () => {
+    const tables = await sql`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+        AND table_name IN ('files', 'file_blobs')
+    `;
+    expect(tables).toHaveLength(0);
+
+    const types = await sql`SELECT 1 FROM pg_type WHERE typname = 'file_component_kind'`;
+    expect(types).toHaveLength(0);
   });
 });

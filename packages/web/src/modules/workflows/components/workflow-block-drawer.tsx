@@ -168,12 +168,10 @@ function BlockDrawerBody({
   const blocks_query = useQuery(workflowBlocksQueryOptions(workflow_id, { range: DRAWER_RANGE }));
 
   const details = agent_query.data;
-  // The agent this drawer describes is named rather than addressed: the opening id can be one
-  // replica, while the workflow block rollup infers the models used across every replica.
   const label = details?.label ?? block.label;
   // The summary aggregates an agent across its models and replicas, so it carries no `model` of its
   // own; the workflow block rollup does.
-  const models = blocks_query.data ? agentModels(blocks_query.data, label) : undefined;
+  const models = blocks_query.data ? agentModels(blocks_query.data, agent_id) : undefined;
   const side = splitSide(models, details);
   const replicas = details?.agent.replica_count ?? 0;
 
@@ -215,12 +213,10 @@ function BlockDrawerBody({
   );
 }
 
-// Rows group by (agent_id, model), so one agent spans a row per model per replica. Matched by name,
-// because the agent this drawer describes is the name — every replica's models are its models.
-function agentModels(blocks: MetricsBlocks, label: string): readonly string[] {
+function agentModels(blocks: MetricsBlocks, agent_id: string): readonly string[] {
   const models = new Set<string>();
   for (const block of blocks.blocks) {
-    if (block.label === label && block.model !== null) models.add(block.model);
+    if (block.agent_id === agent_id && block.model !== null) models.add(block.model);
   }
   return [...models];
 }

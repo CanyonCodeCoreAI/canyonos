@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { app } from '@api/app';
-import { API_KEY_PATHS } from '@api/modules/auth/auth.plugin';
+import { API_KEY_PATHS, DASHBOARD_PATH, is_routed_to } from '@api/modules/auth/auth.plugin';
 import { CONTROL_PATH_PREFIX } from '@api/modules/auth/control-key';
 
 /** `METHOD path` as Elysia lists the route. */
@@ -19,13 +19,13 @@ export const OPEN_ROUTES: readonly RouteName[] = [
   'OPTIONS /*',
   'GET /docs',
   'GET /docs/json',
-  'GET /healthz',
-  'GET /readyz',
-  'GET /auth/status',
-  // The OTLP receivers: an agent process holds no API key.
-  'POST /v1/traces',
-  'POST /v1/metrics',
-  'POST /v1/logs',
+  'GET /v1/healthz',
+  'GET /v1/readyz',
+  'GET /v1/auth/status',
+  // A workflow group's OTLP receivers: the Global Controller that sends them holds no key.
+  'POST /v1/workflow-groups/:workflow_group_id/traces',
+  'POST /v1/workflow-groups/:workflow_group_id/metrics',
+  'POST /v1/workflow-groups/:workflow_group_id/logs',
 ];
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
@@ -39,6 +39,7 @@ export interface SweptRoute {
 
 function kind_of(route: RouteName, path: string): RouteKind {
   if (OPEN_ROUTES.includes(route)) return 'open';
+  if (is_routed_to(new Request(`http://localhost${path}`), DASHBOARD_PATH)) return 'api_key';
   if (under(path, CONTROL_PATH_PREFIX)) return 'control_key';
   if (API_KEY_PATHS.some((prefix) => under(path, prefix))) return 'api_key';
   return 'unguarded';

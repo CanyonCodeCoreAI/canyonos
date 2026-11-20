@@ -114,6 +114,10 @@ def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
     status then, or False when a file could not be read."""
     state = require_state()
     label = f"Syncing {', '.join(workflows)}"
+    ids = {
+        name: workflow_id
+        for workflow_id, name in deployment.workflow_names_by_id().items()
+    }
     warnings = []
     try:
         with ui.status(f"{label}..."), contextlib.ExitStack() as archives:
@@ -136,14 +140,14 @@ def run_sync(workflows, keep_other_workflows=False, api_key_hash=None):
                 state,
                 config,
                 env_text,
-                None if keep_other_workflows else list(workflows),
+                None if keep_other_workflows else [ids[name] for name in workflows],
                 api_key_hash,
             )
             warnings += answer["warnings"]
             if deployment.configured_target() != "kubernetes":
                 warnings += collector_image_warnings(config)
             for name, tar in tars.items():
-                answer = put_workflow(state, name, tar)
+                answer = put_workflow(state, ids[name], tar)
                 warnings += answer["warnings"]
             for warning in warnings:
                 ui.warn(warning)

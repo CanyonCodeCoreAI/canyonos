@@ -24,7 +24,7 @@ itself (`workflow_folder` and `workflow_config_path`).
 
 On Docker, `canyonos deploy` uploads `workflow_group.yaml` and the `.env` beside it to the
 Global Controller container's `/workspace` (`PUT /v1/workflow-groups/<workflow_group_id>`), and each workflow, with
-its `.env`, to `/workspace/<workflow>/` as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<name>`:
+its `.env`, to `/workspace/<workflow>/` as a gzip tar (`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>`:
 `run_sync` in `sync.py`). The CanyonOS API writes each into the container's workspace
 volume with a job container (`write_group_files` and `put_workflow` in
 `workspace_jobs.py`); see [Global Controller](CONTROLLER.md#global-controller). The

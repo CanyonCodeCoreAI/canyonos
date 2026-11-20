@@ -27,7 +27,7 @@ export const MonitoringLogsQuerySchema = timeRangeQuery({
   errors_only: z
     .union([z.boolean(), z.enum(['true', 'false']).transform((flag) => flag === 'true')])
     .default(false),
-  agent: z.string().min(1).optional(),
+  agent_id: z.string().uuid().optional(),
   replica: z.string().min(1).optional(),
 });
 
@@ -77,7 +77,9 @@ export const MonitoringResourceUtilizationResponseSchema = MonitoringScopeSchema
   agents: z.array(MonitoringResourceEntrySchema),
 });
 
+// `agent_id` addresses the agent in the logs' `agent_id` filter; `agent` is its name.
 export const MonitoringLogSourceSchema = z.object({
+  agent_id: z.string(),
   agent: z.string(),
   replicas: z.array(z.string()),
 });
@@ -116,7 +118,8 @@ export const MonitoringTraceSpanSchema = z.object({
   span_id: z.string(),
   parent_span_id: z.string().nullable(),
   name: z.string(),
-  agent: z.string().nullable(),
+  /** The replica that ran the span. */
+  replica: z.string().nullable(),
   offset_ms: z.number(),
   duration_ms: z.number(),
   failed: z.boolean(),
@@ -127,7 +130,7 @@ export const MonitoringTraceSpanSchema = z.object({
 export const MonitoringLlmCallSchema = MonitoringTraceSpanSchema.pick({
   span_id: true,
   name: true,
-  agent: true,
+  replica: true,
   failed: true,
   status_message: true,
 }).extend({
@@ -150,7 +153,7 @@ export const MonitoringTraceSchema = MonitoringTraceSpanSchema.pick({
 }).extend({
   at: z.string(),
   trace_id: z.string(),
-  agents: z.array(z.string()),
+  replicas: z.array(z.string()),
   span_count: z.number().int(),
   total_cost: z.number().nullable(),
   spans: z.array(MonitoringTraceSpanSchema),

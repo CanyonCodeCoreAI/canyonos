@@ -16,15 +16,15 @@ const _client = edenTreaty<CanyonosApi>('http://localhost:3000');
 
 // Forces actual type resolution so tree-shaking can't hide a broken bridge.
 // If `CanyonosApi` doesn't resolve, web typecheck fails here loudly and locally.
-export type _HealthzReturn = Awaited<ReturnType<typeof _client.healthz.get>>;
+export type _HealthzReturn = Awaited<ReturnType<typeof _client.v1.healthz.get>>;
 
-function _workflow_contract(workflow_id: string) {
-  const workflow = _client.workflows[workflow_id]!;
+function _workflow_contract(workflow_group_id: string, workflow_id: string) {
+  const workflow = _client.v1.workflows[workflow_id]!;
+  const group_workflow = _client.v1['workflow-groups'][workflow_group_id]!.workflows[workflow_id]!;
   const range = { from: '2026-09-01T00:00:00Z', to: '2026-10-01T00:00:00Z' };
   void workflow.get();
-  void workflow.stats.get();
-  void workflow.requests.get({ $query: { ...range, limit: 20, offset: 0 } });
-  void workflow.requests.get({
+  void group_workflow.requests.get({ $query: { ...range, limit: 20, offset: 0 } });
+  void group_workflow.requests.get({
     $query: {
       limit: 20,
       offset: 0,
@@ -34,14 +34,14 @@ function _workflow_contract(workflow_id: string) {
       ...range,
     },
   });
-  void workflow.requests['session-1']!.get({ $query: range });
-  void workflow.metrics.kpis.get({ $query: range });
-  void workflow.metrics.distribution.get({
+  void group_workflow.requests['session-1']!.get({ $query: range });
+  void group_workflow.metrics.kpis.get({ $query: range });
+  void group_workflow.metrics.distribution.get({
     $query: { metric: 'latency', ...range, buckets: 20 },
   });
-  void workflow.metrics.timeseries.get({ $query: range });
-  void workflow.metrics.blocks.get({ $query: range });
-  void workflow.metrics.agents['agent-1']!.get({ $query: range });
+  void group_workflow.metrics.timeseries.get({ $query: range });
+  void group_workflow.metrics.blocks.get({ $query: range });
+  void group_workflow.metrics.agents['agent-1']!.get({ $query: range });
 }
 
 void _workflow_contract;

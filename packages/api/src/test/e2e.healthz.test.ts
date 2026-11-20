@@ -20,7 +20,7 @@ setupE2ETests();
 
 describe('healthz', () => {
   test('returns ok', async () => {
-    const { data, error } = await api.healthz.get();
+    const { data, error } = await api.v1.healthz.get();
     expect(error).toBeNull();
     expect(data?.status).toBe('ok');
     expect(typeof data?.timestamp).toBe('string');
@@ -33,12 +33,12 @@ describe('healthz', () => {
     process.env.GIT_COMMIT_SHA = 'legacy-commit';
 
     try {
-      const { data, error } = await api.healthz.get();
+      const { data, error } = await api.v1.healthz.get();
       expect(error).toBeNull();
       expect(data?.version).toBe('legacy-commit');
 
       delete process.env.GIT_COMMIT_SHA;
-      const fallback = await api.healthz.get();
+      const fallback = await api.v1.healthz.get();
       expect(fallback.error).toBeNull();
       expect(fallback.data?.version).toBe('railway-commit');
     } finally {
@@ -52,7 +52,7 @@ describe('healthz', () => {
 
 describe('readyz', () => {
   test('is ready once the database answers, and says that Docker does', async () => {
-    const { data, error } = await api.readyz.get();
+    const { data, error } = await api.v1.readyz.get();
 
     expect(error).toBeNull();
     expect(data).toEqual({ status: 'ready', checks: { database: 'ok', docker: 'ok' } });
@@ -61,7 +61,7 @@ describe('readyz', () => {
   test('is 503 not_ready, and says where the database is, until it is ready', async () => {
     set_database_state('migrating');
     try {
-      const response = await fetch(`${config.app.apiUrl}/readyz`);
+      const response = await fetch(`${config.app.apiUrl}/v1/readyz`);
 
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({
@@ -71,7 +71,7 @@ describe('readyz', () => {
     } finally {
       set_database_state('ready');
     }
-    expect((await fetch(`${config.app.apiUrl}/healthz`)).status).toBe(200);
+    expect((await fetch(`${config.app.apiUrl}/v1/healthz`)).status).toBe(200);
   });
 });
 
@@ -102,7 +102,7 @@ describe('shutdown', () => {
 
     expect(exit).toBe(0);
     expect(performance.now() - started_at).toBeLessThan(SHUTDOWN_TIMEOUT_MS);
-    expect(await fetch(`${server.url}/healthz`).catch(() => 'refused')).toBe('refused');
+    expect(await fetch(`${server.url}/v1/healthz`).catch(() => 'refused')).toBe('refused');
   }, 40_000);
 });
 
@@ -150,14 +150,14 @@ describe('readyz without Docker', () => {
   test('is 200 when DOCKER_SOCKET names no socket, and says Docker is unreachable', async () => {
     const server = await spawn_api({ DOCKER_SOCKET: '/nonexistent/docker.sock' });
     try {
-      const response = await fetch(`${server.url}/readyz`);
+      const response = await fetch(`${server.url}/v1/readyz`);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         status: 'ready',
         checks: { database: 'ok', docker: 'unreachable' },
       });
-      // The /v1 routes, which need Docker, say so themselves.
+      // The /v1/workflow-groups routes, which need Docker, say so themselves.
       const groups = await group_status(server);
       expect(groups.status).toBe(503);
       expect(await groups.json()).toMatchObject({ error: 'docker.unavailable' });
@@ -169,7 +169,7 @@ describe('readyz without Docker', () => {
   test('is 200 when DOCKER_SOCKET is empty, and says Docker is disabled', async () => {
     const server = await spawn_api({ DOCKER_SOCKET: '' });
     try {
-      const response = await fetch(`${server.url}/readyz`);
+      const response = await fetch(`${server.url}/v1/readyz`);
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
@@ -249,20 +249,20 @@ describe('a database lost after the API was ready', () => {
       CANYONOS_API_KEY_HASH: '',
     });
     try {
-      expect((await fetch(`${server.url}/workflows`)).status).toBe(200);
+      expect((await fetch(`${server.url}/v1/workflows`)).status).toBe(200);
 
       await proxy.stop();
-      const lost = await fetch(`${server.url}/workflows`);
+      const lost = await fetch(`${server.url}/v1/workflows`);
       expect(lost.status).toBe(503);
       expect(await lost.json()).toMatchObject({ error: 'database.unavailable' });
-      const waiting = await fetch(`${server.url}/readyz`);
+      const waiting = await fetch(`${server.url}/v1/readyz`);
       expect(waiting.status).toBe(503);
       expect(await waiting.json()).toMatchObject({ checks: { database: 'connecting' } });
-      expect((await fetch(`${server.url}/workflows`)).status).toBe(503);
+      expect((await fetch(`${server.url}/v1/workflows`)).status).toBe(503);
 
       await proxy.start();
-      await until_answers(server.url, '/readyz');
-      expect((await fetch(`${server.url}/workflows`)).status).toBe(200);
+      await until_answers(server.url, '/v1/readyz');
+      expect((await fetch(`${server.url}/v1/workflows`)).status).toBe(200);
     } catch (error) {
       throw new Error(`${String(error)}\n${server.output()}`, { cause: error });
     } finally {

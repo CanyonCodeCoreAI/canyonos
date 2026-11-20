@@ -4,7 +4,7 @@
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { files, workflows } from '@api/db/schema';
+import { workflows } from '@api/db/schema';
 import {
   RESOURCE_WORKFLOW_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
@@ -18,41 +18,31 @@ import {
 
 import type { WorkflowSummary } from './workflows.types';
 
-export interface WorkflowComponentCounts {
-  readonly file_count: number;
-  readonly agent_count: number;
-  readonly tool_count: number;
-}
-
 export const workflows_repo = {
-  async list_with_counts(): Promise<WorkflowSummary[]> {
+  async list(): Promise<WorkflowSummary[]> {
     return db
       .select({
         id: workflows.id,
         name: workflows.name,
+        workflow_group_id: workflows.workflow_group_id,
         created_at: workflows.created_at,
         updated_at: workflows.updated_at,
-        file_count: sql<number>`count(${files.id})::int`,
       })
       .from(workflows)
-      .leftJoin(files, eq(files.workflow_id, workflows.id))
-      .groupBy(workflows.id)
       .orderBy(workflows.created_at);
   },
 
-  async get_with_count(workflow_id: string): Promise<WorkflowSummary | undefined> {
+  async get(workflow_id: string): Promise<WorkflowSummary | undefined> {
     const [row] = await db
       .select({
         id: workflows.id,
         name: workflows.name,
+        workflow_group_id: workflows.workflow_group_id,
         created_at: workflows.created_at,
         updated_at: workflows.updated_at,
-        file_count: sql<number>`count(${files.id})::int`,
       })
       .from(workflows)
-      .leftJoin(files, eq(files.workflow_id, workflows.id))
       .where(eq(workflows.id, workflow_id))
-      .groupBy(workflows.id)
       .limit(1);
     return row;
   },
@@ -65,15 +55,6 @@ export const workflows_repo = {
       .where(eq(workflows.id, workflow_id))
       .limit(1);
     return row?.workflow_group_id ?? null;
-  },
-
-  async exists(workflow_id: string): Promise<boolean> {
-    const [row] = await db
-      .select({ id: workflows.id })
-      .from(workflows)
-      .where(eq(workflows.id, workflow_id))
-      .limit(1);
-    return row !== undefined;
   },
 
   /** Deletes the workflow, the rows that reference it, and its telemetry. */
@@ -99,20 +80,5 @@ export const workflows_repo = {
         );
       await tx.delete(workflows).where(eq(workflows.id, workflow_id));
     });
-  },
-
-  async get_component_counts(workflow_id: string): Promise<WorkflowComponentCounts | undefined> {
-    const [row] = await db
-      .select({
-        file_count: sql<number>`count(${files.id})::int`,
-        agent_count: sql<number>`count(*) filter (where ${files.component_kind} = 'agent')::int`,
-        tool_count: sql<number>`count(*) filter (where ${files.component_kind} = 'tool')::int`,
-      })
-      .from(workflows)
-      .leftJoin(files, eq(files.workflow_id, workflows.id))
-      .where(eq(workflows.id, workflow_id))
-      .groupBy(workflows.id)
-      .limit(1);
-    return row;
   },
 };

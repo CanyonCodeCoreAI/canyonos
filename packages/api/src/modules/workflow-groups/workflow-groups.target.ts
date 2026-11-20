@@ -18,7 +18,7 @@ import type {
   WorkflowGroupStatus,
 } from './workflow-groups.types';
 
-// Where /v1 runs workflow groups. The routes, the models, the rows, the apply loop's decisions
+// Where /v1/workflow-groups runs workflow groups. The routes, the models, the rows, the apply loop's decisions
 // and the status shape are the same on every target; a target only says how its deploys start,
 // stop, reload and report. One per API process, from CANYONOS_TARGET: Docker, a Global Controller container per workflow group (workflow-groups.docker.ts), or
 // Kubernetes, a CanyonBuild and the CanyonProject it applies (workflow-groups.kubernetes.ts).
@@ -65,7 +65,8 @@ export interface WorkflowGroupTarget {
   workflow_group_ids(): Promise<string[]>;
   /** Takes a PUT of the workflow group's settings where it runs, making its row when it has
    * none: writes workflow_group.yaml and its `.env`, and removes the uploaded workflows
-   * `body.workflows` leaves out, which it returns. Runs holding the workflow group's lock. */
+   * `body.workflows` leaves out, whose workflow_ids it returns. Runs holding the workflow
+   * group's lock. */
   put_group_files(
     workflow_group_id: string,
     body: WorkflowGroupBodyInput

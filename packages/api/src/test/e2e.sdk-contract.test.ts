@@ -23,9 +23,9 @@ import type {
   ScalingPolicy,
   ScalingResponse,
 } from '@canyonos/api/scaling';
-import type { WorkflowStats, WorkflowSummary } from '@canyonos/api/workflows';
+import type { WorkflowSummary } from '@canyonos/api/workflows';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { api, group_workflow, setupE2ETests } from './e2e.setup';
 import {
   reconcile_prompts_now,
   seed_running_workflow,
@@ -40,7 +40,7 @@ const key_headers = bearer(TEST_API_KEY);
 
 describe('SDK contract', () => {
   test('healthz round-trip preserves shape', async () => {
-    const { data, error } = await api.healthz.get();
+    const { data, error } = await api.v1.healthz.get();
     expect(error).toBeNull();
     if (!data) throw new Error('healthz returned no data');
     expect(typeof data.status).toBe('string');
@@ -49,41 +49,36 @@ describe('SDK contract', () => {
     expect(Number.isNaN(Date.parse(data.timestamp))).toBe(false);
   });
 
-  test('workflow, stats, requests, metrics, and resources endpoints are typed at runtime', async () => {
+  test('workflow, requests, metrics, and resources endpoints are typed at runtime', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const { workflow_id } = await create_test_workflow({
-      name: 'SDK Workflow',
-      files: [{ path: 'workflow.py', component_kind: 'workflow' }],
-    });
+    const { workflow_id } = await create_test_workflow({ name: 'SDK Workflow' });
     const range = {
       from: new Date(Date.now() - 30 * 86_400_000).toISOString(),
       to: new Date().toISOString(),
     };
 
-    const workflows: WorkflowSummary[] = (await api.workflows.get({ $headers: headers })).data!;
-    const workflow: WorkflowSummary = (await api.workflows[workflow_id]!.get({ $headers: headers }))
-      .data!;
-    const stats: WorkflowStats = (
-      await api.workflows[workflow_id]!.stats.get({ $headers: headers })
+    const workflows: WorkflowSummary[] = (await api.v1.workflows.get({ $headers: headers })).data!;
+    const workflow: WorkflowSummary = (
+      await api.v1.workflows[workflow_id]!.get({ $headers: headers })
     ).data!;
     const requests: RequestList = (
-      await api.workflows[workflow_id]!.requests.get({
+      await group_workflow(workflow_id).requests.get({
         $query: { ...range, limit: 20, offset: 0 },
         $headers: headers,
       })
     ).data!;
     const kpis: MetricsKpis = (
-      await api.workflows[workflow_id]!.metrics.kpis.get({ $query: range, $headers: headers })
+      await group_workflow(workflow_id).metrics.kpis.get({ $query: range, $headers: headers })
     ).data!;
     const blocks: MetricsBlocks = (
-      await api.workflows[workflow_id]!.metrics.blocks.get({
+      await group_workflow(workflow_id).metrics.blocks.get({
         $query: range,
         $headers: headers,
       })
     ).data!;
     const overview: FleetOverview = (
-      await api.resources.overview.get({
+      await api.v1.resources.overview.get({
         $query: {
           from: new Date(Date.now() - 7 * 86_400_000).toISOString(),
           to: new Date().toISOString(),
@@ -93,8 +88,7 @@ describe('SDK contract', () => {
     ).data!;
 
     expect(workflows.some(({ id }) => id === workflow_id)).toBe(true);
-    expect(workflow).toMatchObject({ id: workflow_id, name: 'SDK Workflow', file_count: 1 });
-    expect(stats).toMatchObject({ workflow_id, file_count: 1 });
+    expect(workflow).toMatchObject({ id: workflow_id, name: 'SDK Workflow' });
     expect(requests.total).toBe(0);
     expect(kpis.workflow_id).toBe(workflow_id);
     expect(blocks.workflow_id).toBe(workflow_id);
@@ -105,7 +99,7 @@ describe('SDK contract', () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
     const { workflow_id } = await create_test_workflow({ name: 'SDK Monitoring' });
-    const monitoring = api.workflows[workflow_id]!.monitoring;
+    const monitoring = group_workflow(workflow_id).monitoring;
     // On the hour, so the hourly grid has exactly 24 whole buckets rather than two partial ends.
     const to_ms = Math.floor(Date.now() / 3_600_000) * 3_600_000;
     const range = {
@@ -180,19 +174,19 @@ describe('SDK contract', () => {
       updated_at: '2026-09-01T00:00:00.000Z',
     };
     const prompts: PromptListItem[] = (
-      await api.workflows[workflow_id]!.prompts.get({ $headers: headers })
+      await group_workflow(workflow_id).prompts.get({ $headers: headers })
     ).data!;
     const created: SystemPrompt = (
-      await api.workflows[workflow_id]!.prompts['app.summarize']!.versions.post(
+      await group_workflow(workflow_id).prompts['app.summarize']!.versions.post(
         { content: 'Summarize briefly.' },
         { headers: key_headers }
       )
     ).data!;
     const prompt: Prompt = (
-      await api.workflows[workflow_id]!.prompts['app.summarize']!.get({ $headers: headers })
+      await group_workflow(workflow_id).prompts['app.summarize']!.get({ $headers: headers })
     ).data!;
     const live: PromptListItem = (
-      await api.workflows[workflow_id]!.prompts['app.summarize']!.live.put(
+      await group_workflow(workflow_id).prompts['app.summarize']!.live.put(
         { version: created.version },
         { headers: key_headers }
       )
@@ -222,13 +216,13 @@ describe('SDK contract', () => {
     await seed_scaling_agents([{ name: 'app.PriceAgent', replicas: 1 }]);
 
     const scaling: ScalingResponse = (
-      await api.workflows[workflow_id]!.scaling.get({ $headers: headers })
+      await group_workflow(workflow_id).scaling.get({ $headers: headers })
     ).data!;
     const agents: ScalingAgentsResponse = (
-      await api.workflows[workflow_id]!.scaling.agents.get({ $headers: headers })
+      await group_workflow(workflow_id).scaling.agents.get({ $headers: headers })
     ).data!;
     const saved: ScalingPolicy = (
-      await api.workflows[workflow_id]!.scaling.put(
+      await group_workflow(workflow_id).scaling.put(
         { ...policy, metric: 'requests_per_minute_per_replica' },
         { headers: key_headers }
       )
@@ -236,12 +230,20 @@ describe('SDK contract', () => {
 
     expect(scaling).toEqual({ workflows: { app: { status: 'applied', policy } } });
     expect(agents).toEqual({
-      agents: [{ name: 'app.PriceAgent', replicas_expected: 1, replicas_running: 0, load: null }],
+      agents: [
+        {
+          agent_id: Bun.randomUUIDv5('app.PriceAgent', workflow_id),
+          name: 'app.PriceAgent',
+          replicas_expected: 1,
+          replicas_running: 0,
+          load: null,
+        },
+      ],
     });
     expect(saved).toEqual({ ...policy, metric: 'requests_per_minute_per_replica' });
 
     const deleted: ScalingDeleteResponse = (
-      await api.workflows[workflow_id]!.scaling.delete(undefined, { headers: key_headers })
+      await group_workflow(workflow_id).scaling.delete(undefined, { headers: key_headers })
     ).data!;
     expect(deleted).toEqual({ status: 'none' });
   });

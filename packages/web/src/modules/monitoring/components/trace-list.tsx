@@ -109,7 +109,7 @@ function TraceTable({
           <tr className="divide-border/40 divide-x">
             <th className="w-44 px-4 py-2 font-normal">time</th>
             <th className="px-2 py-2 font-normal">trace</th>
-            <th className="w-48 px-2 py-2 font-normal">agents</th>
+            <th className="w-48 px-2 py-2 font-normal">replicas</th>
             <th className="w-16 px-2 py-2 text-right font-normal">spans</th>
             <th className="w-20 px-2 py-2 text-right font-normal">llm calls</th>
             <th className="w-24 px-2 py-2 text-right font-normal">total cost</th>
@@ -170,7 +170,7 @@ function TraceRow({
             <RowTrigger data-testid={`trace-row-toggle-${index}`}>{trace.name}</RowTrigger>
           </td>
           <td className="truncate px-2 py-2 align-top">
-            {trace.agents.length === 0 ? '—' : trace.agents.join(', ')}
+            {trace.replicas.length === 0 ? '—' : trace.replicas.join(', ')}
           </td>
           <td className="px-2 py-2 text-right align-top whitespace-nowrap">{trace.span_count}</td>
           <td
@@ -305,7 +305,7 @@ function SpanCells({
       >
         {children}
       </td>
-      <td className="text-muted-foreground w-36 truncate py-1 pr-3">{span.agent ?? '—'}</td>
+      <td className="text-muted-foreground w-36 truncate py-1 pr-3">{span.replica ?? '—'}</td>
       <td className="py-1 pr-3">
         <div className="bg-foreground/[0.05] relative h-3 w-full rounded-sm">
           <div

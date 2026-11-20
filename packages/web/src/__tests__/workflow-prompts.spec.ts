@@ -18,12 +18,14 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const PROMPTS_PATH = `/workflows/${WORKFLOW.id}/prompts`;
+const PROMPTS_API = `${WORKFLOW_API}/prompts`;
 
 const INTENT_V2: SystemPrompt = {
   version: 'app-IntentAgent-parse-11223344-v2',
@@ -80,7 +82,7 @@ async function stubPrompts(
 ): Promise<PromptsStub> {
   const stub: PromptsStub = { list_reads: 0, prompt_reads: 0, prompts: [...prompts] };
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === PROMPTS_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === PROMPTS_API,
     (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       stub.list_reads += 1;
@@ -103,7 +105,7 @@ async function stubPrompts(
   await page.route(
     (url) =>
       url.origin === apiOrigin &&
-      url.pathname.startsWith(`${PROMPTS_PATH}/`) &&
+      url.pathname.startsWith(`${PROMPTS_API}/`) &&
       !url.pathname.endsWith('/versions') &&
       !url.pathname.endsWith('/live'),
     (route) => {
@@ -146,7 +148,7 @@ async function stubPromptWrites(
     (url) =>
       url.origin === apiOrigin &&
       (url.pathname.endsWith('/versions') || url.pathname.endsWith('/live')) &&
-      url.pathname.startsWith(`${PROMPTS_PATH}/`),
+      url.pathname.startsWith(`${PROMPTS_API}/`),
     (route) => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
@@ -328,7 +330,7 @@ test('an older version opens to its text, and Make live switches agents to it', 
   expect(writes).toEqual([
     {
       method: 'PUT',
-      path: `${PROMPTS_PATH}/app.IntentAgent.parse/live`,
+      path: `${PROMPTS_API}/app.IntentAgent.parse/live`,
       body: { version: INTENT_V2.version },
     },
   ]);
@@ -398,7 +400,7 @@ test('saving an edit creates the next version, listed but not live, and closes t
     'Saved v4 of app.IntentAgent.parse. Agents still get v3.'
   );
   expect(writes).toEqual([
-    { method: 'POST', path: `${PROMPTS_PATH}/app.IntentAgent.parse/versions`, body: EDIT },
+    { method: 'POST', path: `${PROMPTS_API}/app.IntentAgent.parse/versions`, body: EDIT },
   ]);
 
   // A save changes the history but not what is live, so only the card re-reads.
@@ -427,7 +429,7 @@ test('Cmd+Enter in the editor saves', async ({ page }) => {
 
   await expect(page.getByTestId('app-toast')).toContainText('Saved v4 of app.IntentAgent.parse');
   expect(writes).toEqual([
-    { method: 'POST', path: `${PROMPTS_PATH}/app.IntentAgent.parse/versions`, body: EDIT },
+    { method: 'POST', path: `${PROMPTS_API}/app.IntentAgent.parse/versions`, body: EDIT },
   ]);
 });
 

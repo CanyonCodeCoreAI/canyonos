@@ -61,6 +61,7 @@ export const ScalingAgentLoadSchema = z.object({
 });
 
 export const ScalingAgentSchema = z.object({
+  agent_id: z.string(),
   name: z.string(),
   /** The count the controller is converging to: the configured one until a policy moves it. */
   replicas_expected: z.number().int().nonnegative(),

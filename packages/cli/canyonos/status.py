@@ -83,9 +83,11 @@ def _read_status():
         ui.warn(
             "Could not read the running workflow group's endpoint. Run `canyonos logs` to see why."
         )
-    for name, agent in (report["agents"] or {}).items():
+    for agent in report["agents"] or []:
         if agent["launch_error"]:
-            ui.warn(f"{name} could not start a replica: {agent['launch_error']}")
+            ui.warn(
+                f"{agent['name']} could not start a replica: {agent['launch_error']}"
+            )
 
     dashboard_port = running_web_port()
     report["dashboard_url"] = dashboard_url(dashboard_port) if dashboard_port else None

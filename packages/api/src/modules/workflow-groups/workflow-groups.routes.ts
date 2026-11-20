@@ -8,6 +8,15 @@ import type { Context } from 'elysia';
 import { databasePlugin } from '@api/db/database';
 import { early_refusal, payloadTooLarge } from '@core/errors';
 
+import { governanceRoutes } from '../governance/governance.routes';
+import { metricsRoutes } from '../metrics/metrics.routes';
+import { monitoringRoutes } from '../monitoring/monitoring.routes';
+import { promptsRoutes } from '../prompts/prompts.routes';
+import { requestsRoutes } from '../requests/requests.routes';
+import { scalingRoutes } from '../scaling/scaling.routes';
+import { telemetryRoutes } from '../telemetry/telemetry.routes';
+import { workflowHistoryRoutes } from '../workflows/workflows.routes';
+import { GroupWorkflowParams } from '../workflows/workflows.types';
 import { upload_started } from './workflow-groups.apply';
 import { check_settings_caller } from './workflow-groups.caller';
 import {
@@ -17,7 +26,6 @@ import {
   delete_workflow,
   delete_workflow_group,
   get_status,
-  get_workflow,
   list_workflow_groups,
   list_workflows,
   put_workflow,
@@ -31,7 +39,6 @@ import {
   TailQuery,
   WORKFLOW_GROUP_MODELS,
   WorkflowGroupParams,
-  WorkflowParams,
 } from './workflow-groups.types';
 
 /** The largest workflow archive a PUT takes, as the Kubernetes receiver
@@ -165,14 +172,14 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     },
   })
   .put(
-    '/:workflow_group_id/workflows/:name',
+    '/:workflow_group_id/workflows/:workflow_id',
     (context) => {
       lift_idle_timeout(context);
       const { params, request } = context;
-      return put_workflow(params.workflow_group_id, params.name, request.body);
+      return put_workflow(params.workflow_group_id, params.workflow_id, request.body);
     },
     {
-      params: WorkflowParams,
+      params: GroupWorkflowParams,
       // Read by the target: on Kubernetes it is streamed to disk, never held in memory.
       parse: 'none',
       response: {
@@ -188,28 +195,29 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         operationId: 'putWorkflow',
         summary: 'Upload a workflow',
         description:
-          'Checks the gzip tar of workflow `name` as `canyonos validate` does, then unpacks it ' +
+          'Checks the gzip tar of the workflow as `canyonos validate` does, then unpacks it ' +
           "into the workflow group's workspace, removing what its last upload had and this one " +
-          'lacks; on a 400 (bad archive, unsafe path or findings) the old files stay.',
+          'lacks; on a 400 (bad archive, unsafe path or findings) the old files stay. 404 when ' +
+          'the uploaded `workflow_group.yaml` gives no workflow this workflow_id.',
         requestBody: GZIP_BODY,
       },
     }
   )
   .delete(
-    '/:workflow_group_id/workflows/:name',
+    '/:workflow_group_id/workflows/:workflow_id',
     (context) => {
       lift_idle_timeout(context);
-      return delete_workflow(context.params.workflow_group_id, context.params.name);
+      return delete_workflow(context.params.workflow_group_id, context.params.workflow_id);
     },
     {
-      params: WorkflowParams,
+      params: GroupWorkflowParams,
       response: { 200: 'Generation', ...refusals, 404: refused },
       detail: {
         ...doc,
         operationId: 'deleteWorkflow',
         summary: 'Remove a workflow',
         description:
-          "Removes from the workflow group's workspace what workflow `name`'s last upload put " +
+          "Removes from the workflow group's workspace what the workflow's last upload put " +
           'there; 404 if it was never uploaded.',
       },
     }
@@ -221,23 +229,9 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
       ...doc,
       operationId: 'listWorkflows',
       summary: 'List the uploaded workflows',
-      description: 'Every uploaded workflow, by name.',
+      description: 'Every uploaded workflow, by workflow_id.',
     },
   })
-  .get(
-    '/:workflow_group_id/workflows/:name',
-    ({ params }) => get_workflow(params.workflow_group_id, params.name),
-    {
-      params: WorkflowParams,
-      response: { 200: 'Workflow', ...refusals, 404: refused },
-      detail: {
-        ...doc,
-        operationId: 'getWorkflow',
-        summary: 'Read a workflow',
-        description: 'Uploaded workflow `name`; 404 if it was never uploaded.',
-      },
-    }
-  )
   .get(
     '/:workflow_group_id/logs/controller',
     (context) => {
@@ -263,11 +257,11 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     }
   )
   .get(
-    '/:workflow_group_id/logs/agents/:name',
+    '/:workflow_group_id/logs/agents/:agent_id',
     (context) => {
       lift_idle_timeout(context);
       const { params, query } = context;
-      return agent_logs(params.workflow_group_id, params.name, query.tail);
+      return agent_logs(params.workflow_group_id, params.agent_id, query.tail);
     },
     {
       params: AgentParams,
@@ -278,9 +272,9 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
         operationId: 'getAgentLogs',
         summary: "Read an agent's replica logs",
         description:
-          'The last `tail` lines of each running replica of agent `name`, or of the one replica ' +
-          'whose ID is `name`, read on its machine; 409 if the deploy is not running, 404 naming ' +
-          'the agents when `name` is neither, 503 when its Redis cannot be read.',
+          'The last `tail` lines of each running replica of the agent whose ID is `agent_id`, ' +
+          'or of the one replica whose ID it is, read on its machine; 409 if the deploy is not ' +
+          'running, 404 naming the agents when it is neither, 503 when its Redis cannot be read.',
       },
     }
   )
@@ -328,4 +322,14 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
           '422 `workflow_groups.registration_required`.',
       },
     }
-  );
+  )
+  // What the dashboard reads and sets of one workflow; these take the API key.
+  .use(requestsRoutes)
+  .use(metricsRoutes)
+  .use(monitoringRoutes)
+  .use(promptsRoutes)
+  .use(scalingRoutes)
+  .use(governanceRoutes)
+  .use(workflowHistoryRoutes)
+  // Deliberately unauthenticated: the Global Controller that sends telemetry holds no key.
+  .use(telemetryRoutes);

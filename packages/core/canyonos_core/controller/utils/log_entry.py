@@ -31,7 +31,7 @@ def _otel_entry(
     severity_text,
     body,
     *,
-    agent_id,
+    replica_id,
     agent_name,
     address,
     logger_name=None,
@@ -51,7 +51,7 @@ def _otel_entry(
         "SpanId": None,
         "Attributes": {
             "logger.name": logger_name,
-            "canyonos.agent.id": agent_id,
+            "canyonos.replica.id": replica_id,
             "canyonos.agent.name": agent_name,
             "canyonos.endpoint": address,
             "exception.type": exception_type,
@@ -63,7 +63,7 @@ def _otel_entry(
 
 
 def build_failure_entry(
-    error, agent_id=None, agent_name=None, address=None, error_name=None
+    error, replica_id=None, agent_name=None, address=None, error_name=None
 ):
     """Return an OTel-shaped log entry for one future failure (an exception or a plain message)."""
     is_exception = isinstance(error, BaseException)
@@ -71,7 +71,7 @@ def build_failure_entry(
         _SEVERITY_NUMBER[logging.ERROR],
         "ERROR",
         str(error),
-        agent_id=agent_id,
+        replica_id=replica_id,
         agent_name=agent_name,
         address=address,
         exception_type=error_name
@@ -85,7 +85,7 @@ def build_failure_entry(
     )
 
 
-def build_log_entry(record, agent_id=None, agent_name=None, address=None):
+def build_log_entry(record, replica_id=None, agent_name=None, address=None):
     """Return an OTel-shaped log entry for one stdlib `logging.LogRecord`."""
     exc_type = exc_message = exc_stacktrace = None
     if record.exc_info:
@@ -98,7 +98,7 @@ def build_log_entry(record, agent_id=None, agent_name=None, address=None):
             record.levelname, record.levelname
         ),
         record.getMessage(),
-        agent_id=agent_id,
+        replica_id=replica_id,
         agent_name=agent_name,
         address=address,
         logger_name=record.name,

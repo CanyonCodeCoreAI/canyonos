@@ -105,12 +105,16 @@ export const workflow_groups_repo = {
     );
   },
 
-  async save_workflow(id: string, name: string, workflow: StoredWorkflow): Promise<number | null> {
+  async save_workflow(
+    id: string,
+    workflow_id: string,
+    workflow: StoredWorkflow
+  ): Promise<number | null> {
     return generation_of(
       db
         .update(workflowGroups)
         .set({
-          workflows: sql`${workflowGroups.workflows} || jsonb_build_object(${name}::text, ${JSON.stringify(workflow)}::jsonb)`,
+          workflows: sql`${workflowGroups.workflows} || jsonb_build_object(${workflow_id}::text, ${JSON.stringify(workflow)}::jsonb)`,
           ...changed(),
         })
         .where(eq(workflowGroups.id, id))
@@ -118,11 +122,11 @@ export const workflow_groups_repo = {
     );
   },
 
-  async remove_workflow(id: string, name: string): Promise<number | null> {
+  async remove_workflow(id: string, workflow_id: string): Promise<number | null> {
     return generation_of(
       db
         .update(workflowGroups)
-        .set({ workflows: sql`${workflowGroups.workflows} - ${name}::text`, ...changed() })
+        .set({ workflows: sql`${workflowGroups.workflows} - ${workflow_id}::text`, ...changed() })
         .where(eq(workflowGroups.id, id))
         .returning({ generation: workflowGroups.generation })
     );

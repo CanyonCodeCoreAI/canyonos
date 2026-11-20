@@ -24,15 +24,23 @@ handle /healthz {
 	respond "ok" 200
 }
 
-# The workflow groups routes drive Docker on this machine: only the CLI calls them, on the API's
-# own port, never through the dashboard's public one. Telemetry's /api/v1/{traces,metrics,logs}
-# still reach the API.
+# What the dashboard reads and sets of one workflow, under its workflow group. Matched on the
+# request as it was sent, so an encoded `/` cannot make another route look like one of these. A
+# named matcher keeps its place in this file, so this comes before the 404 below.
+@workflow_dashboard `{http.request.uri}.matches("^/api/v1/workflow-groups/[0-9a-fA-F-]+/workflows/[0-9a-fA-F-]+/(requests|metrics|monitoring|prompts|scaling|governance|history|sample-data)([/?].*)?$")`
+handle @workflow_dashboard {
+	uri strip_prefix /api
+	reverse_proxy {$CANYONOS_API_UPSTREAM:api:3000}
+}
+
+# The other workflow groups routes drive Docker on this machine or take a Global Controller's
+# telemetry: they are called on the API's own port, never through the dashboard's public one.
 handle /api/v1/workflow-groups* {
 	respond 404
 }
 
 # The dashboard and the API share one origin, so the bundle carries no host. `handle_path`
-# strips `/api` before forwarding, which is why the API keeps serving its unprefixed routes.
+# strips `/api` before forwarding.
 handle_path /api/* {
 	reverse_proxy {$CANYONOS_API_UPSTREAM:api:3000}
 }

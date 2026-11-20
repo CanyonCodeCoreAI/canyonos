@@ -474,8 +474,9 @@ class Api:
         return self.request("DELETE", path, **kwargs)
 
 
-def traces(api: Api, workflow_id: str) -> list[dict]:
-    """The workflow's traces from the last hour, as the dashboard API lists them."""
+def traces(api: Api, workspace: Path, workflow_id: str) -> list[dict]:
+    """The traces from the last hour of workflow `workflow_id` in the workflow group
+    folder `workspace`, as the dashboard API lists them."""
     now = datetime.now(timezone.utc)
     window = urlencode(
         {
@@ -483,7 +484,10 @@ def traces(api: Api, workflow_id: str) -> list[dict]:
             "to": (now + timedelta(minutes=5)).isoformat(),
         }
     )
-    path = f"/workflows/{workflow_id}/monitoring/traces?{window}"
+    path = (
+        f"/v1/workflow-groups/{workflow_group_id(workspace)}/workflows/{workflow_id}"
+        f"/monitoring/traces?{window}"
+    )
     return api.get(path).json()["traces"]
 
 
@@ -495,9 +499,9 @@ def api_url(recorder: Recorder) -> str:
 
 def dashboard_key(recorder: Recorder) -> str | None:
     """The session's API key when the dashboard API reports it needs one
-    (`/auth/status`); None when it needs none, since every route then answers
+    (`/v1/auth/status`); None when it needs none, since every route then answers
     without one."""
-    status = http(recorder, "GET", f"{api_url(recorder)}/auth/status").json()
+    status = http(recorder, "GET", f"{api_url(recorder)}/v1/auth/status").json()
     return recorder.api_key if status["api_key_required"] else None
 
 
@@ -744,7 +748,7 @@ def deployed_workflow_id(api: Api, workspace: Path) -> str:
     name = workflow_name(workflow_dir(workspace))
     config = yaml.safe_load((workspace / "workflow_group.yaml").read_text())
     workflow_id = config["workflows"][name]["workflow_id"]
-    workflows = api.get("/workflows").json()
+    workflows = api.get("/v1/workflows").json()
     names = {workflow["id"]: workflow["name"] for workflow in workflows}
     assert names.get(workflow_id) == name, (
         f"the dashboard does not list {workflow_id} as {name}: {workflows}"

@@ -17,7 +17,7 @@ export const createApi = (
 /** Resolves once `<url><path>` answers 200, polling until `timeout_ms` passes. */
 export async function until_answers(
   url: string,
-  path: '/healthz' | '/readyz',
+  path: '/v1/healthz' | '/v1/readyz',
   timeout_ms = READY_TIMEOUT_MS
 ): Promise<void> {
   const deadline = Date.now() + timeout_ms;
@@ -32,4 +32,4 @@ export async function until_answers(
 }
 
 /** Resolves once the API at `url` is ready: its database migrated and answering. */
-export const until_ready = (url: string) => until_answers(url, '/readyz');
+export const until_ready = (url: string) => until_answers(url, '/v1/readyz');

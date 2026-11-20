@@ -24,10 +24,13 @@ const apiOrigin = new URL(apiBaseUrl).origin;
 export const WORKFLOW: WorkflowSummary = {
   id: '44444444-4444-4444-8444-444444444401',
   name: 'Local Fraud Screen',
-  file_count: 5,
+  workflow_group_id: '55555555-5555-4555-8555-555555555501',
   created_at: '2026-07-01T12:00:00.000Z',
   updated_at: '2026-07-01T12:00:00.000Z',
 };
+
+/** Where the API serves WORKFLOW's requests, metrics, monitoring, prompts, scaling and governance. */
+export const WORKFLOW_API = `/v1/workflow-groups/${WORKFLOW.workflow_group_id}/workflows/${WORKFLOW.id}`;
 
 export async function expectPath(page: Page, expected: string): Promise<void> {
   await expect.poll(() => new URL(page.url()).pathname).toBe(expected);
@@ -50,7 +53,7 @@ export async function stubWorkflowsList(
   page: Page,
   workflows: readonly WorkflowSummary[]
 ): Promise<void> {
-  await routePath(page, '/workflows', (route) => fulfillJson(route, workflows));
+  await routePath(page, '/v1/workflows', (route) => fulfillJson(route, workflows));
 }
 
 /** The range the dashboard asked for, as the API echoes it. */
@@ -67,7 +70,7 @@ function runRatePer(url: URL): RunRatePer {
 
 /** The fleet rollup the overview rows read spend from, answered empty. */
 export async function stubFleetSpend(page: Page): Promise<void> {
-  await routePath(page, '/resources/overview', (route, url) =>
+  await routePath(page, '/v1/resources/overview', (route, url) =>
     fulfillJson(route, {
       kpis: [],
       resources: [],
@@ -105,10 +108,10 @@ export async function stubWorkflowDashboard(
   workflow: WorkflowSummary,
   { kpis_fail = false }: WorkflowDashboardOptions = {}
 ): Promise<void> {
-  const base = `/workflows/${workflow.id}`;
+  const api = `/v1/workflow-groups/${workflow.workflow_group_id}/workflows/${workflow.id}`;
 
-  await routePath(page, base, (route) => fulfillJson(route, workflow));
-  await routePath(page, `${base}/metrics/kpis`, (route, url) =>
+  await routePath(page, `/v1/workflows/${workflow.id}`, (route) => fulfillJson(route, workflow));
+  await routePath(page, `${api}/metrics/kpis`, (route, url) =>
     kpis_fail
       ? failJson(route, 'Could not read cost totals')
       : fulfillJson(route, {
@@ -120,7 +123,7 @@ export async function stubWorkflowDashboard(
           run_rate_per: runRatePer(url),
         } satisfies MetricsKpis)
   );
-  await routePath(page, `${base}/metrics/timeseries`, (route, url) =>
+  await routePath(page, `${api}/metrics/timeseries`, (route, url) =>
     fulfillJson(route, {
       workflow_id: workflow.id,
       ...requestedRange(url),
@@ -128,7 +131,7 @@ export async function stubWorkflowDashboard(
       points: [],
     } satisfies MetricsTimeseries)
   );
-  await routePath(page, `${base}/metrics/blocks`, (route, url) =>
+  await routePath(page, `${api}/metrics/blocks`, (route, url) =>
     fulfillJson(route, {
       workflow_id: workflow.id,
       ...requestedRange(url),
@@ -136,7 +139,7 @@ export async function stubWorkflowDashboard(
       blocks: [],
     } satisfies MetricsBlocks)
   );
-  await routePath(page, `${base}/metrics/distribution`, (route, url) =>
+  await routePath(page, `${api}/metrics/distribution`, (route, url) =>
     fulfillJson(route, {
       workflow_id: workflow.id,
       metric: (url.searchParams.get('metric') as DistributionMetric | null) ?? 'cost_per_request',
@@ -152,7 +155,7 @@ export async function stubWorkflowDashboard(
       buckets: [],
     } satisfies MetricsDistribution)
   );
-  await routePath(page, `${base}/requests`, (route, url) =>
+  await routePath(page, `${api}/requests`, (route, url) =>
     fulfillJson(route, { ...requestedRange(url), total: 0, items: [] } satisfies RequestList)
   );
 }

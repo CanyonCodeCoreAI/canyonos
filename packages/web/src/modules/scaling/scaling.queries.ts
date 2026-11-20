@@ -11,7 +11,8 @@ import type {
 } from '@canyonos/api/scaling';
 
 import { toast } from '@repo/ui/shadcn/sonner';
-import { apiCall, canyonosAuthApi } from '@/api';
+import { apiCall } from '@/api';
+import { groupWorkflowApi } from '@/modules/workflows/workflows.queries';
 import {
   dashboardPollInterval,
   workflowQueryKeys,
@@ -39,8 +40,10 @@ export function scalingErrorMessage(
 export const scalingQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.scaling(workflow_id),
-    queryFn: () =>
-      apiCall<ScalingResponse>(() => canyonosAuthApi.workflows[workflow_id]!.scaling.get()),
+    queryFn: ({ client }) =>
+      apiCall<ScalingResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.scaling.get()
+      ),
     retry: false,
   });
 
@@ -48,9 +51,9 @@ export const scalingQueryOptions = (workflow_id: string) =>
 export const scalingAgentsQueryOptions = (workflow_id: string) =>
   queryOptions({
     queryKey: workflowQueryKeys.scalingAgents(workflow_id),
-    queryFn: () =>
-      apiCall<ScalingAgentsResponse>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.scaling.agents.get()
+    queryFn: ({ client }) =>
+      apiCall<ScalingAgentsResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.scaling.agents.get()
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -65,8 +68,10 @@ function useInvalidateScaling(workflow_id: string) {
 export function useSaveScalingPolicy(workflow_id: string) {
   const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
-    mutationFn: (policy: ScalingPolicy) =>
-      apiCall<ScalingPolicy>(() => canyonosAuthApi.workflows[workflow_id]!.scaling.put(policy)),
+    mutationFn: (policy: ScalingPolicy, { client }) =>
+      apiCall<ScalingPolicy>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.scaling.put(policy)
+      ),
     // Toasted here: the re-read remounts the card, so a callback on the call site never runs.
     onSuccess: () => {
       toast.success(
@@ -81,9 +86,9 @@ export function useSaveScalingPolicy(workflow_id: string) {
 export function useDeleteScalingPolicy(workflow_id: string) {
   const invalidate = useInvalidateScaling(workflow_id);
   return useMutation({
-    mutationFn: () =>
-      apiCall<ScalingDeleteResponse>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.scaling.delete()
+    mutationFn: (_: void, { client }) =>
+      apiCall<ScalingDeleteResponse>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.scaling.delete()
       ),
     onSuccess: () => {
       toast.success(

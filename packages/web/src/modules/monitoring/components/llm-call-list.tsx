@@ -93,7 +93,7 @@ function LlmCallRow({
             <RowTrigger data-testid={`llm-row-toggle-${index}`}>{call.model ?? '—'}</RowTrigger>
           </td>
           <td className="text-muted-foreground truncate px-2 py-2 align-top">
-            {call.agent ?? '—'}
+            {call.replica ?? '—'}
           </td>
           <td
             className={`truncate px-2 py-2 align-top break-words group-data-[state=open]/call:whitespace-pre-wrap ${call.failed ? 'text-red-500' : 'text-foreground'}`}

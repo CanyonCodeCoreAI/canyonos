@@ -41,8 +41,11 @@ export const spanDurationMs = (alias: string): string =>
 export const isModelSpan = (alias: string): string =>
   `(${alias}.attributes ? '${GEN_AI.REQUEST_MODEL}')`;
 
-// An identifier, never arithmetic, and absent on spans written before the receiver emitted it.
+// The agent's id: one per agent name in its workflow, the same whichever replica ran the span.
 export const spanAgentId = (alias: string): string => attrText(alias, GEN_AI.AGENT_ID);
+
+export const spanReplicaId = (alias: string): string =>
+  attrText(alias, RUNTIME_ATTRIBUTES.REPLICA_ID);
 
 // Agent spans are named `<Agent>.<method>`, so the agent is shared by every replica that ran it.
 export const spanAgentName = (alias: string): string => `split_part(${alias}.name, '.', 1)`;

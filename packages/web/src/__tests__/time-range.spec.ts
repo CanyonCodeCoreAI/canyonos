@@ -12,7 +12,12 @@ import type {
 import type { RequestList, RequestListItem, RequestTrace } from '@canyonos/api/requests';
 
 import { authenticate } from './helpers/auth';
-import { stubWorkflowDashboard, stubWorkflowsList, WORKFLOW } from './helpers/session';
+import {
+  stubWorkflowDashboard,
+  stubWorkflowsList,
+  WORKFLOW,
+  WORKFLOW_API,
+} from './helpers/session';
 import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
@@ -29,8 +34,7 @@ test.describe('the range control on the logs page', () => {
     const ranges: { from: string; to: string }[] = [];
     await page.route(
       (url) =>
-        url.origin === apiOrigin &&
-        url.pathname.startsWith(`/workflows/${WORKFLOW.id}/monitoring/logs`),
+        url.origin === apiOrigin && url.pathname.startsWith(`${WORKFLOW_API}/monitoring/logs`),
       (route) => {
         const url = new URL(route.request().url());
         const range = { from: url.searchParams.get('from')!, to: url.searchParams.get('to')! };
@@ -238,11 +242,11 @@ test.describe('the range control on the workflow overview', () => {
   }
 
   const countReads = (reads: readonly { path: string }[], path: string) =>
-    reads.filter((read) => read.path === `${OVERVIEW_PATH}${path}`).length;
+    reads.filter((read) => read.path === `${WORKFLOW_API}${path}`).length;
 
   async function stubOneRequest(page: Page): Promise<void> {
     await page.route(
-      (url) => url.origin === apiOrigin && url.pathname === `${OVERVIEW_PATH}/requests`,
+      (url) => url.origin === apiOrigin && url.pathname === `${WORKFLOW_API}/requests`,
       (route) => {
         const url = new URL(route.request().url());
         return fulfillJson(route, {
@@ -256,7 +260,7 @@ test.describe('the range control on the workflow overview', () => {
     await page.route(
       (url) =>
         url.origin === apiOrigin &&
-        url.pathname === `${OVERVIEW_PATH}/requests/${REQUEST.session_id}`,
+        url.pathname === `${WORKFLOW_API}/requests/${REQUEST.session_id}`,
       (route) => fulfillJson(route, TRACE)
     );
   }
@@ -325,14 +329,14 @@ test.describe('the range control on the workflow overview', () => {
 
     await expect(page.getByTestId('workflow-query-drawer')).toBeVisible();
     const trace_read = reads.find(
-      (read) => read.path === `${OVERVIEW_PATH}/requests/${REQUEST.session_id}`
+      (read) => read.path === `${WORKFLOW_API}/requests/${REQUEST.session_id}`
     );
     expect(trace_read?.to).toBe(CUSTOM.to);
   });
 
   test('the run rate is the figure and unit the API reports', async ({ page }) => {
     await page.route(
-      (url) => url.origin === apiOrigin && url.pathname === `${OVERVIEW_PATH}/metrics/kpis`,
+      (url) => url.origin === apiOrigin && url.pathname === `${WORKFLOW_API}/metrics/kpis`,
       (route) => {
         const url = new URL(route.request().url());
         return fulfillJson(route, {

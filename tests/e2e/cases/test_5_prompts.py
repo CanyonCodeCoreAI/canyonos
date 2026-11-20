@@ -42,7 +42,10 @@ def _versions_sent(recorder, deployed, redis_client, name):
 def _recorded_versions(deployed, request_id, name, since):
     """The prompt versions the dashboard recorded on the request's `name` blocks,
     looked up in the window from `since` to now."""
-    path = f"/workflows/{deployed.workflow_id}/requests/{request_id}"
+    path = (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}/requests/{request_id}"
+    )
 
     def blocks():
         window = urlencode(
@@ -64,7 +67,10 @@ def _recorded_versions(deployed, request_id, name, since):
 
 
 def test_live_prompt_version_reaches_the_model_call(recorder, deployed):
-    base = f"/workflows/{deployed.workflow_id}/prompts"
+    base = (
+        f"/v1/workflow-groups/{deployed.workflow_group_id}"
+        f"/workflows/{deployed.workflow_id}/prompts"
+    )
     redis_client = store(recorder, deployed)
     prompts = deployed.api.get(base).json()
     assert prompts, "the port declares the prompts trait but lists no prompts"

@@ -18,7 +18,7 @@ async function expectPath(page: Page, expected: string): Promise<void> {
 
 async function mockWorkflowsList(page: Page, workflows: WorkflowSummary[]): Promise<void> {
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/workflows',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/workflows',
     (route) =>
       route.request().method() === 'GET' ? fulfillJson(route, workflows) : route.continue()
   );
@@ -27,7 +27,7 @@ async function mockWorkflowsList(page: Page, workflows: WorkflowSummary[]): Prom
 /** The range-scoped rollup the rows read their spend figures from. */
 async function mockFleetSpend(page: Page, workflows: FleetWorkflow[]): Promise<void> {
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/resources/overview',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/resources/overview',
     (route) =>
       route.request().method() === 'GET'
         ? fulfillJson(route, {
@@ -60,7 +60,7 @@ function workflowFixture(id: string, name: string): WorkflowSummary {
   return {
     id,
     name,
-    file_count: 5,
+    workflow_group_id: null,
     created_at: '2026-07-01T12:00:00.000Z',
     updated_at: '2026-07-01T12:00:00.000Z',
   };
@@ -151,7 +151,7 @@ test('the row still reads when the spend rollup fails', async ({ page }) => {
   await authenticate(page);
   await mockWorkflowsList(page, [workflowFixture(WORKFLOW_A, 'Alpha')]);
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/resources/overview',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/resources/overview',
     (route) => route.fulfill({ status: 500, body: '{}' })
   );
 

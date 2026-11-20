@@ -175,7 +175,7 @@ def test_only_the_global_controller_gets_the_key_hash(recorder, deployed):
 def test_status_json_counts_every_replica(recorder, deployed):
     def settled():
         call = canyonos(recorder, ["status", "--json"], cwd=deployed.dir)
-        agents = call.json()["agents"] or {}
+        agents = {agent["name"]: agent for agent in call.json()["agents"] or []}
         wrong = {
             name: agents.get(name)
             for name in deployed.agents

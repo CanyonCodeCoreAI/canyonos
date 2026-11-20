@@ -19,6 +19,7 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
@@ -26,7 +27,7 @@ import type { ApiErrorBody } from './helpers/workflows';
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WORKFLOW_PATH = `/workflows/${WORKFLOW.id}`;
 const STATUS_PATH = `${WORKFLOW_PATH}/status`;
-const MONITORING_PATH = `/workflows/${WORKFLOW.id}/monitoring`;
+const MONITORING_API = `${WORKFLOW_API}/monitoring`;
 const ENDPOINT_URL = 'http://203.0.113.7:8080/fraud/fraud_workflow/main';
 const STATUS_URL = 'http://203.0.113.7:8080/status';
 const RANGE = { from: '2026-10-07T00:00:00.000Z', to: '2026-10-08T00:00:00.000Z' };
@@ -102,15 +103,15 @@ async function openStatus(page: Page, stub: StatusStub = {}): Promise<void> {
   await stubFleetSpend(page);
 
   const handlers: Record<string, Handler> = {
-    [`${MONITORING_PATH}/endpoint`]: stub.endpoint ?? ((route) => fulfillJson(route, ENDPOINT)),
-    [`${MONITORING_PATH}/replicas`]:
+    [`${MONITORING_API}/endpoint`]: stub.endpoint ?? ((route) => fulfillJson(route, ENDPOINT)),
+    [`${MONITORING_API}/replicas`]:
       stub.replicas ??
       ((route) =>
         fulfillJson(route, {
           workflow_id: WORKFLOW.id,
           replicas: REPLICAS,
         } satisfies MonitoringReplicasResponse)),
-    [`${MONITORING_PATH}/errors/summary`]: (route) => fulfillJson(route, ERROR_SUMMARY),
+    [`${MONITORING_API}/errors/summary`]: (route) => fulfillJson(route, ERROR_SUMMARY),
   };
   await page.route(
     (url) => url.origin === apiOrigin && url.pathname in handlers,
@@ -141,7 +142,7 @@ const STILL_RUNNING =
 async function stubDelete(page: Page, handler: Handler): Promise<string[]> {
   const deletes: string[] = [];
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === WORKFLOW_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === `${WORKFLOW_API}/history`,
     (route) => {
       if (route.request().method() !== 'DELETE') return route.fallback();
       deletes.push(route.request().url());

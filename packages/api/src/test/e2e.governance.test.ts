@@ -14,7 +14,7 @@ import { config } from '@core/env';
 
 import { publish_spend, PUBLISH_SPEND_FAILED } from '../modules/governance/governance.publisher';
 import { for_each_registered_workflow } from '../modules/registry/registry.service';
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import {
   read_desired_replicas,
   read_governance_config,
@@ -122,15 +122,14 @@ async function seed_review_spend(workflow_id: string, label: string): Promise<vo
   });
 }
 
-const MERGE_RULES: AgentRules = {
-  requires: ['TestRunnerAgent', 'Workflow'],
-  spend: { rules: [{ above_usd: 5, action: { kind: 'switch_model', model: 'gpt-5.5-mini' } }] },
+const MERGE_SPEND: NonNullable<AgentRules['spend']> = {
+  rules: [{ above_usd: 5, action: { kind: 'switch_model', model: 'gpt-5.5-mini' } }],
 };
 
 describe('workflow governance', () => {
   beforeEach(reset_controller);
 
-  test('reports each agent up, down, unknown or stopped and the requirements it misses', async () => {
+  test('reports each agent up, down, unknown or stopped and, by agent_id, the agents it requires and misses', async () => {
     const { headers, workflow_id } = await governed_workflow();
     await seed_scaling_agents([
       ...AGENTS.map((name) => sampled(name, 2)),
@@ -138,17 +137,22 @@ describe('workflow governance', () => {
       { ...sampled('Parked'), desired: 0 },
     ]);
 
-    const res = await api.workflows[workflow_id]!.governance.get({ $headers: headers });
+    const res = await group_workflow(workflow_id).governance.get({ $headers: headers });
 
     expect(res.error).toBeNull();
     const agents = res.data!.agents;
     expect(by_name(agents, 'Workflow').status).toBe('up');
     expect(by_name(agents, 'TestRunnerAgent').status).toBe('down');
-    expect(by_name(agents, 'MergeAgent').unmet_requires).toEqual(['TestRunnerAgent']);
+    const runner_id = Bun.randomUUIDv5('TestRunnerAgent', workflow_id);
+    expect(by_name(agents, 'MergeAgent')).toMatchObject({
+      rules: { requires: [runner_id] },
+      unmet_requires: [runner_id],
+    });
     expect(by_name(agents, 'Workflow').unmet_requires).toEqual([]);
     expect(by_name(agents, 'Idle').status).toBe('unknown');
     expect(by_name(agents, 'Parked').status).toBe('stopped');
     expect(by_name(agents, 'Workflow')).toMatchObject({
+      agent_id: Bun.randomUUIDv5('Workflow', workflow_id),
       replicas_running: 2,
       replicas_expected: 2,
       desired_replicas: 2,
@@ -158,7 +162,7 @@ describe('workflow governance', () => {
     });
   });
 
-  test('saving one agent rules stores them, stamps since, and leaves the others alone', async () => {
+  test('saving one agent rules stores them, requires by name, stamps since, and leaves the others alone', async () => {
     const { workflow_id } = await governed_workflow();
     await seed_governance({
       agents: {
@@ -166,10 +170,15 @@ describe('workflow governance', () => {
         Workflow: { requires: ['ReviewAgent'] },
       },
     });
-    const governance = api.workflows[workflow_id]!.governance;
+    const merge_id = Bun.randomUUIDv5('MergeAgent', workflow_id);
+    const merge = group_workflow(workflow_id).governance.agents[merge_id]!;
+    const requires = [
+      Bun.randomUUIDv5('TestRunnerAgent', workflow_id),
+      Bun.randomUUIDv5('Workflow', workflow_id),
+    ];
 
     const before = Date.now();
-    const saved = await governance.agents.MergeAgent!.put(MERGE_RULES, { headers: key_headers });
+    const saved = await merge.put({ requires, spend: MERGE_SPEND }, { headers: key_headers });
 
     expect(saved.error).toBeNull();
     const stored = (await read_governance_config()) as {
@@ -177,16 +186,19 @@ describe('workflow governance', () => {
     };
     expect(stored.agents.Workflow).toEqual({ requires: ['ReviewAgent'] });
     expect(stored.agents.MergeAgent!.requires).toEqual(['TestRunnerAgent', 'Workflow']);
-    expect(stored.agents.MergeAgent!.spend!.rules).toEqual(MERGE_RULES.spend!.rules);
+    expect(stored.agents.MergeAgent!.spend!.rules).toEqual(MERGE_SPEND.rules);
     const since = stored.agents.MergeAgent!.spend!.since;
     expect(Date.parse(since)).toBeGreaterThanOrEqual(before - 1000);
-    expect(by_name(saved.data!.agents, 'MergeAgent').rules.spend?.since).toBe(since);
+    expect(by_name(saved.data!.agents, 'MergeAgent').rules).toEqual({
+      requires,
+      spend: { since, rules: MERGE_SPEND.rules },
+    });
 
     const raised: AgentRules = {
       requires: [],
       spend: { rules: [{ above_usd: 50, action: { kind: 'deny' } }] },
     };
-    const again = await governance.agents.MergeAgent!.put(raised, { headers: key_headers });
+    const again = await merge.put(raised, { headers: key_headers });
 
     expect(again.error).toBeNull();
     const restored = (await read_governance_config()) as typeof stored;
@@ -196,12 +208,14 @@ describe('workflow governance', () => {
     });
   });
 
-  test('an unknown required agent or a model the agent may not use is 422 and nothing is stored', async () => {
+  test('a required id of no agent, a model the agent may not use, an id of no agent or a name for an id is 422 and nothing is stored', async () => {
     const { workflow_id } = await governed_workflow();
     await seed_llms(LLMS);
-    const merge = api.workflows[workflow_id]!.governance.agents.MergeAgent!;
+    const agents = group_workflow(workflow_id).governance.agents;
+    const merge = agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!;
+    const ghost_id = Bun.randomUUIDv5('Ghost', workflow_id);
 
-    const ghost = await merge.put({ requires: ['Ghost'], spend: null }, { headers: key_headers });
+    const ghost = await merge.put({ requires: [ghost_id], spend: null }, { headers: key_headers });
     const forbidden = await merge.put(
       {
         requires: [],
@@ -209,17 +223,26 @@ describe('workflow governance', () => {
       },
       { headers: key_headers }
     );
-    const unknown_agent = await api.workflows[workflow_id]!.governance.agents.Ghost!.put(
+    const unknown_agent = await agents[ghost_id]!.put(
+      { requires: [], spend: null },
+      { headers: key_headers }
+    );
+    const named = await agents.MergeAgent!.put(
       { requires: [], spend: null },
       { headers: key_headers }
     );
 
     expect(ghost.error?.status as number).toBe(422);
-    expect(error_code(ghost)).toBe('governance.unknown_agent');
+    expect(ghost.error?.value).toMatchObject({
+      error: 'governance.unknown_agent',
+      message: `No agent of this workflow has the id ${ghost_id}`,
+    });
     expect(forbidden.error?.status as number).toBe(422);
     expect(error_code(forbidden)).toBe('governance.model_not_allowed');
     expect(unknown_agent.error?.status as number).toBe(422);
     expect(error_code(unknown_agent)).toBe('governance.unknown_agent');
+    expect(named.error?.status as number).toBe(422);
+    expect(error_code(named)).toBe('validation_error');
     expect(await read_governance_config()).toEqual({
       agents: { MergeAgent: { requires: ['TestRunnerAgent'] } },
     });
@@ -228,10 +251,10 @@ describe('workflow governance', () => {
   test('lists the models each agent may use and accepts one of them', async () => {
     const { headers, workflow_id } = await governed_workflow();
     await seed_llms(LLMS);
-    const governance = api.workflows[workflow_id]!.governance;
+    const governance = group_workflow(workflow_id).governance;
 
     const listed = await governance.get({ $headers: headers });
-    const saved = await governance.agents.MergeAgent!.put(
+    const saved = await governance.agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!.put(
       {
         requires: [],
         spend: {
@@ -253,7 +276,7 @@ describe('workflow governance', () => {
     const { headers, workflow_id } = await governed_workflow();
     await seed_llms({ ...LLMS, unnamed: { agents: { MergeAgent: null } } });
 
-    const listed = await api.workflows[workflow_id]!.governance.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).governance.get({ $headers: headers });
 
     expect(listed.error).toBeNull();
     expect([...by_name(listed.data!.agents, 'MergeAgent').models!].sort()).toEqual([
@@ -264,8 +287,9 @@ describe('workflow governance', () => {
 
   test('with no llms.yaml published any model is accepted and models is null', async () => {
     const { workflow_id } = await governed_workflow();
+    const merge_id = Bun.randomUUIDv5('MergeAgent', workflow_id);
 
-    const saved = await api.workflows[workflow_id]!.governance.agents.MergeAgent!.put(
+    const saved = await group_workflow(workflow_id).governance.agents[merge_id]!.put(
       {
         requires: [],
         spend: { rules: [{ above_usd: 1, action: { kind: 'switch_model', model: 'anything' } }] },
@@ -281,8 +305,9 @@ describe('workflow governance', () => {
     const { workflow_id } = await governed_workflow();
     const since = SPEND_SINCE;
     await seed_review_spend(workflow_id, 'gov-spend');
+    const review_id = Bun.randomUUIDv5('ReviewAgent', workflow_id);
 
-    const saved = await api.workflows[workflow_id]!.governance.agents.ReviewAgent!.put(
+    const saved = await group_workflow(workflow_id).governance.agents[review_id]!.put(
       {
         requires: [],
         spend: {
@@ -305,7 +330,7 @@ describe('workflow governance', () => {
     expect(await read_governance_spend()).toEqual({ ReviewAgent: 7 });
   });
 
-  test('edges are the distinct caller to callee agent pairs, never an agent calling itself', async () => {
+  test('edges are the distinct caller to callee agent_id pairs, never an agent calling itself', async () => {
     const { headers, workflow_id } = await governed_workflow();
     const now = BigInt(Date.now()) * 1_000_000n;
     const span = (span_id: string, name: string, parent_span_id?: string) =>
@@ -322,15 +347,21 @@ describe('workflow governance', () => {
     await span('gov-edge-self', 'Workflow.helper', 'gov-edge-root');
     await span('gov-edge-ghost', 'Ghost.run', 'gov-edge-root');
 
-    const res = await api.workflows[workflow_id]!.governance.get({ $headers: headers });
+    const res = await group_workflow(workflow_id).governance.get({ $headers: headers });
 
     expect(res.error).toBeNull();
-    expect(res.data!.edges).toEqual([{ source: 'Workflow', target: 'MergeAgent' }]);
+    expect(res.data!.edges).toEqual([
+      {
+        source: Bun.randomUUIDv5('Workflow', workflow_id),
+        target: Bun.randomUUIDv5('MergeAgent', workflow_id),
+      },
+    ]);
   });
 
   test('stopping an agent sets its desired replicas to 0 and starting it restores the spec count', async () => {
     const { workflow_id } = await governed_workflow();
-    const stopped = api.workflows[workflow_id]!.governance.agents.TestRunnerAgent!.stopped;
+    const runner_id = Bun.randomUUIDv5('TestRunnerAgent', workflow_id);
+    const stopped = group_workflow(workflow_id).governance.agents[runner_id]!.stopped;
 
     const stop = await stopped.put({ stopped: true }, { headers: key_headers });
 
@@ -350,8 +381,9 @@ describe('workflow governance', () => {
 
   test('stopping an agent the controller does not run is 422 governance.unknown_agent', async () => {
     const { workflow_id } = await governed_workflow();
+    const ghost_id = Bun.randomUUIDv5('Ghost', workflow_id);
 
-    const res = await api.workflows[workflow_id]!.governance.agents.Ghost!.stopped.put(
+    const res = await group_workflow(workflow_id).governance.agents[ghost_id]!.stopped.put(
       { stopped: true },
       { headers: key_headers }
     );
@@ -369,7 +401,7 @@ describe('workflow governance', () => {
     ]);
     await seed_scaling(JSON.stringify({ workflows: { app: { min_replicas: 1 } } }));
 
-    const res = await api.workflows[workflow_id]!.governance.get({ $headers: headers });
+    const res = await group_workflow(workflow_id).governance.get({ $headers: headers });
 
     expect(by_name(res.data!.agents, 'app.Workflow').scaling_policy_present).toBe(true);
     // An agent of the workflow group's other workflow is that workflow's, not this one's.
@@ -380,7 +412,7 @@ describe('workflow governance', () => {
     const { headers, workflow_id } = await governed_workflow();
     await seed_governance({ agents: { MergeAgent: { requires: 'TestRunnerAgent' } } });
 
-    const res = await api.workflows[workflow_id]!.governance.get({ $headers: headers });
+    const res = await group_workflow(workflow_id).governance.get({ $headers: headers });
 
     expect(res.error?.status as number).toBe(502);
     expect(error_code(res)).toBe('governance.config_invalid');
@@ -390,12 +422,13 @@ describe('workflow governance', () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
     const { workflow_id } = await create_test_workflow({ name: 'Idle Workflow' });
-    const governance = api.workflows[workflow_id]!.governance;
+    const governance = group_workflow(workflow_id).governance;
+    const merge = governance.agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!;
 
     const responses = await Promise.all([
       governance.get({ $headers: headers }),
-      governance.agents.MergeAgent!.put({ requires: [], spend: null }, { headers: key_headers }),
-      governance.agents.MergeAgent!.stopped.put({ stopped: true }, { headers: key_headers }),
+      merge.put({ requires: [], spend: null }, { headers: key_headers }),
+      merge.stopped.put({ stopped: true }, { headers: key_headers }),
     ]);
 
     for (const res of responses) {
@@ -406,12 +439,13 @@ describe('workflow governance', () => {
 
   test('a caller with no API key is rejected on every route', async () => {
     const { workflow_id } = await governed_workflow();
-    const governance = api.workflows[workflow_id]!.governance;
+    const governance = group_workflow(workflow_id).governance;
+    const merge = governance.agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!;
 
     const responses = await Promise.all([
       governance.get(),
-      governance.agents.MergeAgent!.put({ requires: [], spend: null }),
-      governance.agents.MergeAgent!.stopped.put({ stopped: true }),
+      merge.put({ requires: [], spend: null }),
+      merge.stopped.put({ stopped: true }),
     ]);
 
     for (const res of responses) {

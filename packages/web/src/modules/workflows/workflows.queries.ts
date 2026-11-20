@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 
 import type {
   DistributionMetric,
@@ -49,9 +50,20 @@ export type RequestsQuery = RangeQuery &
 export function workflowDetailQueryOptions(workflow_id: string) {
   return queryOptions({
     queryKey: workflowQueryKeys.detail(workflow_id),
-    queryFn: () => apiCall<WorkflowSummary>(() => canyonosAuthApi.workflows[workflow_id]!.get()),
+    queryFn: () => apiCall<WorkflowSummary>(() => canyonosAuthApi.v1.workflows[workflow_id]!.get()),
     retry: false,
   });
+}
+
+/** The workflow's API routes under its workflow group, read from the workflow's cached summary. */
+export async function groupWorkflowApi(client: QueryClient, workflow_id: string) {
+  const { workflow_group_id } = await client.ensureQueryData(
+    workflowDetailQueryOptions(workflow_id)
+  );
+  // A workflow in no group has none: the API refuses the `null` it is sent.
+  const api = canyonosAuthApi.v1['workflow-groups'][workflow_group_id!]!.workflows[workflow_id]!;
+  // Wrapped, since awaiting an Eden client calls its `then` as an HTTP method.
+  return { api };
 }
 
 export function useDeleteWorkflow(workflow_id: string) {
@@ -59,7 +71,9 @@ export function useDeleteWorkflow(workflow_id: string) {
 
   return useMutation({
     mutationFn: () =>
-      apiCall<WorkflowDeleted>(() => canyonosAuthApi.workflows[workflow_id]!.delete()),
+      apiCall<WorkflowDeleted>(async () =>
+        (await groupWorkflowApi(query_client, workflow_id)).api.history.delete()
+      ),
     onSuccess: () =>
       query_client.invalidateQueries({ queryKey: workflowQueryKeys.all, exact: true }),
   });
@@ -68,7 +82,7 @@ export function useDeleteWorkflow(workflow_id: string) {
 export const workflowsQueryOptions = () =>
   queryOptions({
     queryKey: workflowQueryKeys.all,
-    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.workflows.get()),
+    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.v1.workflows.get()),
     retry: false,
   });
 
@@ -77,7 +91,7 @@ export const fleetOverviewQueryOptions = (query: RangeQuery) =>
     queryKey: ['resources', 'overview', query],
     queryFn: () =>
       apiCall<FleetOverview>(() =>
-        canyonosAuthApi.resources.overview.get({ $query: toParams(query) })
+        canyonosAuthApi.v1.resources.overview.get({ $query: toParams(query) })
       ),
     retry: false,
   });
@@ -85,9 +99,11 @@ export const fleetOverviewQueryOptions = (query: RangeQuery) =>
 export const workflowKpisQueryOptions = (workflow_id: string, query: RangeQuery) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'kpis', query],
-    queryFn: () =>
-      apiCall<MetricsKpis>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.metrics.kpis.get({ $query: toParams(query) })
+    queryFn: ({ client }) =>
+      apiCall<MetricsKpis>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.metrics.kpis.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -96,9 +112,11 @@ export const workflowKpisQueryOptions = (workflow_id: string, query: RangeQuery)
 export const workflowBlocksQueryOptions = (workflow_id: string, query: RangeQuery) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'blocks', query],
-    queryFn: () =>
-      apiCall<MetricsBlocks>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.metrics.blocks.get({ $query: toParams(query) })
+    queryFn: ({ client }) =>
+      apiCall<MetricsBlocks>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.metrics.blocks.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -107,9 +125,11 @@ export const workflowBlocksQueryOptions = (workflow_id: string, query: RangeQuer
 export const workflowTimeseriesQueryOptions = (workflow_id: string, query: BucketedQuery) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'timeseries', query],
-    queryFn: () =>
-      apiCall<MetricsTimeseries>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.metrics.timeseries.get({ $query: toParams(query) })
+    queryFn: ({ client }) =>
+      apiCall<MetricsTimeseries>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.metrics.timeseries.get({
+          $query: toParams(query),
+        })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -122,9 +142,9 @@ export const workflowAgentQueryOptions = (
 ) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'agents', agent_id, query],
-    queryFn: () =>
-      apiCall<MetricsAgentDetails>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.metrics.agents[agent_id]!.get({
+    queryFn: ({ client }) =>
+      apiCall<MetricsAgentDetails>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.metrics.agents[agent_id]!.get({
           $query: toParams(query),
         })
       ),
@@ -134,9 +154,9 @@ export const workflowAgentQueryOptions = (
 export const workflowDistributionQueryOptions = (workflow_id: string, query: DistributionQuery) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'distribution', query],
-    queryFn: () =>
-      apiCall<MetricsDistribution>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.metrics.distribution.get({
+    queryFn: ({ client }) =>
+      apiCall<MetricsDistribution>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.metrics.distribution.get({
           $query: toParams(query),
         })
       ),
@@ -147,9 +167,9 @@ export const workflowDistributionQueryOptions = (workflow_id: string, query: Dis
 export const workflowRequestsQueryOptions = (workflow_id: string, query: RequestsQuery) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'requests', query],
-    queryFn: () =>
-      apiCall<RequestList>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.requests.get({ $query: toParams(query) })
+    queryFn: ({ client }) =>
+      apiCall<RequestList>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.requests.get({ $query: toParams(query) })
       ),
     retry: false,
     refetchInterval: dashboardPollInterval,
@@ -162,9 +182,9 @@ export const workflowRequestTraceQueryOptions = (
 ) =>
   queryOptions({
     queryKey: ['workflows', workflow_id, 'requests', session_id, 'trace', query],
-    queryFn: () =>
-      apiCall<RequestTrace>(() =>
-        canyonosAuthApi.workflows[workflow_id]!.requests[session_id]!.get({
+    queryFn: ({ client }) =>
+      apiCall<RequestTrace>(async () =>
+        (await groupWorkflowApi(client, workflow_id)).api.requests[session_id]!.get({
           $query: toParams(query),
         })
       ),

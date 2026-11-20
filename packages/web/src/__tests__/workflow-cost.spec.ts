@@ -23,6 +23,8 @@ import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WORKFLOW_ID = '33333333-3333-4333-8333-333333333301';
+const WORKFLOW_GROUP_ID = '66666666-6666-4666-8666-666666666601';
+const WORKFLOW_API = `/v1/workflow-groups/${WORKFLOW_GROUP_ID}/workflows/${WORKFLOW_ID}`;
 
 // The dashboard is mocked at the network layer rather than seeded: the shared Docker database
 // accumulates runtime rows across e2e runs, so asserting on ambient totals would be flaky.
@@ -622,7 +624,7 @@ const RUNNING_REQUESTS: RequestList = {
 const WORKFLOW: WorkflowSummary = {
   id: WORKFLOW_ID,
   name: 'Request Router',
-  file_count: 5,
+  workflow_group_id: WORKFLOW_GROUP_ID,
   created_at: '2026-07-01T12:00:00.000Z',
   updated_at: '2026-07-01T12:00:00.000Z',
 };
@@ -654,11 +656,11 @@ interface MetricsMocks {
   readonly agents?: Record<string, MetricsAgentDetails>;
 }
 
-const AGENTS_PATH = `/workflows/${WORKFLOW_ID}/metrics/agents/`;
-const BLOCKS_PATH = `/workflows/${WORKFLOW_ID}/metrics/blocks`;
-const TIMESERIES_PATH = `/workflows/${WORKFLOW_ID}/metrics/timeseries`;
-const KPIS_PATH = `/workflows/${WORKFLOW_ID}/metrics/kpis`;
-const DISTRIBUTION_PATH = `/workflows/${WORKFLOW_ID}/metrics/distribution`;
+const AGENTS_PATH = `${WORKFLOW_API}/metrics/agents/`;
+const BLOCKS_PATH = `${WORKFLOW_API}/metrics/blocks`;
+const TIMESERIES_PATH = `${WORKFLOW_API}/metrics/timeseries`;
+const KPIS_PATH = `${WORKFLOW_API}/metrics/kpis`;
+const DISTRIBUTION_PATH = `${WORKFLOW_API}/metrics/distribution`;
 
 // The sections the dashboard shows above and beside the listing. Refresh has to move all of them, or
 // the screen still reports two different reads.
@@ -679,7 +681,7 @@ const countCalls = (calls: readonly string[], path: string) =>
 async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise<string[]> {
   const calls: string[] = [];
   const routes: readonly [string, (url: URL) => unknown, boolean][] = [
-    [`/workflows/${WORKFLOW_ID}`, (): WorkflowSummary => WORKFLOW, false],
+    [`/v1/workflows/${WORKFLOW_ID}`, (): WorkflowSummary => WORKFLOW, false],
     [
       KPIS_PATH,
       (url): MetricsKpis => {
@@ -707,7 +709,7 @@ async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise
       false,
     ],
     [
-      `/workflows/${WORKFLOW_ID}/requests`,
+      `${WORKFLOW_API}/requests`,
       (url): RequestList => ({ ...(options.requests ?? REQUESTS), ...requestedRange(url) }),
       false,
     ],
@@ -728,7 +730,7 @@ async function mockWorkflowCost(page: Page, options: MetricsMocks = {}): Promise
   await page.route(
     (url) =>
       url.origin === apiOrigin &&
-      url.pathname === `/workflows/${WORKFLOW_ID}/requests/${REQUEST_TRACE.session_id}`,
+      url.pathname === `${WORKFLOW_API}/requests/${REQUEST_TRACE.session_id}`,
     (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       const url = new URL(route.request().url());
@@ -1235,9 +1237,7 @@ test.describe('spend tabs', () => {
       await page.getByTestId('workflow-window-toggle').getByRole('radio', { name: label }).click();
       await expect
         .poll(() => {
-          const call = calls
-            .filter((item) => item.startsWith(`/workflows/${WORKFLOW_ID}/requests?`))
-            .at(-1);
+          const call = calls.filter((item) => item.startsWith(`${WORKFLOW_API}/requests?`)).at(-1);
           return call ? requestedFixtureRange(new URL(call, 'http://localhost')) : null;
         })
         .toBe(window);
@@ -1710,7 +1710,7 @@ test.describe('queries table ordering and paging', () => {
   async function trackListing(page: Page): Promise<URLSearchParams[]> {
     const asked: URLSearchParams[] = [];
     await page.route(
-      (url) => url.origin === apiOrigin && url.pathname === `/workflows/${WORKFLOW_ID}/requests`,
+      (url) => url.origin === apiOrigin && url.pathname === `${WORKFLOW_API}/requests`,
       (route) => {
         asked.push(new URL(route.request().url()).searchParams);
         return fulfillJson(route, FULL_PAGE);
@@ -1740,7 +1740,7 @@ test.describe('queries table ordering and paging', () => {
     await page.route(
       (url) =>
         url.origin === apiOrigin &&
-        url.pathname === `/workflows/${WORKFLOW_ID}/requests` &&
+        url.pathname === `${WORKFLOW_API}/requests` &&
         // The table's page, not the single dearest query the highlights read from the same route.
         url.searchParams.get('limit') === '5',
       async (route) => {
@@ -2274,7 +2274,7 @@ test.describe('block metrics drawer', () => {
 const TRACE_DRAWER = 'workflow-query-drawer';
 const PROSE_OUTPUT = 'The invoice totals $1,240.\n\nTwo line items need a second look.';
 const SESSION_ID = REQUEST_TRACE.session_id;
-const TRACE_PATH = `/workflows/${WORKFLOW_ID}/requests/${SESSION_ID}`;
+const TRACE_PATH = `${WORKFLOW_API}/requests/${SESSION_ID}`;
 // The row is the cell block; the button inside it is what opens the drawer and what focus returns
 // to, so the two are addressed separately.
 const QUERY_ROW = `workflow-query-${SESSION_ID}`;
@@ -2358,10 +2358,10 @@ test.describe('query trace drawer', () => {
       const params = new URL(call, 'http://localhost').searchParams;
       return `${params.get('from')}/${params.get('to')}`;
     };
-    const trace_path = `/workflows/${WORKFLOW_ID}/requests/${SESSION_ID}?`;
+    const trace_path = `${WORKFLOW_API}/requests/${SESSION_ID}?`;
     await expect.poll(() => calls.some((call) => call.startsWith(trace_path))).toBe(true);
     const listed = calls
-      .filter((call) => call.startsWith(`/workflows/${WORKFLOW_ID}/requests?`))
+      .filter((call) => call.startsWith(`${WORKFLOW_API}/requests?`))
       .map(rangeOf);
     expect(listed).toContain(rangeOf(calls.find((call) => call.startsWith(trace_path))!));
 
@@ -2571,7 +2571,7 @@ test.describe('queries day filter', () => {
   async function trackListing(page: Page, empty_day = false): Promise<URLSearchParams[]> {
     const asked: URLSearchParams[] = [];
     await page.route(
-      (url) => url.origin === apiOrigin && url.pathname === `/workflows/${WORKFLOW_ID}/requests`,
+      (url) => url.origin === apiOrigin && url.pathname === `${WORKFLOW_API}/requests`,
       (route) => {
         const params = new URL(route.request().url()).searchParams;
         asked.push(params);

@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { asc, eq, inArray } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import { WORKFLOW_GROUP_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
 import { prune_expired_metrics } from '@api/modules/telemetry/telemetry.retention';
 import { ROLLUP_NANOS } from '@api/modules/telemetry/telemetry.rollup';
 import { otelMetricRollups, otelMetrics } from '@api/modules/telemetry/telemetry.schema';
@@ -23,6 +24,7 @@ import type { OtlpExportFixture } from './telemetry-test.utils';
 setupE2ETests();
 
 const SCOPE = 'canyonos.test.metrics';
+const WORKFLOW_GROUP_ID = crypto.randomUUID();
 
 // `otel_metrics` is an append-only log with no natural key, so each test reads back only its own
 // rows through a service name no other test sends.
@@ -39,6 +41,7 @@ const ROLLUP_MERGE_SERVICE = 'otlp-rollup-merge';
 const ROLLUP_RETRY_SERVICE = 'otlp-rollup-retry';
 const RETENTION_SERVICE = 'otlp-retention';
 const RETENTION_REPEAT_SERVICE = 'otlp-retention-repeat';
+const FOREIGN_GROUP_SERVICE = 'otlp-metrics-foreign-group';
 
 // A rollup-aligned time within the raw retention, so the prune the API runs at startup never
 // reaches these rows; the nanosecond tail checks the stored precision.
@@ -70,8 +73,11 @@ const stored_metrics = (service_name: string) =>
  */
 async function ingest_beside_kept_gauge(service_name: string, skipped: OtlpExportFixture) {
   const response = await post_otlp(
-    '/v1/metrics',
-    encode_metrics_export(metrics_export(service_name, SCOPE, [skipped, KEPT_GAUGE]))
+    WORKFLOW_GROUP_ID,
+    'metrics',
+    encode_metrics_export(
+      metrics_export(WORKFLOW_GROUP_ID, service_name, SCOPE, [skipped, KEPT_GAUGE])
+    )
   );
   expect(response.status).toBe(200);
   return stored_metrics(service_name);
@@ -80,9 +86,10 @@ async function ingest_beside_kept_gauge(service_name: string, skipped: OtlpExpor
 describe('otlp metric ingest', () => {
   test('stores a gauge and a cumulative sum as long-form rows', async () => {
     const response = await post_otlp(
-      '/v1/metrics',
+      WORKFLOW_GROUP_ID,
+      'metrics',
       encode_metrics_export(
-        metrics_export(SHAPE_SERVICE, SCOPE, [
+        metrics_export(WORKFLOW_GROUP_ID, SHAPE_SERVICE, SCOPE, [
           {
             name: 'agent.queue.depth',
             unit: '{item}',
@@ -137,9 +144,10 @@ describe('otlp metric ingest', () => {
 
   test('a delta sum is stored apart from a cumulative one', async () => {
     const response = await post_otlp(
-      '/v1/metrics',
+      WORKFLOW_GROUP_ID,
+      'metrics',
       encode_metrics_export(
-        metrics_export(DELTA_SERVICE, SCOPE, [
+        metrics_export(WORKFLOW_GROUP_ID, DELTA_SERVICE, SCOPE, [
           {
             name: 'agent.errors',
             sum: {
@@ -204,8 +212,34 @@ describe('otlp metric ingest', () => {
     expect(rows.map((row) => row.metric_name)).toEqual(['agent.kept']);
   });
 
+  test("a resource with another workflow group's id, or none, is skipped and the answer is still empty", async () => {
+    const resource = (metric_name: string, attributes: readonly OtlpExportFixture[]) => ({
+      resource: { attributes: [attribute('service.name', FOREIGN_GROUP_SERVICE), ...attributes] },
+      scopeMetrics: [{ scope: { name: SCOPE }, metrics: [{ ...KEPT_GAUGE, name: metric_name }] }],
+    });
+    const response = await post_otlp(
+      WORKFLOW_GROUP_ID,
+      'metrics',
+      encode_metrics_export({
+        resourceMetrics: [
+          resource('agent.other_group', [
+            attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, crypto.randomUUID()),
+          ]),
+          resource('agent.no_group', []),
+          resource('agent.kept', [attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, WORKFLOW_GROUP_ID)]),
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+    expect((await stored_metrics(FOREIGN_GROUP_SERVICE)).map((row) => row.metric_name)).toEqual([
+      'agent.kept',
+    ]);
+  });
+
   test('an empty export is accepted with a zero-length protobuf body', async () => {
-    const response = await post_otlp('/v1/metrics', encode_metrics_export({}));
+    const response = await post_otlp(WORKFLOW_GROUP_ID, 'metrics', encode_metrics_export({}));
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(OTLP_CONTENT_TYPE);
@@ -214,7 +248,8 @@ describe('otlp metric ingest', () => {
 
   test('a payload that is not protobuf is rejected', async () => {
     const response = await post_otlp(
-      '/v1/metrics',
+      WORKFLOW_GROUP_ID,
+      'metrics',
       new TextEncoder().encode('not a protobuf export')
     );
 
@@ -241,9 +276,16 @@ async function ingest_cpu(
   resource_attributes: Record<string, string> = {}
 ): Promise<void> {
   const response = await post_otlp(
-    '/v1/metrics',
+    WORKFLOW_GROUP_ID,
+    'metrics',
     encode_metrics_export(
-      metrics_export(service_name, SCOPE, [gauge_at(points)], resource_attributes)
+      metrics_export(
+        WORKFLOW_GROUP_ID,
+        service_name,
+        SCOPE,
+        [gauge_at(points)],
+        resource_attributes
+      )
     )
   );
   expect(response.status).toBe(200);

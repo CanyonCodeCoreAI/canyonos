@@ -14,13 +14,15 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const GOVERNANCE_PATH = `/workflows/${WORKFLOW.id}/governance`;
-const AGENTS_PATH = `${GOVERNANCE_PATH}/agents/`;
+const GOVERNANCE_API = `${WORKFLOW_API}/governance`;
+const AGENTS_PATH = `${GOVERNANCE_API}/agents/`;
 const SAVED_TOAST = "Governance rules saved. They apply on the controller's next poll.";
 const NOT_RUNNING =
   'This workflow is not running, so its governance rules cannot be read. Deploy it, then retry.';
@@ -29,6 +31,7 @@ const SINCE = '2026-10-20T12:00:00.000Z';
 
 function agent(name: string, fields: Partial<GovernanceAgent> = {}): GovernanceAgent {
   return {
+    agent_id: `id-${name}`,
     name,
     replicas_running: 1,
     replicas_expected: 1,
@@ -53,7 +56,7 @@ const GOVERNANCE: GovernanceResponse = {
       replicas_expected: 2,
       desired_replicas: 2,
       rules: {
-        requires: ['TestRunnerAgent'],
+        requires: ['id-TestRunnerAgent'],
         spend: {
           since: SINCE,
           rules: [
@@ -70,9 +73,9 @@ const GOVERNANCE: GovernanceResponse = {
     }),
   ],
   edges: [
-    { source: 'Workflow', target: 'TestRunnerAgent' },
-    { source: 'Workflow', target: 'ReviewAgent' },
-    { source: 'Workflow', target: 'MergeAgent' },
+    { source: 'id-Workflow', target: 'id-TestRunnerAgent' },
+    { source: 'id-Workflow', target: 'id-ReviewAgent' },
+    { source: 'id-Workflow', target: 'id-MergeAgent' },
   ],
 };
 
@@ -97,7 +100,7 @@ async function stubGovernance(
 ): Promise<GovernanceStub> {
   const stub: GovernanceStub = { reads: 0, read_failure: null, writes: [], write_failure: null };
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === GOVERNANCE_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === GOVERNANCE_API,
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       stub.reads += 1;
@@ -121,7 +124,7 @@ async function stubGovernance(
   return stub;
 }
 
-const SCALING_PATH = `/workflows/${WORKFLOW.id}/scaling`;
+const SCALING_PATH = `${WORKFLOW_API}/scaling`;
 const SCALING_SAVED_TOAST =
   "Scaling policy saved. Agents pick it up on the controller's next poll.";
 
@@ -192,7 +195,7 @@ async function openGovernance(
 
 const screen = (page: Page) => page.getByTestId('governance-screen');
 const canvas = (page: Page) => page.getByTestId('governance-canvas');
-const node = (page: Page, name: string) => page.getByTestId(`governance-node-${name}`);
+const node = (page: Page, name: string) => page.getByTestId(`governance-node-id-${name}`);
 const drawer = (page: Page) => page.getByRole('dialog');
 const toast = (page: Page) => page.getByTestId('app-toast');
 
@@ -244,7 +247,7 @@ test('more than six agents called from one level wrap in rows of six below their
   const analysts = Array.from({ length: 12 }, (_, index) => `Analyst${index}`);
   await openGovernance(page, '', {
     agents: [agent('Workflow'), ...analysts.map((name) => agent(name))],
-    edges: analysts.map((target) => ({ source: 'Workflow', target })),
+    edges: analysts.map((name) => ({ source: 'id-Workflow', target: `id-${name}` })),
   });
 
   const caller = await box(page, 'Workflow');
@@ -295,8 +298,8 @@ async function cardsCrossed(page: Page, source: string, target: string): Promise
 test('a call out of a wrapped row never passes behind another card', async ({ page }) => {
   const analysts = Array.from({ length: 12 }, (_, index) => `Analyst${index}`);
   const calls = [
-    ...analysts.map((target) => ({ source: 'Workflow', target })),
-    { source: 'Analyst0', target: 'Summarizer' },
+    ...analysts.map((name) => ({ source: 'id-Workflow', target: `id-${name}` })),
+    { source: 'id-Analyst0', target: 'id-Summarizer' },
   ];
   await openGovernance(page, '', {
     agents: [agent('Workflow'), ...analysts.map((name) => agent(name)), agent('Summarizer')],
@@ -360,7 +363,7 @@ test('clicking a node opens its drawer through the URL, and closing it clears th
 
   await node(page, 'MergeAgent').click();
 
-  await expect.poll(() => new URL(page.url()).searchParams.get('agent')).toBe('MergeAgent');
+  await expect.poll(() => new URL(page.url()).searchParams.get('agent')).toBe('id-MergeAgent');
   await expect(drawer(page)).toBeVisible();
   await expect(drawer(page).getByRole('heading', { name: 'MergeAgent' })).toBeVisible();
 
@@ -372,7 +375,7 @@ test('clicking a node opens its drawer through the URL, and closing it clears th
 });
 
 test('the drawer opens over the canvas, inside its box', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
 
   await expect(screen(page).getByTestId('governance-drawer')).toBeVisible();
   const box = await canvas(page).boundingBox();
@@ -388,7 +391,7 @@ test('the drawer opens over the canvas, inside its box', async ({ page }) => {
 });
 
 test('clicking the canvas beside the drawer closes it', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
   const box = await canvas(page).boundingBox();
 
   await page.mouse.click((box?.x ?? 0) + 24, (box?.y ?? 0) + 24);
@@ -398,7 +401,7 @@ test('clicking the canvas beside the drawer closes it', async ({ page }) => {
 });
 
 test('the Close button closes the drawer and clears the URL', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
 
   await drawer(page).getByRole('button', { name: 'Close' }).click();
 
@@ -407,7 +410,7 @@ test('the Close button closes the drawer and clears the URL', async ({ page }) =
 });
 
 test('the drawer shows the stored rules and the spend against them', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
   const form = drawer(page);
 
   const requires = form.getByRole('toolbar', { name: 'Requires' });
@@ -443,7 +446,7 @@ test('the drawer shows the stored rules and the spend against them', async ({ pa
 
 test('the drawer takes half the canvas, so a spend rule reads on one line', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
 
   const box = await canvas(page).boundingBox();
   await expect
@@ -457,7 +460,7 @@ test('the drawer takes half the canvas, so a spend rule reads on one line', asyn
 
 test('a drawer opens with nothing unsaved, with or without spend rules', async ({ page }) => {
   for (const name of ['MergeAgent', 'TestRunnerAgent']) {
-    await openGovernance(page, `?agent=${name}`);
+    await openGovernance(page, `?agent=id-${name}`);
     await expect(drawer(page).getByRole('heading', { name })).toBeVisible();
     await expect(drawer(page).getByRole('status')).toHaveCount(0);
     await expect(drawer(page).getByRole('button', { name: 'Discard' })).toBeDisabled();
@@ -465,7 +468,7 @@ test('a drawer opens with nothing unsaved, with or without spend rules', async (
 });
 
 test('Discard after a failed save also clears its error', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=MergeAgent');
+  const stub = await openGovernance(page, '?agent=id-MergeAgent');
   stub.write_failure = (route) =>
     fulfillJson(
       route,
@@ -483,7 +486,7 @@ test('Discard after a failed save also clears its error', async ({ page }) => {
 });
 
 test('the poll note explains what a poll is, on keyboard focus too', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
 
   await drawer(page).getByRole('button', { name: 'About the poll' }).focus();
 
@@ -493,7 +496,7 @@ test('the poll note explains what a poll is, on keyboard focus too', async ({ pa
 });
 
 test('an edit is marked unsaved until Discard restores the stored rules', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
   const form = drawer(page);
   const threshold = form.getByTestId('governance-spend-rule').nth(0).getByLabel('Above USD');
 
@@ -508,7 +511,7 @@ test('an edit is marked unsaved until Discard restores the stored rules', async 
 });
 
 test('saving sends the edited rules and confirms', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=MergeAgent');
+  const stub = await openGovernance(page, '?agent=id-MergeAgent');
   const form = drawer(page);
   const rules = form.getByTestId('governance-spend-rule');
 
@@ -524,9 +527,9 @@ test('saving sends the edited rules and confirms', async ({ page }) => {
   await expect(toast(page)).toContainText(SAVED_TOAST);
   expect(stub.writes).toEqual([
     {
-      path: 'MergeAgent',
+      path: 'id-MergeAgent',
       body: {
-        requires: ['TestRunnerAgent', 'ReviewAgent'],
+        requires: ['id-TestRunnerAgent', 'id-ReviewAgent'],
         spend: {
           since: SINCE,
           rules: [
@@ -540,7 +543,7 @@ test('saving sends the edited rules and confirms', async ({ page }) => {
 });
 
 test('a rule can be added and the counter restarted from now', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=Workflow');
+  const stub = await openGovernance(page, '?agent=id-Workflow');
   const form = drawer(page);
 
   await form.getByRole('button', { name: 'Add rule' }).click();
@@ -550,7 +553,7 @@ test('a rule can be added and the counter restarted from now', async ({ page }) 
 
   await expect(toast(page)).toContainText(SAVED_TOAST);
   const [write] = stub.writes;
-  expect(write?.path).toBe('Workflow');
+  expect(write?.path).toBe('id-Workflow');
   const body = write?.body as { requires: string[]; spend: { since: string; rules: unknown[] } };
   expect(body.requires).toEqual([]);
   expect(body.spend.rules).toEqual([{ above_usd: 3, action: { kind: 'deny' } }]);
@@ -558,7 +561,7 @@ test('a rule can be added and the counter restarted from now', async ({ page }) 
 });
 
 test('with no llms.yaml a switch_model rule takes any model id typed in', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=Workflow', {
+  const stub = await openGovernance(page, '?agent=id-Workflow', {
     agents: [agent('Workflow', { models: null })],
     edges: [],
   });
@@ -580,7 +583,7 @@ test('with no llms.yaml a switch_model rule takes any model id typed in', async 
 });
 
 test('Stop agent sends stopped and warns that a scaling policy restarts it', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=TestRunnerAgent');
+  const stub = await openGovernance(page, '?agent=id-TestRunnerAgent');
   const form = drawer(page);
 
   await expect(form.getByTestId('governance-stop-note')).toHaveText(
@@ -589,18 +592,18 @@ test('Stop agent sends stopped and warns that a scaling policy restarts it', asy
   await form.getByRole('button', { name: 'Stop agent' }).click();
 
   await expect(toast(page)).toContainText('TestRunnerAgent stopped.');
-  expect(stub.writes).toEqual([{ path: 'TestRunnerAgent/stopped', body: { stopped: true } }]);
+  expect(stub.writes).toEqual([{ path: 'id-TestRunnerAgent/stopped', body: { stopped: true } }]);
 });
 
 test('Stop agent carries no scaling note when no policy is set', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
 
   await expect(drawer(page).getByRole('button', { name: 'Stop agent' })).toBeVisible();
   await expect(drawer(page).getByTestId('governance-stop-note')).toHaveCount(0);
 });
 
 test('a 422 on save shows the API message in the drawer', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=MergeAgent');
+  const stub = await openGovernance(page, '?agent=id-MergeAgent');
   stub.write_failure = (route) =>
     fulfillJson(
       route,
@@ -647,8 +650,8 @@ const STOPPED_AND_WAITING: GovernanceResponse = {
       scaling_policy_present: true,
     }),
     agent('MergeAgent', {
-      unmet_requires: ['TestRunnerAgent'],
-      rules: { requires: ['TestRunnerAgent'], spend: null },
+      unmet_requires: ['id-TestRunnerAgent'],
+      rules: { requires: ['id-TestRunnerAgent'], spend: null },
     }),
     agent('ReviewAgent', { status: 'unknown', replicas_running: 0 }),
   ],
@@ -680,18 +683,18 @@ test('a node whose required agent is not up warns that it requires it', async ({
 test('Start agent on a stopped agent sends stopped false, with no scaling note', async ({
   page,
 }) => {
-  const stub = await openGovernance(page, '?agent=TestRunnerAgent', STOPPED_AND_WAITING);
+  const stub = await openGovernance(page, '?agent=id-TestRunnerAgent', STOPPED_AND_WAITING);
   const form = drawer(page);
 
   await expect(form.getByTestId('governance-stop-note')).toHaveCount(0);
   await form.getByRole('button', { name: 'Start agent' }).click();
 
   await expect(toast(page)).toContainText('TestRunnerAgent started.');
-  expect(stub.writes).toEqual([{ path: 'TestRunnerAgent/stopped', body: { stopped: false } }]);
+  expect(stub.writes).toEqual([{ path: 'id-TestRunnerAgent/stopped', body: { stopped: false } }]);
 });
 
 test('the drawer names the required agents that are not up', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent', STOPPED_AND_WAITING);
+  await openGovernance(page, '?agent=id-MergeAgent', STOPPED_AND_WAITING);
 
   await expect(drawer(page).getByTestId('governance-unmet')).toHaveText(
     'Not up right now: TestRunnerAgent. Calls to this agent are refused.'
@@ -699,7 +702,7 @@ test('the drawer names the required agents that are not up', async ({ page }) =>
 });
 
 test('a failed poll keeps the canvas and the open drawer, and says so', async ({ page }) => {
-  const stub = await openGovernance(page, '?agent=MergeAgent');
+  const stub = await openGovernance(page, '?agent=id-MergeAgent');
   const threshold = drawer(page)
     .getByTestId('governance-spend-rule')
     .nth(0)
@@ -805,10 +808,10 @@ test('saving the policy in the sheet goes through PUT and updates the line', asy
 });
 
 test('opening the policy closes an open agent drawer', async ({ page }) => {
-  await openGovernance(page, '?agent=MergeAgent');
+  await openGovernance(page, '?agent=id-MergeAgent');
   await expect(page.getByTestId('governance-drawer')).toBeVisible();
 
-  await page.goto(`${GOVERNANCE_PATH}?agent=MergeAgent&panel=policy`);
+  await page.goto(`${GOVERNANCE_PATH}?agent=id-MergeAgent&panel=policy`);
 
   await expect(policySheet(page)).toBeVisible();
   await expect(page.getByTestId('governance-drawer')).toHaveCount(0);

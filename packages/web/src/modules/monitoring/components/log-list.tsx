@@ -27,7 +27,7 @@ interface LogListProps {
   readonly workflow_id: string;
   readonly range: RangeSelection;
   readonly errors_only?: boolean;
-  readonly agent?: string;
+  readonly agent_id?: string;
   readonly replica?: string;
   readonly empty_message: string;
   readonly error_message: string;
@@ -38,14 +38,14 @@ export function LogList({
   workflow_id,
   range,
   errors_only = false,
-  agent,
+  agent_id,
   replica,
   empty_message,
   error_message,
   test_id,
 }: LogListProps) {
   const query = useQuery(
-    logsQueryOptions(workflow_id, { range, limit: LOG_LIMIT, errors_only, agent, replica })
+    logsQueryOptions(workflow_id, { range, limit: LOG_LIMIT, errors_only, agent_id, replica })
   );
 
   if (query.error) {

@@ -301,7 +301,7 @@ function WorkflowRow({ workflow }: { readonly workflow: WorkflowSummary }) {
 export function WorkflowNavigation() {
   const workflows_query = useQuery({
     queryKey: workflowQueryKeys.all,
-    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.workflows.get()),
+    queryFn: () => apiCall<WorkflowSummary[]>(() => canyonosAuthApi.v1.workflows.get()),
     retry: false,
   });
 

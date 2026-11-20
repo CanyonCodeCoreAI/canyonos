@@ -121,7 +121,7 @@ def agent_status(recorder, deployed, agent: str) -> tuple[int, int, str | None]:
     """`agent`'s desired and running replica counts and its launch error, from one
     `canyonos status --json`."""
     call = canyonos(recorder, ["status", "--json"], cwd=deployed.dir)
-    spec = call.json()["agents"][agent]
+    [spec] = [listed for listed in call.json()["agents"] if listed["name"] == agent]
     return spec["desired_replicas"], spec["running_replicas"], spec["launch_error"]
 
 

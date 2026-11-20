@@ -18,7 +18,7 @@ import {
 } from '@api/modules/registry/registry.service';
 import { config } from '@core/env';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import {
   reset_controller,
   seed_running_workflow,
@@ -64,7 +64,7 @@ describe('Redis-backed routes use the workflow port', () => {
     const { workflow_id } = await create_test_workflow({ name: 'Default Port' });
     await seed_running_workflow(workflow_id, NO_PROMPTS);
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([]);
@@ -79,7 +79,7 @@ describe('Redis-backed routes use the workflow port', () => {
       .set({ redis_host: CONTAINER_REDIS_HOST, redis_port: config.canyonos.redisPort })
       .where(eq(workflows.id, workflow_id));
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual([]);
@@ -90,7 +90,7 @@ describe('Redis-backed routes use the workflow port', () => {
     await seed_running_workflow(workflow_id, NO_PROMPTS);
     await seed_workflows_raw('{not json');
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(TEST_API_KEY) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(TEST_API_KEY) });
 
     expect(res.error?.status as number).toBe(404);
     expect(error_code(res)).toBe('registry.workflow_not_running');
@@ -105,7 +105,7 @@ describe('Redis-backed routes use the workflow port', () => {
       .set({ redis_port: CLOSED_PORT })
       .where(eq(workflows.id, workflow_id));
 
-    const res = await api.workflows[workflow_id]!.prompts.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).prompts.get({ $headers: bearer(token) });
 
     expect(res.error?.status as number).toBe(502);
     expect(error_code(res)).toBe('registry.controller_unreachable');
@@ -152,12 +152,12 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
       expect(stored?.redis_password).toBeNull();
       expect(await read_workflow(workflow_group_id)).toBeUndefined();
 
-      const read = await api.workflows[workflow_id]!.prompts.get({
+      const read = await group_workflow(workflow_id, workflow_group_id).prompts.get({
         $headers: bearer(TEST_API_KEY),
       });
       expect(read.error).toBeNull();
       expect(read.data).toEqual([]);
-      const by_group = await api.workflows[workflow_group_id]!.prompts.get({
+      const by_group = await group_workflow(workflow_group_id).prompts.get({
         $headers: bearer(TEST_API_KEY),
       });
       expect(by_group.error?.status as number).toBe(404);
@@ -172,12 +172,11 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
 
   test('a workflow whose group the operator does not list is not running in the cluster', async () => {
     const workflow_id = await run_controller('elsewhere');
-    await db
-      .insert(workflows)
-      .values({ id: workflow_id, name: 'elsewhere', workflow_group_id: crypto.randomUUID() });
+    const workflow_group_id = crypto.randomUUID();
+    await db.insert(workflows).values({ id: workflow_id, name: 'elsewhere', workflow_group_id });
 
     await listing(crypto.randomUUID(), async () => {
-      const read = await api.workflows[workflow_id]!.prompts.get({
+      const read = await group_workflow(workflow_id, workflow_group_id).prompts.get({
         $headers: bearer(TEST_API_KEY),
       });
       expect(read.error?.status as number).toBe(404);

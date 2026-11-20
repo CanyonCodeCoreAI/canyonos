@@ -6,7 +6,7 @@
 The containers get only its SHA-256 hash. Without a key nothing is checked.
 
 Also this machine's control key, which the CLI makes itself and keeps in
-`~/.canyonos/control_key`: the CanyonOS API's `/v1` routes, which run and stop each
+`~/.canyonos/control_key`: the CanyonOS API's `/v1/workflow-groups` routes, which run and stop each
 workflow group's Global Controller, answer only a call that sends it, whatever the
 API key. The API gets only its hash."""
 

@@ -10,15 +10,9 @@ import { RedisClientTlsSchema, WorkflowGroupRegistrationSchema } from '../regist
 
 export const WorkflowGroupParams = z.object({ workflow_group_id: z.string().uuid() });
 
-// Not `.` or `..`, and no leading dot at all: `.canyonos` holds the API's own records.
-const WorkflowName = z
-  .string()
-  .regex(/^(?![.])[^/]+$/, 'a workflow name has no `/` and does not start with `.`');
-
-export const WorkflowParams = WorkflowGroupParams.extend({ name: WorkflowName });
-
-// An agent, or one of its replicas by ID; it reaches the controller as one argument, never a shell.
-export const AgentParams = WorkflowGroupParams.extend({ name: z.string().min(1).max(200) });
+// An agent's ID, or one of its replicas' ID; a replica's reaches the controller as one argument,
+// never a shell.
+export const AgentParams = WorkflowGroupParams.extend({ agent_id: z.string().min(1).max(200) });
 
 export const TailQuery = z.object({
   tail: z
@@ -39,8 +33,9 @@ export const WorkflowGroupBody = z.object({
   config: z.string(),
   // The `.env` beside it, null for none.
   env: z.string().nullable(),
-  // Every workflow of the workflow group; the uploaded ones it leaves out are removed.
-  workflows: z.array(WorkflowName).nullable().optional(),
+  // Every workflow of the workflow group, by workflow_id; the uploaded ones it leaves out are
+  // removed.
+  workflows: z.array(z.string().uuid()).nullable().optional(),
   // The SHA-256 of the deploy's API key, "" for none; a change restarts the deploy.
   api_key_hash: z.string().nullable().optional(),
 });
@@ -76,6 +71,9 @@ export const EndpointSchema = z.object({
 });
 
 export const AgentStatusSchema = z.object({
+  // One per agent name in its workflow; null when the deploy publishes no workflow of that name.
+  agent_id: z.string().nullable(),
+  name: z.string(),
   desired_replicas: z.number().int(),
   running_replicas: z.number().int(),
   launch_error: z.string().nullable(),
@@ -128,7 +126,7 @@ export const WorkflowGroupStatusSchema = z.object({
   error_code: z.enum(DEPLOY_ERRORS).nullable(),
   root_cause: z.string().nullable(),
   endpoint: EndpointSchema.nullable(),
-  agents: z.record(AgentStatusSchema).nullable(),
+  agents: z.array(AgentStatusSchema).nullable(),
   machine_errors: z.record(z.string()).nullable(),
   generation: z.number().int(),
   applied_generation: z.number().int(),
@@ -154,6 +152,7 @@ export const FingerprintsSchema = z.object({ code: z.string(), config: z.string(
 
 // `test_query` is its `config/test_query.txt`, null when it has none.
 export const WorkflowSchema = z.object({
+  workflow_id: z.string(),
   name: z.string(),
   fingerprints: FingerprintsSchema,
   test_query: z.string().nullable(),

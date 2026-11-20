@@ -34,7 +34,16 @@ def run_logs(follow=True, tail="200", agent=None):
         )
 
     if agent:
-        replica_logs = deployed_logs(state, agent, tail)
+        # The API takes an agent by its ID, which the status lists; anything else is a replica's.
+        agent_id = next(
+            (
+                listed["agent_id"]
+                for listed in status.get("agents") or []
+                if listed["name"] == agent
+            ),
+            None,
+        )
+        replica_logs = deployed_logs(state, agent_id or agent, tail)
         ui.json_result["logs"] = replica_logs
         if not replica_logs:
             ui.warn(f"{agent} has no running replicas.")

@@ -15,8 +15,8 @@ export const SpendRuleSchema = z.object({
 });
 
 /**
- * One agent's rules. `requires` names agents that must have a replica up; `spend.since` is when
- * the counter starts, stamped by whoever saves the rules without one.
+ * One agent's rules. `requires` lists, by agent_id, the agents that must have a replica up;
+ * `spend.since` is when the counter starts, stamped by whoever saves the rules without one.
  */
 export const AgentRulesSchema = z.object({
   requires: z.array(z.string().min(1)),
@@ -42,6 +42,8 @@ export const AgentSpendSchema = z.object({
 });
 
 export const GovernanceAgentSchema = z.object({
+  /** One per agent name in its workflow; it addresses the agent in this API. */
+  agent_id: z.string(),
   name: z.string(),
   replicas_running: z.number().int().nonnegative(),
   /** The count the agent's spec configures. */
@@ -49,7 +51,7 @@ export const GovernanceAgentSchema = z.object({
   /** The count the controller is converging to: the spec's until scaling or a stop moves it. */
   desired_replicas: z.number().int().nonnegative(),
   status: AgentStatusSchema,
-  /** The required agents that are not up right now. */
+  /** The agent_ids of the required agents that are not up right now. */
   unmet_requires: z.array(z.string()),
   /**
    * The model ids llms.yaml lets this agent use, the choices for a switch_model action; null when
@@ -63,7 +65,7 @@ export const GovernanceAgentSchema = z.object({
   scaling_policy_present: z.boolean(),
 });
 
-/** One agent calling another, seen in the last week of traces. */
+/** One agent calling another, each by its agent_id, seen in the last week of traces. */
 export const GovernanceEdgeSchema = z.object({ source: z.string(), target: z.string() });
 
 export const GovernanceResponseSchema = z.object({

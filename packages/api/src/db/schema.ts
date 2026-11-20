@@ -6,20 +6,12 @@ import {
   index,
   integer,
   jsonb,
-  pgEnum,
   pgTable,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-
-export const file_component_kind = pgEnum('file_component_kind', [
-  'workflow',
-  'agent',
-  'tool',
-  'other',
-]);
 
 // snake_case column keys so `$inferSelect` matches the snake_case API payload directly — the repos
 // select the exact shape without a rename mapper.
@@ -45,9 +37,10 @@ export const workflows = pgTable('workflows', {
     .defaultNow(),
 });
 
-/** A workflow as its last upload left it: each file's SHA-256 by `<workflow>/<path>`, and its
- * `config/test_query.txt`. */
+/** A workflow as its last upload left it: its name, each file's SHA-256 by `<name>/<path>`, and
+ * its `config/test_query.txt`. */
 export interface StoredWorkflow {
+  name: string;
   digests: Record<string, string>;
   test_query: string | null;
 }
@@ -133,51 +126,5 @@ export const systemPrompts = pgTable(
       table.name,
       table.version
     ),
-  ]
-);
-
-// Content-addressed blob registry: `content_hash` is the sha256 of the bytes, which live in the
-// storage provider, not here. One row per distinct content; files reference it.
-export const fileBlobs = pgTable('file_blobs', {
-  content_hash: text('content_hash').primaryKey(),
-  byte_size: integer('byte_size').notNull(),
-  created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
-    .notNull()
-    .defaultNow(),
-});
-
-// Generic file store. `workflow_id` is nullable so non-workflow files fit later. Bytes are addressed
-// through `content_hash`.
-export const files = pgTable(
-  'files',
-  {
-    id: uuid('id')
-      .primaryKey()
-      .$defaultFn(() => Bun.randomUUIDv7()),
-    workflow_id: uuid('workflow_id').references(() => workflows.id, { onDelete: 'cascade' }),
-    path: text('path').notNull(),
-    name: text('name').notNull(),
-    content_hash: text('content_hash')
-      .notNull()
-      .references(() => fileBlobs.content_hash),
-    language: text('language').notNull(),
-    byte_size: integer('byte_size').notNull(),
-    component_kind: file_component_kind('component_kind').notNull(),
-    created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-    updated_at: timestamp('updated_at', { withTimezone: true, mode: 'string' })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    index('idx_files_workflow').on(table.workflow_id),
-    index('idx_files_workflow_component_path').on(
-      table.workflow_id,
-      table.component_kind,
-      table.path
-    ),
-    index('idx_files_content_hash').on(table.content_hash),
-    uniqueIndex('uq_files_workflow_path').on(table.workflow_id, table.path),
   ]
 );

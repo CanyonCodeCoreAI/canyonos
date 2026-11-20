@@ -152,8 +152,8 @@ const v1 = (
     headers: { ...control, ...init.headers },
   });
 
-const put_workflow = (workflow: string, archive: Uint8Array<ArrayBuffer>) =>
-  v1(`/${workflow_group_id}/workflows/${workflow}`, {
+const put_workflow = (workflow_id: string, archive: Uint8Array<ArrayBuffer>) =>
+  v1(`/${workflow_group_id}/workflows/${workflow_id}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/gzip' },
     body: archive,
@@ -189,13 +189,16 @@ async function status_when(done: (current: WorkflowGroupStatus) => boolean, time
 
 let redis_port = 0;
 let config_text = '';
+// The workflow_id the uploaded workflow_group.yaml gives the workflow named helloworld.
+const helloworld_id = crypto.randomUUID();
 
 beforeAll(() => {
   redis_port = free_port();
   config_text =
     `workflow_group_id: ${workflow_group_id}\n` +
     'target: docker\nprovider: local\nlogs: false\n' +
-    `redis:\n  port: ${redis_port}\n`;
+    `redis:\n  port: ${redis_port}\n` +
+    `workflows:\n  helloworld:\n    path: helloworld\n    workflow_id: ${helloworld_id}\n`;
 });
 
 afterAll(async () => {
@@ -303,7 +306,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
   test('the routes that need a running deploy are 409 before it starts', async () => {
     const [health, agent_logs, log] = await Promise.all([
       group().health.get({ $headers: control }),
-      group().logs.agents['helloworld.Workflow']!.get({
+      group().logs.agents[Bun.randomUUIDv5('helloworld.Workflow', helloworld_id)]!.get({
         $headers: control,
         $query: { tail: '10' },
       }),
@@ -323,12 +326,16 @@ describe('the workflow groups API drives the Global Controller container', () =>
   test(
     'an upload that is no archive, or fails the check, is 400 and changes nothing',
     async () => {
-      const bad_archive = await put_workflow('helloworld', new Uint8Array([1, 2, 3, 4]));
+      const unlisted = await put_workflow(crypto.randomUUID(), new Uint8Array([1, 2, 3, 4]));
+      expect(unlisted.status).toBe(404);
+      expect(await unlisted.json()).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
+
+      const bad_archive = await put_workflow(helloworld_id, new Uint8Array([1, 2, 3, 4]));
       expect(bad_archive.status).toBe(400);
       expect(await bad_archive.json()).toMatchObject({ error: 'workflow_groups.bad_archive' });
 
       const invalid = await put_workflow(
-        'helloworld',
+        helloworld_id,
         await gzip_tar({ 'config/workflow_config.yaml': 'agents: 5\n' })
       );
       const refusal = (await invalid.json()) as { error: string; findings: string[] };
@@ -337,7 +344,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
       expect(refusal.findings.length).toBeGreaterThan(0);
       expect(refusal.findings.join('\n')).toContain('helloworld/');
 
-      const no_manifest = await put_workflow('helloworld', await gzip_tar({ 'README.md': 'hi' }));
+      const no_manifest = await put_workflow(helloworld_id, await gzip_tar({ 'README.md': 'hi' }));
       expect(no_manifest.status).toBe(400);
       expect(await no_manifest.json()).toMatchObject({
         error: 'workflow_groups.workflow_invalid',
@@ -352,7 +359,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
   test(
     'a valid upload is listed with its fingerprints and starts the deploy, whose progress and log show',
     async () => {
-      const uploaded = await put_workflow('helloworld', await gzip_tar(await helloworld_files()));
+      const uploaded = await put_workflow(helloworld_id, await gzip_tar(await helloworld_files()));
       expect(uploaded.status).toBe(200);
       expect(await uploaded.json()).toEqual({ generation: 2, warnings: [] });
 
@@ -360,6 +367,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
       expect(listed.data).toEqual({
         workflows: [
           {
+            workflow_id: helloworld_id,
             name: 'helloworld',
             fingerprints: {
               code: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -369,10 +377,6 @@ describe('the workflow groups API drives the Global Controller container', () =>
           },
         ],
       });
-      const workflow = await group().workflows.helloworld!.get({ $headers: control });
-      expect(workflow.data).toEqual(listed.data!.workflows[0]!);
-      const unknown = await group().workflows.nothing!.get({ $headers: control });
-      expect(refusal(unknown)).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
 
       const started = await status_when(
         ({ applied_generation }) => applied_generation >= 2,
@@ -391,7 +395,9 @@ describe('the workflow groups API drives the Global Controller container', () =>
   );
 
   test('DELETE stops the deploy and forgets the upload', async () => {
-    const unknown = await group().workflows.nothing!.delete(undefined, { headers: control });
+    const unknown = await group().workflows[crypto.randomUUID()]!.delete(undefined, {
+      headers: control,
+    });
     expect(refusal(unknown)).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
 
     const deleted = await group().delete(undefined, { headers: control });
@@ -592,7 +598,7 @@ describe('canyonos deploy registers the workflow group with the dashboard, and t
     // Its identity names the registered workflow; no agent spec is published yet.
     await seed_running_workflow(workflow_id, { prompts: {} });
     const published = await group_status_when(group_id, ({ errors }) => errors.length === 0);
-    expect(published).toMatchObject({ endpoint: null, agents: {}, machine_errors: {} });
+    expect(published).toMatchObject({ endpoint: null, agents: [], machine_errors: {} });
 
     const route = {
       workflow: 'app',
@@ -616,10 +622,22 @@ describe('canyonos deploy registers the workflow group with the dashboard, and t
     const running = await group_status_when(group_id, ({ endpoint }) => endpoint !== null);
     expect(running).toMatchObject({
       endpoint: { public_host: '203.0.113.7', api_port: 8080, routes: [route] },
-      agents: {
-        'app.Alpha': { desired_replicas: 2, running_replicas: 1, launch_error: null },
-        'app.Beta': { desired_replicas: 0, running_replicas: 0, launch_error: 'no such image' },
-      },
+      agents: [
+        {
+          agent_id: Bun.randomUUIDv5('app.Alpha', workflow_id),
+          name: 'app.Alpha',
+          desired_replicas: 2,
+          running_replicas: 1,
+          launch_error: null,
+        },
+        {
+          agent_id: Bun.randomUUIDv5('app.Beta', workflow_id),
+          name: 'app.Beta',
+          desired_replicas: 0,
+          running_replicas: 0,
+          launch_error: 'no such image',
+        },
+      ],
       machine_errors: { 't3.small': 'quota' },
       errors: [],
     });

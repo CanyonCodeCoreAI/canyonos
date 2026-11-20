@@ -42,14 +42,14 @@ export default defineConfig({
       command: process.env.CI
         ? 'cd ../.. && PORT=3000 API_URL=http://localhost:3000 bun --filter @canyonos/api start'
         : 'cd ../.. && bun run docker:up && bun --filter @canyonos/api dev:server',
-      url: `${apiBaseUrl}/readyz`,
+      url: `${apiBaseUrl}/v1/readyz`,
       timeout: 120_000,
       reuseExistingServer: false,
       env: {
         ...process.env,
         CANYONOS_API_KEY_HASH: hashApiKey(TEST_API_KEY),
         SEED_DEV_DATA: 'true',
-        // The dashboard runs no workflow group; with Docker disabled /readyz waits on the
+        // The dashboard runs no workflow group; with Docker disabled /v1/readyz waits on the
         // database alone, on a machine with a Docker engine or without one.
         DOCKER_SOCKET: '',
       },
@@ -58,7 +58,7 @@ export default defineConfig({
       command: process.env.CI
         ? 'cd ../.. && bun --filter @canyonos/api start'
         : 'cd ../.. && bun --filter @canyonos/api dev:server',
-      url: `${noAuthApiBaseUrl}/readyz`,
+      url: `${noAuthApiBaseUrl}/v1/readyz`,
       timeout: 120_000,
       reuseExistingServer: false,
       env: {

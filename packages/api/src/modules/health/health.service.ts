@@ -32,7 +32,7 @@ async function check_docker(): Promise<DockerCheck> {
 }
 
 /** Ready once the database is migrated and answers. Docker is reported, never waited on: an
- * API without it still serves the dashboard, and its /v1 routes answer 503 `docker.unavailable`
+ * API without it still serves the dashboard, and its /v1/workflow-groups routes answer 503 `docker.unavailable`
  * themselves. */
 export async function readiness(): Promise<Readiness> {
   const [database, docker_check] = await Promise.all([check_database(), check_docker()]);

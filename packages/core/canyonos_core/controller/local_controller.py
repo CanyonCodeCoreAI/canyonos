@@ -268,7 +268,7 @@ class LocalController(object):
         if self.logs_enabled:
             self._log_handler = LogHandler(
                 self.redis,
-                agent_id=self.replica_id,
+                replica_id=self.replica_id,
                 agent_name=log_source_name(self.agent_name),
                 address=self._my_address,
             )
@@ -963,7 +963,7 @@ class LocalController(object):
             if log_entry and getattr(self, "logs_enabled", True):
                 entry = build_failure_entry(
                     error,
-                    agent_id=self.replica_id,
+                    replica_id=self.replica_id,
                     agent_name=log_source_name(self.agent_name),
                     address=self._my_address,
                     error_name=error_name,

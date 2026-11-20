@@ -1,26 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { notFound } from '@core/errors';
-
 import { workflows_repo } from './workflows.repo';
-
-export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { workflow_not_found } from './workflows.service';
 
 /**
- * Shared `resolve` for every workflow-scoped route (workflows, requests, metrics).
- * The API key covers the whole install, so every verified caller reaches every workflow and only
- * a workflow that does not exist is a 404. It authenticates nothing itself: `apiKeyGuard` has
- * checked the key before the request got here.
+ * Shared `resolve` for every dashboard route under a workflow group's workflow (requests,
+ * metrics, monitoring and the rest): 404 unless the workflow exists and runs in that workflow
+ * group. `apiKeyGuard` has checked the key before the request got here.
  */
-export async function resolve_workflow_access({
+export async function resolve_group_workflow_access({
   params,
 }: {
-  params: { workflow_id?: string } & Record<string, unknown>;
+  params: { workflow_group_id: string; workflow_id: string };
 }): Promise<{ workflow_id: string }> {
-  const workflow_id = params?.workflow_id;
-  if (!workflow_id || !UUID_RE.test(workflow_id) || !(await workflows_repo.exists(workflow_id))) {
-    throw notFound('workflows.not_found', `Workflow "${workflow_id}" was not found`);
+  const { workflow_group_id, workflow_id } = params;
+  if ((await workflows_repo.workflow_group_id(workflow_id)) !== workflow_group_id.toLowerCase()) {
+    throw workflow_not_found(workflow_id);
   }
   return { workflow_id };
 }

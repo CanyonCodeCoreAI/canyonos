@@ -16,6 +16,7 @@ import {
 } from './workflow-groups.apply';
 import { core_answer } from './workflow-groups.core';
 import { unknown_workflow, unknown_workflow_group } from './workflow-groups.errors';
+import { workflow_ids } from './workflow-groups.kubernetes';
 import { with_group_lock } from './workflow-groups.lock';
 import { workflow_groups_repo } from './workflow-groups.repo';
 import { target } from './workflow-groups.target';
@@ -52,8 +53,13 @@ const PutWorkflowRefusalSchema = z.object({
   warnings: z.array(z.string()).default([]),
 });
 
-function workflow_view(name: string, workflow: StoredWorkflow): Workflow {
-  return { name, fingerprints: fingerprints(workflow.digests), test_query: workflow.test_query };
+function workflow_view(workflow_id: string, workflow: StoredWorkflow): Workflow {
+  return {
+    workflow_id,
+    name: workflow.name,
+    fingerprints: fingerprints(workflow.digests),
+    test_query: workflow.test_query,
+  };
 }
 
 export async function list_workflow_groups(): Promise<WorkflowGroups> {
@@ -128,23 +134,31 @@ function stop_refusal({
   return internalError('workflow_groups.stop_failed', error);
 }
 
-/** Checks the uploaded gzip tar of workflow `name` as `canyonos validate` does, then unpacks it
- * where the workflow group runs, removing what its last upload had and this one lacks; on a 400
- * (bad archive, unsafe path or findings) the old files stay. */
+/** Checks the uploaded gzip tar of the workflow as `canyonos validate` does, then unpacks it
+ * where the workflow group runs, under the name the uploaded workflow_group.yaml gives its
+ * workflow_id, removing what its last upload had and this one lacks; on a 400 (bad archive,
+ * unsafe path or findings) the old files stay. */
 export async function put_workflow(
   workflow_group_id: string,
-  name: string,
+  workflow_id: string,
   body: ReadableStream<Uint8Array> | null
 ): Promise<Uploaded> {
-  if (!(await workflow_groups_repo.find(workflow_group_id))) {
-    throw unknown_workflow_group(workflow_group_id);
-  }
+  const row = await workflow_groups_repo.find(workflow_group_id);
+  if (!row) throw unknown_workflow_group(workflow_group_id);
+  const name = Object.entries(workflow_ids(row.config)).find(([, id]) => id === workflow_id)?.[0];
+  if (!name) throw unknown_workflow(workflow_id);
   const archive = await target.receive_archive(body ?? new Blob([]).stream());
   const { generation, warnings } = await with_group_lock(workflow_group_id, async () => {
+    // A workflow whose folder was renamed keeps its workflow_id: its old folder goes.
+    const previous = row.workflows[workflow_id];
+    if (previous && previous.name !== name) {
+      await target.remove_workflows(workflow_group_id, [previous.name]);
+    }
     const reply = await target.put_workflow(workflow_group_id, name, archive);
     throw_upload_refusal(reply);
     const answer = core_answer(reply, PutWorkflowAnswerSchema);
-    const generation = await workflow_groups_repo.save_workflow(workflow_group_id, name, {
+    const generation = await workflow_groups_repo.save_workflow(workflow_group_id, workflow_id, {
+      name,
       digests: answer.digests,
       test_query: answer.test_query,
     });
@@ -166,19 +180,18 @@ function throw_upload_refusal(reply: CoreReply): void {
   });
 }
 
-/** Removes what workflow `name`'s last upload put where the workflow group runs. */
+/** Removes what the workflow's last upload put where the workflow group runs. */
 export async function delete_workflow(
   workflow_group_id: string,
-  name: string
+  workflow_id: string
 ): Promise<Generation> {
   const row = await workflow_groups_repo.find(workflow_group_id);
   if (!row) throw unknown_workflow_group(workflow_group_id);
-  if (!(name in (await target.uploaded_workflows(workflow_group_id, row)))) {
-    throw unknown_workflow(name);
-  }
+  const workflow = (await target.uploaded_workflows(workflow_group_id, row))[workflow_id];
+  if (!workflow) throw unknown_workflow(workflow_id);
   const generation = await with_group_lock(workflow_group_id, async () => {
-    await target.remove_workflows(workflow_group_id, [name]);
-    return workflow_groups_repo.remove_workflow(workflow_group_id, name);
+    await target.remove_workflows(workflow_group_id, [workflow.name]);
+    return workflow_groups_repo.remove_workflow(workflow_group_id, workflow_id);
   });
   if (generation === null) throw unknown_workflow_group(workflow_group_id);
   record_change(workflow_group_id);
@@ -191,15 +204,8 @@ export async function list_workflows(workflow_group_id: string): Promise<Workflo
   return {
     workflows: Object.keys(workflows)
       .sort()
-      .map((name) => workflow_view(name, workflows[name]!)),
+      .map((workflow_id) => workflow_view(workflow_id, workflows[workflow_id]!)),
   };
-}
-
-export async function get_workflow(workflow_group_id: string, name: string): Promise<Workflow> {
-  const row = await workflow_groups_repo.find(workflow_group_id);
-  const workflow = (await target.uploaded_workflows(workflow_group_id, row))[name];
-  if (!workflow) throw unknown_workflow(name);
-  return workflow_view(name, workflow);
 }
 
 /** The workflow group's name and workflow_group.yaml as last uploaded, how far the apply loop
@@ -250,15 +256,17 @@ export async function check_health(workflow_group_id: string): Promise<Health> {
   return target.health(workflow_group_id, await workflow_groups_repo.find(workflow_group_id));
 }
 
-/** The last `tail` lines of each running replica of agent `name`, or of the replica whose ID is
- * `name`. */
+/** The last `tail` lines of each running replica of the agent whose ID is `agent_id`, or of the
+ * one replica whose ID it is. */
 export async function agent_logs(
   workflow_group_id: string,
-  name: string,
+  agent_id: string,
   tail: string
 ): Promise<ReplicaLogs> {
   const row = await workflow_groups_repo.find(workflow_group_id);
-  return target.agent_logs(workflow_group_id, row, name, tail);
+  const { agents } = await target.report(workflow_group_id, row);
+  const agent = agents?.find((listed) => listed.agent_id === agent_id);
+  return target.agent_logs(workflow_group_id, row, agent?.name ?? agent_id, tail);
 }
 
 /** Registers the workflow group's workflows, which this dashboard then reads, and returns them. */

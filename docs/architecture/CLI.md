@@ -45,7 +45,7 @@ The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboar
 | --- | --- |
 | `GET /v1/workflow-groups` | Every workflow group the API holds an upload or a container for |
 | `PUT G` | Uploads `workflow_group.yaml` and its `.env`; the API then starts, restarts, reloads or stops the deploy to match |
-| `PUT G/workflows/<name>` | Uploads one workflow as a gzip tar; the API keeps it only if it passes `canyonos validate`'s checks, else answers their findings |
+| `PUT G/workflows/<workflow_id>` | Uploads one workflow as a gzip tar; the API keeps it only if it passes `canyonos validate`'s checks, else answers their findings |
 | `GET G` | The deploy's phase, the last apply's outcome, the [endpoint record](ENDPOINT.md#where-callers-find-it) and each agent's replicas |
 | `GET G/workflows` | The uploaded workflows, with each one's `config/test_query.txt`, for `canyonos test` |
 | `GET G/logs/controller?tail=N&follow=` | The Global Controller's log |

@@ -139,7 +139,7 @@ running. Set the workflow group's
 **Register the workflow group.** At start, the API registers only the
 workflows on the default Redis, which has no password. The deploy registered its
 workflow group with the dashboard image's API, whose database is not this one. To
-register it here too, start the API with this machine's control key, which every `/v1`
+register it here too, start the API with this machine's control key, which every `/v1/workflow-groups`
 route needs:
 
 ```bash

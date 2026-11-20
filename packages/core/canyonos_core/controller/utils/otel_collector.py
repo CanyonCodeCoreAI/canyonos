@@ -44,6 +44,13 @@ def _config(destinations):
             if insecure is None:
                 insecure = destination["endpoint"].startswith("http://")
             settings["tls"] = {"insecure": insecure}
+        else:
+            # Each signal's own URL: the dashboard takes them without the usual `v1/`.
+            for signal in ("traces", "metrics", "logs"):
+                settings[f"{signal}_endpoint"] = (
+                    f"{destination['endpoint'].rstrip('/')}/"
+                    f"{destination['signal_prefix']}{signal}"
+                )
         # Collector component names take no spaces or symbols; the index keeps them unique.
         name = re.sub(r"[^\w.-]", "_", destination["name"])
         exporters[f"{kind}/{index}_{name}"] = settings

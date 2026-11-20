@@ -27,7 +27,7 @@ test('a pending workflow read shows the shimmering logo until the workflow arriv
     releaseWorkflow = resolve;
   });
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === `/workflows/${WORKFLOW.id}`,
+    (url) => url.origin === apiOrigin && url.pathname === `/v1/workflows/${WORKFLOW.id}`,
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       await workflowGate;

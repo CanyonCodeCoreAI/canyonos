@@ -124,12 +124,18 @@ function requiresTag([first, ...rest]: readonly string[]): string {
   return rest.length === 0 ? `Requires ${first}` : `Requires ${first} +${rest.length}`;
 }
 
-function nodeLook(agent: GovernanceAgent): NodeLook {
+// Each agent's name by its agent_id, the key the API uses wherever one agent points at another.
+type AgentNames = ReadonlyMap<string, string>;
+
+function nodeLook(agent: GovernanceAgent, names: AgentNames): NodeLook {
   if (agent.status === 'down') return { tag: 'Down', tone: 'down' };
   if (agent.status === 'stopped') return { tag: 'Stopped', tone: 'warning' };
   if (agent.status === 'unknown') return { tag: 'No reading yet', tone: undefined };
   if (agent.unmet_requires.length > 0) {
-    return { tag: requiresTag(agent.unmet_requires), tone: 'warning' };
+    return {
+      tag: requiresTag(agent.unmet_requires.map((id) => names.get(id) ?? id)),
+      tone: 'warning',
+    };
   }
   if (agent.spend !== null && agent.spend.tripped_action !== null) {
     return { tag: 'Cap tripped', tone: 'warning' };
@@ -174,10 +180,10 @@ function actionTarget(action: CostAction): string {
 }
 
 /** One row per required agent, then one per spend rule from the lowest threshold up. */
-function footerRows(agent: GovernanceAgent): FlowNodeFooterRow[] {
-  const requires = agent.rules.requires.map((name) => ({
+function footerRows(agent: GovernanceAgent, names: AgentNames): FlowNodeFooterRow[] {
+  const requires = agent.rules.requires.map((id) => ({
     icon: 'requires' as const,
-    label: `Requires ${name}`,
+    label: `Requires ${names.get(id) ?? id}`,
   }));
   const spend = [...(agent.rules.spend?.rules ?? [])]
     .sort((a, b) => a.above_usd - b.above_usd)
@@ -189,9 +195,9 @@ function footerRows(agent: GovernanceAgent): FlowNodeFooterRow[] {
 }
 
 const knownCalls = (agents: readonly GovernanceAgent[], edges: readonly GovernanceEdge[]) => {
-  const names = new Set(agents.map((agent) => agent.name));
+  const ids = new Set(agents.map((agent) => agent.agent_id));
   return edges.filter(
-    (edge) => edge.source !== edge.target && names.has(edge.source) && names.has(edge.target)
+    (edge) => edge.source !== edge.target && ids.has(edge.source) && ids.has(edge.target)
   );
 };
 
@@ -217,7 +223,7 @@ interface Layout {
  */
 function callLevels(agents: readonly GovernanceAgent[], calls: readonly GovernanceEdge[]): Level[] {
   const deepest = Math.max(agents.length - 1, 0);
-  const depth = new Map(agents.map((agent) => [agent.name, 0]));
+  const depth = new Map(agents.map((agent) => [agent.agent_id, 0]));
   for (let pass = 0; pass < agents.length; pass += 1) {
     for (const { source, target } of calls) {
       const reached = Math.min((depth.get(source) ?? 0) + 1, deepest);
@@ -225,20 +231,20 @@ function callLevels(agents: readonly GovernanceAgent[], calls: readonly Governan
     }
   }
   const levels = Array.from({ length: deepest + 1 }, (): GovernanceAgent[] => []);
-  for (const agent of agents) levels[depth.get(agent.name) ?? 0]?.push(agent);
+  for (const agent of agents) levels[depth.get(agent.agent_id) ?? 0]?.push(agent);
   return levels.filter((level) => level.length > 0);
 }
 
-const levelHeightPx = (level: Level) =>
-  Math.max(...level.map((agent) => cardHeightPx(footerRows(agent))));
+const levelHeightPx = (level: Level, names: AgentNames) =>
+  Math.max(...level.map((agent) => cardHeightPx(footerRows(agent, names))));
 
-function columnLayout(levels: readonly Level[]): Layout {
+function columnLayout(levels: readonly Level[], names: AgentNames): Layout {
   const positions = new Map<string, Point>();
   levels.forEach((level, column) => {
     let y = 0;
     for (const agent of level) {
-      positions.set(agent.name, { x: column * COLUMN_STEP_PX, y });
-      y += cardHeightPx(footerRows(agent)) + ROW_GAP_PX;
+      positions.set(agent.agent_id, { x: column * COLUMN_STEP_PX, y });
+      y += cardHeightPx(footerRows(agent, names)) + ROW_GAP_PX;
     }
   });
   return { positions, bends: new Map() };
@@ -255,7 +261,7 @@ const wrapped = (level: Level): Level[] =>
  * Calls turn below the caller's whole level, so one from a first-row card drops through those gaps
  * instead of turning behind the row under it.
  */
-function rowLayout(levels: readonly Level[]): Layout {
+function rowLayout(levels: readonly Level[], names: AgentNames): Layout {
   const widest = Math.max(...levels.map((level) => Math.min(level.length, MAX_AGENTS_IN_LINE)));
   const positions = new Map<string, Point>();
   const bends = new Map<string, number>();
@@ -266,28 +272,29 @@ function rowLayout(levels: readonly Level[]): Layout {
     rows.forEach((row, index) => {
       const shift = index % 2 === 1 ? ROW_STEP_PX / 2 : 0;
       row.forEach((agent, column) => {
-        positions.set(agent.name, { x: indent + shift + column * ROW_STEP_PX, y });
+        positions.set(agent.agent_id, { x: indent + shift + column * ROW_STEP_PX, y });
       });
-      y += levelHeightPx(row) + LEVEL_GAP_PX;
+      y += levelHeightPx(row, names) + LEVEL_GAP_PX;
     });
     const levelBottom = y - LEVEL_GAP_PX;
     for (const agent of level) {
-      const cardBottom = (positions.get(agent.name)?.y ?? 0) + cardHeightPx(footerRows(agent));
-      bends.set(agent.name, levelBottom - cardBottom + LEVEL_GAP_PX / 2);
+      const cardBottom =
+        (positions.get(agent.agent_id)?.y ?? 0) + cardHeightPx(footerRows(agent, names));
+      bends.set(agent.agent_id, levelBottom - cardBottom + LEVEL_GAP_PX / 2);
     }
   }
   return { positions, bends };
 }
 
-const LAYOUT: Record<Orientation, (levels: readonly Level[]) => Layout> = {
+const LAYOUT: Record<Orientation, (levels: readonly Level[], names: AgentNames) => Layout> = {
   columns: columnLayout,
   rows: rowLayout,
 };
 
-function agentNode(agent: GovernanceAgent, position: Point): FlowNodeSpec {
-  const { tag, tone } = nodeLook(agent);
+function agentNode(agent: GovernanceAgent, position: Point, names: AgentNames): FlowNodeSpec {
+  const { tag, tone } = nodeLook(agent, names);
   return {
-    id: agent.name,
+    id: agent.agent_id,
     position,
     data: {
       kind: 'agent',
@@ -296,7 +303,7 @@ function agentNode(agent: GovernanceAgent, position: Point): FlowNodeSpec {
       tag,
       tone,
       chips: [],
-      footer: footerRows(agent),
+      footer: footerRows(agent, names),
     },
   };
 }
@@ -309,14 +316,17 @@ function governanceFlow(
   agents: readonly GovernanceAgent[],
   edges: readonly GovernanceEdge[]
 ): { nodes: FlowNodeSpec[]; edges: FlowEdgeSpec[] } {
+  const names = new Map(agents.map((agent) => [agent.agent_id, agent.name]));
   const calls = knownCalls(agents, edges);
   const levels = callLevels(agents, calls);
   const orientation: Orientation = levels.some((level) => level.length > MAX_AGENTS_IN_LINE)
     ? 'rows'
     : 'columns';
-  const { positions, bends } = LAYOUT[orientation](levels);
+  const { positions, bends } = LAYOUT[orientation](levels, names);
   return {
-    nodes: agents.map((agent) => agentNode(agent, positions.get(agent.name) ?? { x: 0, y: 0 })),
+    nodes: agents.map((agent) =>
+      agentNode(agent, positions.get(agent.agent_id) ?? { x: 0, y: 0 }, names)
+    ),
     edges: calls.map(({ source, target }) => ({
       id: `${source}->${target}`,
       source,
@@ -482,7 +492,9 @@ function GovernanceBody({
           workflow_id={workflow_id}
           agents={agents}
           agent={
-            panel === undefined ? agents.find((candidate) => candidate.name === agent) : undefined
+            panel === undefined
+              ? agents.find((candidate) => candidate.agent_id === agent)
+              : undefined
           }
           container={canvasBox}
           onClose={() => void navigate({ search: { agent: undefined } })}
@@ -703,7 +715,7 @@ function AgentHeader({
   readonly workflow_id: string;
   readonly agent: GovernanceAgent;
 }) {
-  const set = useSetStopped(workflow_id, agent.name);
+  const set = useSetStopped(workflow_id, agent);
   const stopped = agent.status === 'stopped';
   const warn = agent.scaling_policy_present && !stopped;
   const error = set.error
@@ -800,7 +812,7 @@ function RulesForm({
   readonly agents: readonly GovernanceAgent[];
   readonly agent: GovernanceAgent;
 }) {
-  const save = useSaveAgentRules(workflow_id, agent.name);
+  const save = useSaveAgentRules(workflow_id, agent.agent_id);
   // `since` is always a key: its date field registers it, and a key the stored rules lack would
   // read as an edit before any.
   const stored: AgentRules = {
@@ -814,6 +826,7 @@ function RulesForm({
   });
   const rules = useFieldArray({ control: form.control, name: 'spend.rules' });
   const others = agents.filter((other) => other.name !== agent.name);
+  const names = new Map(agents.map((other) => [other.agent_id, other.name]));
   // Reset to what was saved, so a saved form is clean and follows the polled rules again.
   const submit = form.handleSubmit((values) =>
     save.mutate(
@@ -843,7 +856,7 @@ function RulesForm({
             <RequiresToggle others={others} value={field.value} onChange={field.onChange} />
           )}
         />
-        <UnmetRequires unmet={agent.unmet_requires} />
+        <UnmetRequires unmet={agent.unmet_requires.map((id) => names.get(id) ?? id)} />
       </Section>
 
       <Section
@@ -1027,7 +1040,7 @@ function RequiresToggle({
       {others.map((other) => (
         <ToggleGroupItem
           key={other.name}
-          value={other.name}
+          value={other.agent_id}
           className="data-[state=on]:border-flow-agent/45 data-[state=on]:bg-flow-agent/10 h-8 gap-2 rounded-md px-2.5 text-xs font-medium shadow-none data-[state=on]:shadow-none"
         >
           <span

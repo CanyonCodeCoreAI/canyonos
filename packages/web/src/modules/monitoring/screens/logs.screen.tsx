@@ -39,7 +39,7 @@ export function LogsScreen({ workflow_id, range }: LogsScreenProps) {
       <LogList
         workflow_id={workflow_id}
         range={range}
-        agent={agent === ALL_SOURCES ? undefined : agent}
+        agent_id={agent === ALL_SOURCES ? undefined : agent}
         replica={replica === ALL_SOURCES ? undefined : replica}
         empty_message="No logs recorded in this window."
         error_message="Could not load logs."

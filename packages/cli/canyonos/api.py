@@ -53,7 +53,7 @@ OLDER_CHART_ERRORS = {
     401: ("auth.control_key_unset",),
 }
 
-# What the API answers a /v1 call whose control key it was not started with, or when
+# What the API answers a /v1/workflow-groups call whose control key it was not started with, or when
 # it was started with none.
 CONTROL_KEY_REFUSALS = (
     "auth.missing_key",
@@ -129,7 +129,7 @@ def error_detail(body, status):
     """The error object of an answer's `body`, raw bytes, as `{error, code, findings,
     warnings}`, `error` its message and `code` its code without the prefix, from the
     CanyonOS API's `{error: code, message}`; each check that is not ok as `error` for
-    `/readyz`'s answer, and the raw body as `error` when it is neither."""
+    `/v1/readyz`'s answer, and the raw body as `error` when it is neither."""
     text = body.decode(errors="replace").strip()
     try:
         parsed = json.loads(text)
@@ -326,17 +326,17 @@ def list_workflow_groups(state=None):
 
 
 def _wait_until_ready(state=None):
-    """Wait up to READY_TIMEOUT_SECONDS for the API to answer `/readyz`: it listens
-    before its database is ready, and its `/v1` routes answer 503 until then. An older
-    API without `/readyz` is not waited for. Raises ApiError with its last answer when
-    it is still not ready: its database, the one thing `/readyz` waits on, is not."""
+    """Wait up to READY_TIMEOUT_SECONDS for the API to answer `/v1/readyz`: it listens
+    before its database is ready, and its `/v1/workflow-groups` routes answer 503 until then. An older
+    API without `/v1/readyz` is not waited for. Raises ApiError with its last answer when
+    it is still not ready: its database, the one thing `/v1/readyz` waits on, is not."""
     deadline = time.monotonic() + READY_TIMEOUT_SECONDS
     while True:
         try:
             _open(
                 state,
                 "GET",
-                "/readyz",
+                "/v1/readyz",
                 "Readiness check",
                 timeout=STATUS_TIMEOUT_SECONDS,
             ).close()
@@ -345,7 +345,7 @@ def _wait_until_ready(state=None):
             if e.status == 404:
                 return
             if time.monotonic() >= deadline:
-                # A 503 is `/readyz` waiting on the database.
+                # A 503 is `/v1/readyz` waiting on the database.
                 answer = str(e)
                 if e.status == 503:
                     answer = f"{answer.rstrip('.')}.{_database_hint(state)}"
@@ -381,7 +381,8 @@ def probe(state=None):
 def put_workflow_group(state, config, env_text, workflows=None, api_key_hash=None):
     """Upload the workflow group's name, the text `config` of its `workflow_group.yaml`
     and the text `env_text` of the `.env` beside it (None when there is none); with
-    `workflows`, the API removes the uploaded workflows not among them; with
+    `workflows`, a list of workflow_ids, the API removes the uploaded workflows not
+    among them; with
     `api_key_hash`, the SHA-256 of the deploy's API key ("" for none), it keeps that as
     the deploy's key. Return the new generation and the upload's warnings. Raises
     ApiError on failure."""
@@ -395,15 +396,15 @@ def put_workflow_group(state, config, env_text, workflows=None, api_key_hash=Non
     return _request(state, "PUT", _group_path(state), "Sync", body)
 
 
-def put_workflow(state, name, archive):
-    """Make `archive`, an open gzip tar file of workflow `name`'s folder, that workflow's
+def put_workflow(state, workflow_id, archive):
+    """Make `archive`, an open gzip tar file of the workflow's folder, that workflow's
     files in the Global Controller's workspace and return the new generation and the
     upload's warnings. Raises ApiError on failure, with the `findings` `canyonos
     validate` would print when the workflow breaks the contract."""
     return _request(
         state,
         "PUT",
-        _group_path(state, f"/workflows/{_quoted(name)}"),
+        _group_path(state, f"/workflows/{_quoted(workflow_id)}"),
         "Sync",
         archive=archive,
     )
@@ -548,15 +549,15 @@ def controller_log(state, tail="all", follow=False):
         raise ApiError(f"Could not read the Global Controller log: {e}") from None
 
 
-def deployed_logs(state, name, tail):
-    """Return the last `tail` lines of each running replica of agent `name`, or of the
-    one replica whose ID is `name`, keyed by replica ID; raise ApiError when the API
-    can't say, naming the agents when `name` is neither."""
+def deployed_logs(state, agent_id, tail):
+    """Return the last `tail` lines of each running replica of the agent whose ID is
+    `agent_id`, or of the one replica whose ID it is, keyed by replica ID; raise ApiError
+    when the API can't say, naming the agents when it is neither."""
     query = urllib.parse.urlencode({"tail": tail})
     return _request(
         state,
         "GET",
-        _group_path(state, f"/logs/agents/{_quoted(name)}?{query}"),
+        _group_path(state, f"/logs/agents/{_quoted(agent_id)}?{query}"),
         "Read logs",
         timeout=LOGS_REQUEST_TIMEOUT_SECONDS,
     )["logs"]

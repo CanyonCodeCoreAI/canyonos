@@ -596,11 +596,14 @@ def _add_sample_data(workflow):
     """Ask the dashboard to add `workflow`'s example runs to each workflow of this
     workflow group, whether or not the first request worked. Never fails the run."""
     try:
-        registered = register_workflows(load_state())
+        state = load_state()
+        registered = register_workflows(state)
         ui.blank()
         ui.say("Adding example runs to the dashboard...")
         spans = sum(
-            add_sample_data(entry["workflow_id"], workflow)["spans"]
+            add_sample_data(state["workflow_group_id"], entry["workflow_id"], workflow)[
+                "spans"
+            ]
             for entry in registered
         )
     except (KeyError, OSError, RuntimeError, ValueError, RegistrationError) as e:

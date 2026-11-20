@@ -8,7 +8,7 @@ import { GEN_AI, RUNTIME_ATTRIBUTES } from '@api/modules/metrics/metrics.contrac
 import { STATUS_CODE, WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
 import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
@@ -29,13 +29,6 @@ const range = (days: number) => ({
 
 const nanos_ago = (ms_ago: number): bigint => BigInt(BASE_MS - Math.round(ms_ago)) * NANOS_PER_MS;
 
-const agent_names = new Map<string, string>();
-
-/** A span's name is its agent's identity, so a replica id is declared with the name it runs under. */
-function register_agent_name(agent_id: string, name?: string): void {
-  agent_names.set(agent_id, name ?? agent_id);
-}
-
 const UNATTRIBUTED_NAME = 'unattributed';
 
 interface SpanFixture {
@@ -51,7 +44,9 @@ interface SpanFixture {
   total_cost?: string;
   errors?: number;
   failed?: boolean;
-  agent_id?: string;
+  /** The name of the agent that ran it, and the span's name unless `name` is given. */
+  agent?: string;
+  replica_id?: string;
   model?: string;
   cache_read_tokens?: number;
   name?: string;
@@ -75,7 +70,10 @@ async function insert_span(workflow_id: string, span: SpanFixture): Promise<void
     attributes[GEN_AI.OUTPUT_TOKENS] = span.output_token_count;
   }
   if (span.errors !== undefined) attributes[RUNTIME_ATTRIBUTES.ERROR_COUNT] = span.errors;
-  if (span.agent_id !== undefined) attributes[GEN_AI.AGENT_ID] = span.agent_id;
+  if (span.agent !== undefined) {
+    attributes[GEN_AI.AGENT_ID] = Bun.randomUUIDv5(span.agent, workflow_id);
+  }
+  if (span.replica_id !== undefined) attributes[RUNTIME_ATTRIBUTES.REPLICA_ID] = span.replica_id;
   if (span.model !== undefined) attributes[GEN_AI.REQUEST_MODEL] = span.model;
   if (span.cache_read_tokens !== undefined) {
     attributes[GEN_AI.CACHE_READ_INPUT_TOKENS] = span.cache_read_tokens;
@@ -85,11 +83,7 @@ async function insert_span(workflow_id: string, span: SpanFixture): Promise<void
     span_id: span.span_id,
     trace_id: span.trace_id,
     parent_span_id: span.parent_span_id ?? null,
-    name:
-      span.name ??
-      (span.agent_id === undefined
-        ? UNATTRIBUTED_NAME
-        : (agent_names.get(span.agent_id) ?? span.agent_id)),
+    name: span.name ?? span.agent ?? UNATTRIBUTED_NAME,
     status_code: span.failed === true ? STATUS_CODE.ERROR : STATUS_CODE.UNSET,
     start_time_unix_nano: start,
     end_time_unix_nano: start + BigInt(span.execution_time_ms) * NANOS_PER_MS,
@@ -193,10 +187,10 @@ beforeAll(async () => {
   await seed_span_fixture(workflow_id);
 });
 
-describe('GET /workflows/:workflow_id/metrics/kpis', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/metrics/kpis', () => {
   test('aggregates exactly the spans and traces inside the range', async () => {
     const query = range(30);
-    const res = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const res = await group_workflow(workflow_id).metrics.kpis.get({
       $query: query,
       $headers: bearer(token),
     });
@@ -222,7 +216,7 @@ describe('GET /workflows/:workflow_id/metrics/kpis', () => {
       from: new Date(BASE_MS - 4 * DAY_MS).toISOString(),
       to: new Date(BASE_MS - 2 * HOUR_MS).toISOString(),
     };
-    const res = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const res = await group_workflow(workflow_id).metrics.kpis.get({
       $query: query,
       $headers: bearer(token),
     });
@@ -233,7 +227,7 @@ describe('GET /workflows/:workflow_id/metrics/kpis', () => {
   test('a workflow with no telemetry spans returns zeroed totals', async () => {
     const empty = await create_workflow();
     const query = range(90);
-    const res = await api.workflows[empty.workflow_id]!.metrics.kpis.get({
+    const res = await group_workflow(empty.workflow_id).metrics.kpis.get({
       $query: query,
       $headers: bearer(empty.token),
     });
@@ -263,7 +257,7 @@ describe('GET /workflows/:workflow_id/metrics/kpis', () => {
 
   test('from must be earlier than to', async () => {
     const at = new Date(BASE_MS).toISOString();
-    const res = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const res = await group_workflow(workflow_id).metrics.kpis.get({
       $query: { from: at, to: at },
       $headers: bearer(token),
     });
@@ -271,9 +265,9 @@ describe('GET /workflows/:workflow_id/metrics/kpis', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/metrics/distribution', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/metrics/distribution', () => {
   test('latency: every request in the window, wall-clock ms, exact stats', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.distribution.get({
+    const res = await group_workflow(workflow_id).metrics.distribution.get({
       $headers: bearer(token),
       $query: { metric: 'latency', ...range(30), buckets: 2 },
     });
@@ -301,7 +295,7 @@ describe('GET /workflows/:workflow_id/metrics/distribution', () => {
   });
 
   test('tokens_per_request over the full quarter includes every request', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.distribution.get({
+    const res = await group_workflow(workflow_id).metrics.distribution.get({
       $headers: bearer(token),
       $query: { metric: 'tokens_per_request', ...range(90), buckets: 3 },
     });
@@ -319,7 +313,7 @@ describe('GET /workflows/:workflow_id/metrics/distribution', () => {
   });
 
   test('cost_per_request keeps window scoping (1d sees only the recent request)', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.distribution.get({
+    const res = await group_workflow(workflow_id).metrics.distribution.get({
       $headers: bearer(token),
       $query: { metric: 'cost_per_request', ...range(1), buckets: 5 },
     });
@@ -335,7 +329,7 @@ describe('GET /workflows/:workflow_id/metrics/distribution', () => {
 
   test('a workflow with no telemetry spans returns an empty distribution', async () => {
     const empty = await create_workflow();
-    const res = await api.workflows[empty.workflow_id]!.metrics.distribution.get({
+    const res = await group_workflow(empty.workflow_id).metrics.distribution.get({
       $headers: bearer(empty.token),
       $query: { metric: 'latency', ...range(90), buckets: 10 },
     });
@@ -357,7 +351,7 @@ describe('GET /workflows/:workflow_id/metrics/distribution', () => {
   });
 
   test('an unknown metric is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.distribution.get({
+    const res = await group_workflow(workflow_id).metrics.distribution.get({
       $headers: bearer(token),
       // @ts-expect-error deliberately invalid metric
       $query: { metric: 'nope', ...range(1), buckets: 5 },
@@ -366,7 +360,7 @@ describe('GET /workflows/:workflow_id/metrics/distribution', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/metrics/timeseries', () => {
   let series_token: string;
   let series_workflow: string;
 
@@ -410,11 +404,11 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   test('the grid sits on whole hours and sums back to the KPI totals', async () => {
     const query = range(1);
     const [series, kpis] = await Promise.all([
-      api.workflows[series_workflow]!.metrics.timeseries.get({
+      group_workflow(series_workflow).metrics.timeseries.get({
         $headers: bearer(series_token),
         $query: query,
       }),
-      api.workflows[series_workflow]!.metrics.kpis.get({
+      group_workflow(series_workflow).metrics.kpis.get({
         $headers: bearer(series_token),
         $query: query,
       }),
@@ -442,7 +436,7 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   test('an empty workflow still emits the shared time grid', async () => {
     const empty = await create_workflow();
     const query = range(30);
-    const res = await api.workflows[empty.workflow_id]!.metrics.timeseries.get({
+    const res = await group_workflow(empty.workflow_id).metrics.timeseries.get({
       $headers: bearer(empty.token),
       $query: query,
     });
@@ -463,7 +457,7 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
       minute: 'numeric',
       hourCycle: 'h23',
     });
-    const res = await api.workflows[series_workflow]!.metrics.timeseries.get({
+    const res = await group_workflow(series_workflow).metrics.timeseries.get({
       $headers: bearer(series_token),
       $query: { ...range(30), time_zone },
     });
@@ -475,7 +469,7 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   });
 
   test('an invalid time zone is rejected by validation (422)', async () => {
-    const res = await api.workflows[series_workflow]!.metrics.timeseries.get({
+    const res = await group_workflow(series_workflow).metrics.timeseries.get({
       $headers: bearer(series_token),
       $query: { ...range(30), time_zone: 'Mars/Olympus_Mons' },
     });
@@ -483,7 +477,7 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   });
 
   test('a zone ICU accepts but Postgres rejects is a 422, not a 500', async () => {
-    const res = await api.workflows[series_workflow]!.metrics.timeseries.get({
+    const res = await group_workflow(series_workflow).metrics.timeseries.get({
       $headers: bearer(series_token),
       $query: { ...range(30), time_zone: 'US/Pacific-New' },
     });
@@ -493,7 +487,7 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
 
   test('from must be earlier than to', async () => {
     const at = new Date(BASE_MS).toISOString();
-    const res = await api.workflows[workflow_id]!.metrics.timeseries.get({
+    const res = await group_workflow(workflow_id).metrics.timeseries.get({
       $headers: bearer(token),
       $query: { from: at, to: at },
     });
@@ -501,14 +495,14 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   });
 
   test('a request without the API key is rejected with 401', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.timeseries.get({
+    const res = await group_workflow(workflow_id).metrics.timeseries.get({
       $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
 
   test("the API key reads the workflow's timeseries", async () => {
-    const res = await api.workflows[workflow_id]!.metrics.timeseries.get({
+    const res = await group_workflow(workflow_id).metrics.timeseries.get({
       $headers: bearer(TEST_API_KEY),
       $query: range(30),
     });
@@ -517,14 +511,12 @@ describe('GET /workflows/:workflow_id/metrics/timeseries', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/metrics/blocks', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/metrics/blocks', () => {
   let blocks_token: string;
   let blocks_workflow: string;
 
   beforeAll(async () => {
     ({ token: blocks_token, workflow_id: blocks_workflow } = await create_workflow());
-    register_agent_name('blk-agent-model');
-    register_agent_name('blk-agent-harness');
 
     await insert_span(blocks_workflow, {
       span_id: 'blk-b-model-1',
@@ -536,7 +528,7 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
       token_cost: '0.0001000000',
       server_cost: '0.0000100000',
       total_cost: '0.0001100000',
-      agent_id: 'blk-agent-model',
+      agent: 'blk-agent-model',
       model: 'claude-opus-4',
       cache_read_tokens: 60,
     });
@@ -551,7 +543,7 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
       server_cost: '0.0000200000',
       total_cost: '0.0002200000',
       errors: 1,
-      agent_id: 'blk-agent-model',
+      agent: 'blk-agent-model',
       model: 'claude-opus-4',
       cache_read_tokens: 1080,
     });
@@ -569,12 +561,12 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
       total_cost: '0.0005000000',
       errors: 3,
       failed: true,
-      agent_id: 'blk-agent-harness',
+      agent: 'blk-agent-harness',
     });
   });
 
   test('groups per agent, orders by cost desc, and derives kind from the model', async () => {
-    const res = await api.workflows[blocks_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(blocks_workflow).metrics.blocks.get({
       $headers: bearer(blocks_token),
       $query: { ...range(30) },
     });
@@ -582,12 +574,14 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
     const { total_cost, blocks } = res.data!;
 
     expect(total_cost).toBe('0.0008300000');
-    expect(blocks.map((block) => block.agent_id)).toEqual(['blk-agent-harness', 'blk-agent-model']);
+    expect(blocks.map((block) => block.agent_id)).toEqual([
+      Bun.randomUUIDv5('blk-agent-harness', blocks_workflow),
+      Bun.randomUUIDv5('blk-agent-model', blocks_workflow),
+    ]);
 
     const [harness, model] = blocks;
     expect(harness).toMatchObject({
       model: null,
-      // No display name reported for this agent, so the label falls back to its id.
       label: 'blk-agent-harness',
       kind: 'harness',
       cost: '0.0005000000',
@@ -622,7 +616,7 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
   });
 
   test('the window scopes the breakdown (1d drops the older harness span)', async () => {
-    const res = await api.workflows[blocks_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(blocks_workflow).metrics.blocks.get({
       $headers: bearer(blocks_token),
       $query: { ...range(1) },
     });
@@ -633,7 +627,7 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
 
   test('a workflow with no telemetry spans returns no blocks and zero cost', async () => {
     const empty = await create_workflow();
-    const res = await api.workflows[empty.workflow_id]!.metrics.blocks.get({
+    const res = await group_workflow(empty.workflow_id).metrics.blocks.get({
       $headers: bearer(empty.token),
       $query: { ...range(30) },
     });
@@ -647,7 +641,7 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
   });
 
   test('spans reporting no agent id are addressed by the name they ran under', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.blocks.get({
+    const res = await group_workflow(workflow_id).metrics.blocks.get({
       $headers: bearer(token),
       $query: { ...range(90) },
     });
@@ -666,14 +660,14 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
   });
 
   test('a request without the API key is rejected with 401', async () => {
-    const res = await api.workflows[blocks_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(blocks_workflow).metrics.blocks.get({
       $query: { ...range(30) },
     });
     expect(res.error?.status as number).toBe(401);
   });
 
   test("the API key reads the workflow's blocks", async () => {
-    const res = await api.workflows[blocks_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(blocks_workflow).metrics.blocks.get({
       $headers: bearer(TEST_API_KEY),
       $query: { ...range(30) },
     });
@@ -682,16 +676,14 @@ describe('GET /workflows/:workflow_id/metrics/blocks', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/metrics/agents/:agent_id', () => {
   let details_token: string;
   let details_workflow: string;
+  let detail_agent_id: string;
 
   beforeAll(async () => {
     ({ token: details_token, workflow_id: details_workflow } = await create_workflow());
-
-    register_agent_name('detail-agent', 'Drawer Agent');
-    register_agent_name('detail-other');
-    register_agent_name('detail-old-agent');
+    detail_agent_id = Bun.randomUUIDv5('Drawer Agent', details_workflow);
 
     await insert_span(details_workflow, {
       span_id: 'detail-agent-a',
@@ -703,7 +695,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       token_cost: '0.0003000000',
       server_cost: '0.0001000000',
       total_cost: '0.0004000000',
-      agent_id: 'detail-agent',
+      agent: 'Drawer Agent',
       model: 'claude-haiku-4',
       cache_read_tokens: 60,
     });
@@ -718,7 +710,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       server_cost: '0.0000000000',
       total_cost: '0.0001000000',
       errors: 1,
-      agent_id: 'detail-agent',
+      agent: 'Drawer Agent',
       model: 'claude-sonnet-4',
       cache_read_tokens: 270,
     });
@@ -734,7 +726,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       total_cost: '0.0015000000',
       errors: 2,
       failed: true,
-      agent_id: 'detail-agent',
+      agent: 'Drawer Agent',
       model: 'claude-opus-4',
     });
     await insert_span(details_workflow, {
@@ -747,7 +739,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       token_cost: '0.0000000000',
       server_cost: '0.0010000000',
       total_cost: '0.0010000000',
-      agent_id: 'detail-other',
+      agent: 'detail-other',
     });
     await insert_span(details_workflow, {
       span_id: 'detail-old-a',
@@ -759,13 +751,13 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       token_cost: '0.0080000000',
       server_cost: '0.0010000000',
       total_cost: '0.0090000000',
-      agent_id: 'detail-old-agent',
+      agent: 'detail-old-agent',
       model: 'claude-opus-4',
     });
   });
 
   test('returns one 30-day agent aggregate across models and its request-cost histogram', async () => {
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-agent']!.get({
+    const res = await group_workflow(details_workflow).metrics.agents[detail_agent_id]!.get({
       $query: range(30),
       $headers: bearer(details_token),
     });
@@ -774,7 +766,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
 
     expect(details).toMatchObject({
       workflow_id: details_workflow,
-      agent_id: 'detail-agent',
+      agent_id: detail_agent_id,
       label: 'Drawer Agent',
       ...range(30),
       workflow: {
@@ -814,7 +806,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
 
   test('the same request carries a 30-day cost series that sums to the agent total', async () => {
     const query = range(30);
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-agent']!.get({
+    const res = await group_workflow(details_workflow).metrics.agents[detail_agent_id]!.get({
       $query: query,
       $headers: bearer(details_token),
     });
@@ -838,7 +830,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
   });
 
   test('the same request carries the token and latency distributions for the agent', async () => {
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-agent']!.get({
+    const res = await group_workflow(details_workflow).metrics.agents[detail_agent_id]!.get({
       $query: range(30),
       $headers: bearer(details_token),
     });
@@ -878,7 +870,6 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
 
   test('all three distributions cover every request the agent ran', async () => {
     const partial = await create_workflow();
-    register_agent_name('partial-agent');
 
     await insert_span(partial.workflow_id, {
       span_id: 'partial-block-quick',
@@ -890,7 +881,7 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       token_cost: '0.0001000000',
       server_cost: '0.0000000000',
       total_cost: '0.0001000000',
-      agent_id: 'partial-agent',
+      agent: 'partial-agent',
       model: 'claude-haiku-4',
     });
     await insert_span(partial.workflow_id, {
@@ -903,11 +894,12 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
       token_cost: '0.0002000000',
       server_cost: '0.0000000000',
       total_cost: '0.0002000000',
-      agent_id: 'partial-agent',
+      agent: 'partial-agent',
       model: 'claude-haiku-4',
     });
 
-    const res = await api.workflows[partial.workflow_id]!.metrics.agents['partial-agent']!.get({
+    const partial_id = Bun.randomUUIDv5('partial-agent', partial.workflow_id);
+    const res = await group_workflow(partial.workflow_id).metrics.agents[partial_id]!.get({
       $query: range(30),
       $headers: bearer(partial.token),
     });
@@ -932,7 +924,8 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
   });
 
   test('an agent with no execution in the last 30 days gets 404', async () => {
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-old-agent']!.get({
+    const old_id = Bun.randomUUIDv5('detail-old-agent', details_workflow);
+    const res = await group_workflow(details_workflow).metrics.agents[old_id]!.get({
       $query: range(30),
       $headers: bearer(details_token),
     });
@@ -941,14 +934,14 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
   });
 
   test('a request without the API key is rejected with 401', async () => {
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-agent']!.get({
+    const res = await group_workflow(details_workflow).metrics.agents[detail_agent_id]!.get({
       $query: range(30),
     });
     expect(res.error?.status as number).toBe(401);
   });
 
   test("the API key reads the agent's metrics", async () => {
-    const res = await api.workflows[details_workflow]!.metrics.agents['detail-agent']!.get({
+    const res = await group_workflow(details_workflow).metrics.agents[detail_agent_id]!.get({
       $query: range(30),
       $headers: bearer(TEST_API_KEY),
     });
@@ -956,13 +949,16 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
     expect(res.data!.agent.block_count).toBeGreaterThan(0);
   });
 
-  test('the drawer reports one aggregate for a name shared by several replicas', async () => {
+  test("the agent's id addresses one aggregate over all its span names and replicas", async () => {
     const rep = await create_workflow();
-    register_agent_name('drawer-rep-a', 'DrawerAgent');
-    register_agent_name('drawer-rep-b', 'DrawerAgent');
-
-    for (const [index, agent_id] of ['drawer-rep-a', 'drawer-rep-b'].entries()) {
+    const spans = [
+      { name: 'DrawerAgent.plan', replica_id: 'drawer-rep-a' },
+      { name: 'DrawerAgent.plan', replica_id: 'drawer-rep-b' },
+      { name: 'DrawerAgent.write', replica_id: 'drawer-rep-a' },
+    ];
+    for (const [index, span] of spans.entries()) {
       await insert_span(rep.workflow_id, {
+        ...span,
         span_id: `drawer-rep-span-${index}`,
         trace_id: 'drawer-rep',
         ms_ago: HOUR_MS,
@@ -972,35 +968,37 @@ describe('GET /workflows/:workflow_id/metrics/agents/:agent_id', () => {
         token_cost: '0.0001000000',
         server_cost: '0.0000200000',
         total_cost: '0.0001200000',
-        agent_id,
+        agent: 'DrawerAgent',
         model: 'claude-opus-4',
       });
     }
+    const drawer_id = Bun.randomUUIDv5('DrawerAgent', rep.workflow_id);
 
-    // No single replica speaks for the group, so the name is what addresses it.
-    const drawer = await api.workflows[rep.workflow_id]!.metrics.agents['DrawerAgent']!.get({
+    const drawer = await group_workflow(rep.workflow_id).metrics.agents[drawer_id]!.get({
       $query: range(30),
       $headers: bearer(rep.token),
     });
     expect(drawer.error).toBeNull();
 
-    // One aggregate covering both replicas, not half the spend each.
-    expect(drawer.data!.label).toBe('DrawerAgent');
+    // One aggregate covering both names and both replicas, labelled with its busiest name.
+    expect(drawer.data!.label).toBe('DrawerAgent.plan');
     expect(drawer.data!.agent.replica_count).toBe(2);
-    expect(drawer.data!.agent.block_count).toBe(2);
-    expect(drawer.data!.agent.cost).toBe('0.0002400000');
+    expect(drawer.data!.agent.block_count).toBe(3);
+    expect(drawer.data!.agent.cost).toBe('0.0003600000');
 
-    // The block breakdown advertises that same address, so clicking it opens exactly this drawer.
-    const blocks = await api.workflows[rep.workflow_id]!.metrics.blocks.get({
+    // Each name's block advertises that same address, so clicking either opens this drawer.
+    const blocks = await group_workflow(rep.workflow_id).metrics.blocks.get({
       $headers: bearer(rep.token),
       $query: { ...range(30) },
     });
-    const card = blocks.data!.blocks.find((block) => block.label === 'DrawerAgent')!;
-    expect(card.agent_id).toBe('DrawerAgent');
-    expect(card.cost).toBe(drawer.data!.agent.cost);
+    expect(blocks.data!.blocks.map(({ label, agent_id }) => [label, agent_id])).toEqual([
+      ['DrawerAgent.plan', drawer_id],
+      ['DrawerAgent.write', drawer_id],
+    ]);
+    expect(blocks.data!.total_cost).toBe(drawer.data!.agent.cost);
 
-    // An id the runtime never ran is still a 404, not an empty aggregate.
-    const missing = await api.workflows[rep.workflow_id]!.metrics.agents['drawer-rep-ghost']!.get({
+    // A replica's id addresses no agent: a 404, not an empty aggregate.
+    const missing = await group_workflow(rep.workflow_id).metrics.agents['drawer-rep-a']!.get({
       $query: range(30),
       $headers: bearer(rep.token),
     });
@@ -1014,8 +1012,6 @@ describe('stored runtime pricing', () => {
 
   beforeAll(async () => {
     ({ token: price_token, workflow_id: price_workflow } = await create_workflow());
-    register_agent_name('price-agent-stored');
-    register_agent_name('price-agent-zero');
 
     await insert_span(price_workflow, {
       span_id: 'price-b-stored',
@@ -1027,7 +1023,7 @@ describe('stored runtime pricing', () => {
       token_cost: '0.0046000000',
       server_cost: '0.0000000000',
       total_cost: '0.0046000000',
-      agent_id: 'price-agent-stored',
+      agent: 'price-agent-stored',
       model: 'claude-opus-4',
     });
 
@@ -1042,18 +1038,18 @@ describe('stored runtime pricing', () => {
       token_cost: '0.0000000000',
       server_cost: '0.0000000000',
       total_cost: '0.0000000000',
-      agent_id: 'price-agent-zero',
+      agent: 'price-agent-zero',
       model: 'claude-opus-4',
     });
   });
 
   test('reads stored cost columns without repricing zero values', async () => {
-    const res = await api.workflows[price_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(price_workflow).metrics.blocks.get({
       $headers: bearer(price_token),
       $query: { ...range(1) },
     });
     expect(res.error).toBeNull();
-    const by_agent = new Map(res.data!.blocks.map((block) => [block.agent_id, block]));
+    const by_agent = new Map(res.data!.blocks.map((block) => [block.label, block]));
 
     expect(by_agent.get('price-agent-stored')).toMatchObject({
       llm_cost: '0.0046000000',
@@ -1070,15 +1066,15 @@ describe('stored runtime pricing', () => {
 
   test('the KPI, timeseries, and requests surfaces agree on the same dollars', async () => {
     const [kpis, series, requests] = await Promise.all([
-      api.workflows[price_workflow]!.metrics.kpis.get({
+      group_workflow(price_workflow).metrics.kpis.get({
         $query: range(30),
         $headers: bearer(price_token),
       }),
-      api.workflows[price_workflow]!.metrics.timeseries.get({
+      group_workflow(price_workflow).metrics.timeseries.get({
         $headers: bearer(price_token),
         $query: { ...range(1) },
       }),
-      api.workflows[price_workflow]!.requests.get({
+      group_workflow(price_workflow).requests.get({
         $headers: bearer(price_token),
         $query: { ...range(30), limit: 20, offset: 0 },
       }),
@@ -1123,7 +1119,6 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
   // largest value sits exactly on the top bucket's upper bound.
   beforeAll(async () => {
     ({ token: coh_token, workflow_id: coh_workflow } = await create_workflow());
-    register_agent_name('coh-agent');
 
     const steps = [1, 1, 2, 4, 4];
     for (const [index, step] of steps.entries()) {
@@ -1137,7 +1132,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
         token_cost: (step * 0.001).toFixed(10),
         server_cost: '0.0000000000',
         total_cost: (step * 0.001).toFixed(10),
-        agent_id: 'coh-agent',
+        agent: 'coh-agent',
         model: 'claude-opus-4',
       });
     }
@@ -1145,7 +1140,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
 
   for (const metric of ['tokens_per_request', 'cost_per_request', 'latency'] as const) {
     test(`${metric}: every bucket's count equals the listing it filters`, async () => {
-      const distribution = await api.workflows[coh_workflow]!.metrics.distribution.get({
+      const distribution = await group_workflow(coh_workflow).metrics.distribution.get({
         $headers: bearer(coh_token),
         $query: { metric, ...range(30), buckets: 4 },
       });
@@ -1156,7 +1151,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
 
       let listed = 0;
       for (const bucket of buckets) {
-        const page = await api.workflows[coh_workflow]!.requests.get({
+        const page = await group_workflow(coh_workflow).requests.get({
           $query: {
             limit: 100,
             offset: 0,
@@ -1184,7 +1179,6 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
 describe('workflow scoping at the data boundary', () => {
   test('a span with no canyonos.workflow.id is invisible to KPI and requests', async () => {
     const owner = await create_workflow();
-    register_agent_name('orphan-agent');
     await insert_span(owner.workflow_id, {
       span_id: 'boundary-owned-1',
       trace_id: 'boundary-owned',
@@ -1195,7 +1189,7 @@ describe('workflow scoping at the data boundary', () => {
       token_cost: '0.0001000000',
       server_cost: '0.0000100000',
       total_cost: '0.0001100000',
-      agent_id: 'orphan-agent',
+      agent: 'orphan-agent',
     });
 
     // Written straight to the table with no workflow attribute at all.
@@ -1209,7 +1203,7 @@ describe('workflow scoping at the data boundary', () => {
       attributes: { [GEN_AI.USAGE_COST]: 9.999, [GEN_AI.INPUT_TOKENS]: 5000 },
     });
 
-    const kpis = await api.workflows[owner.workflow_id]!.metrics.kpis.get({
+    const kpis = await group_workflow(owner.workflow_id).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(owner.token),
     });
@@ -1221,7 +1215,7 @@ describe('workflow scoping at the data boundary', () => {
       total_cost: '0.0001100000',
     });
 
-    const requests = await api.workflows[owner.workflow_id]!.requests.get({
+    const requests = await group_workflow(owner.workflow_id).requests.get({
       $query: { ...range(30), limit: 20, offset: 0 },
       $headers: bearer(owner.token),
     });
@@ -1234,7 +1228,6 @@ describe('workflow scoping at the data boundary', () => {
     const owner = await create_workflow();
     const { workflow_id: workflow_b } = await create_test_workflow({ name: 'Second' });
 
-    register_agent_name('shared-agent');
     await insert_span(owner.workflow_id, {
       span_id: 'shared-a-1',
       trace_id: 'shared-trace',
@@ -1245,7 +1238,7 @@ describe('workflow scoping at the data boundary', () => {
       token_cost: '0.0001000000',
       server_cost: '0.0000000000',
       total_cost: '0.0001000000',
-      agent_id: 'shared-agent',
+      agent: 'shared-agent',
     });
     await insert_span(workflow_b, {
       span_id: 'shared-b-1',
@@ -1257,14 +1250,14 @@ describe('workflow scoping at the data boundary', () => {
       token_cost: '0.0007000000',
       server_cost: '0.0000000000',
       total_cost: '0.0007000000',
-      agent_id: 'shared-agent',
+      agent: 'shared-agent',
     });
 
     for (const [workflow_id, cost, tokens, latency] of [
       [owner.workflow_id, '0.0001000000', 10, 100],
       [workflow_b, '0.0007000000', 700, 900],
     ] as const) {
-      const kpis = await api.workflows[workflow_id]!.metrics.kpis.get({
+      const kpis = await group_workflow(workflow_id).metrics.kpis.get({
         $query: range(30),
         $headers: bearer(owner.token),
       });
@@ -1275,14 +1268,14 @@ describe('workflow scoping at the data boundary', () => {
         total_cost: cost,
       });
 
-      const distribution = await api.workflows[workflow_id]!.metrics.distribution.get({
+      const distribution = await group_workflow(workflow_id).metrics.distribution.get({
         $headers: bearer(owner.token),
         $query: { metric: 'latency', ...range(30), buckets: 4 },
       });
       expect(distribution.data!.request_count).toBe(1);
       expect(distribution.data!.max).toBe(latency);
 
-      const requests = await api.workflows[workflow_id]!.requests.get({
+      const requests = await group_workflow(workflow_id).requests.get({
         $query: { ...range(30), limit: 20, offset: 0 },
         $headers: bearer(owner.token),
       });
@@ -1317,7 +1310,7 @@ describe('workflow scoping at the data boundary', () => {
       },
     });
 
-    const kpis = await api.workflows[owner.workflow_id]!.metrics.kpis.get({
+    const kpis = await group_workflow(owner.workflow_id).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(owner.token),
     });
@@ -1336,7 +1329,7 @@ describe('workflow scoping at the data boundary', () => {
       per_costed_request_cost: null,
     });
 
-    const blocks = await api.workflows[owner.workflow_id]!.metrics.blocks.get({
+    const blocks = await group_workflow(owner.workflow_id).metrics.blocks.get({
       $headers: bearer(owner.token),
       $query: { ...range(30) },
     });
@@ -1361,15 +1354,21 @@ describe('every executed agent has an address', () => {
 
   beforeAll(async () => {
     ({ token: addr_token, workflow_id: addr_workflow } = await create_workflow());
-    // One agent reporting a single id, one reporting two, and one reporting none at all.
-    register_agent_name('addr-solo', 'SoloAgent');
-    register_agent_name('addr-rep-a', 'ReplicaAgent');
-    register_agent_name('addr-rep-b', 'ReplicaAgent');
-
-    const spans: { span_id: string; agent_id?: string; parent_span_id?: string }[] = [
-      { span_id: 'addr-solo-1', agent_id: 'addr-solo' },
-      { span_id: 'addr-rep-1', agent_id: 'addr-rep-a', parent_span_id: 'addr-solo-1' },
-      { span_id: 'addr-rep-2', agent_id: 'addr-rep-b', parent_span_id: 'addr-solo-1' },
+    // One agent run by one replica, one run by two, and a span that reports no agent at all.
+    const spans: Pick<SpanFixture, 'span_id' | 'agent' | 'replica_id' | 'parent_span_id'>[] = [
+      { span_id: 'addr-solo-1', agent: 'SoloAgent', replica_id: 'addr-solo' },
+      {
+        span_id: 'addr-rep-1',
+        agent: 'ReplicaAgent',
+        replica_id: 'addr-rep-a',
+        parent_span_id: 'addr-solo-1',
+      },
+      {
+        span_id: 'addr-rep-2',
+        agent: 'ReplicaAgent',
+        replica_id: 'addr-rep-b',
+        parent_span_id: 'addr-solo-1',
+      },
       { span_id: 'addr-nameless-1', parent_span_id: 'addr-solo-1' },
     ];
     for (const span of spans) {
@@ -1388,27 +1387,23 @@ describe('every executed agent has an address', () => {
   });
 
   test('every block group is addressable', async () => {
-    const res = await api.workflows[addr_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(addr_workflow).metrics.blocks.get({
       $headers: bearer(addr_token),
       $query: { ...range(30) },
     });
     expect(res.error).toBeNull();
 
+    // An agent's spans are addressed by its id; spans that report none, by their name.
     const blocks = res.data!.blocks;
-    expect(blocks.length).toBeGreaterThan(0);
-    for (const block of blocks) {
-      expect(block.agent_id).not.toBeNull();
-      expect(block.agent_id).not.toBe('');
-    }
-    expect(blocks.map((block) => block.label).sort()).toEqual([
-      'ReplicaAgent',
-      'SoloAgent',
-      UNATTRIBUTED_NAME,
-    ]);
+    expect(Object.fromEntries(blocks.map(({ label, agent_id }) => [label, agent_id]))).toEqual({
+      SoloAgent: Bun.randomUUIDv5('SoloAgent', addr_workflow),
+      ReplicaAgent: Bun.randomUUIDv5('ReplicaAgent', addr_workflow),
+      [UNATTRIBUTED_NAME]: UNATTRIBUTED_NAME,
+    });
   });
 
   test('each address the block breakdown advertises opens a drawer', async () => {
-    const blocks = await api.workflows[addr_workflow]!.metrics.blocks.get({
+    const blocks = await group_workflow(addr_workflow).metrics.blocks.get({
       $headers: bearer(addr_token),
       $query: { ...range(30) },
     });
@@ -1416,7 +1411,7 @@ describe('every executed agent has an address', () => {
     expect(addresses).toHaveLength(3);
 
     for (const agent_id of addresses) {
-      const drawer = await api.workflows[addr_workflow]!.metrics.agents[agent_id]!.get({
+      const drawer = await group_workflow(addr_workflow).metrics.agents[agent_id]!.get({
         $query: range(30),
         $headers: bearer(addr_token),
       });
@@ -1428,12 +1423,12 @@ describe('every executed agent has an address', () => {
 
 describe('metrics auth & access', () => {
   test('requests without the API key are rejected with 401', async () => {
-    const res = await api.workflows[workflow_id]!.metrics.kpis.get({ $query: range(30) });
+    const res = await group_workflow(workflow_id).metrics.kpis.get({ $query: range(30) });
     expect(res.error?.status as number).toBe(401);
   });
 
   test("the API key reads the workflow's metrics", async () => {
-    const res = await api.workflows[workflow_id]!.metrics.kpis.get({
+    const res = await group_workflow(workflow_id).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(TEST_API_KEY),
     });
@@ -1445,7 +1440,7 @@ describe('metrics auth & access', () => {
     const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await api.workflows[unknown]!.metrics.kpis.get({
+    const res = await group_workflow(unknown).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(token),
     });
@@ -1461,7 +1456,6 @@ describe('a request spends the sum of its spans', () => {
 
   beforeAll(async () => {
     ({ token: once_token, workflow_id: once_workflow } = await create_workflow());
-    register_agent_name('summed-agent');
 
     await insert_span(once_workflow, {
       span_id: 'summed-1',
@@ -1473,7 +1467,7 @@ describe('a request spends the sum of its spans', () => {
       token_cost: '0.0002000000',
       server_cost: '0.0000200000',
       total_cost: '0.0002200000',
-      agent_id: 'summed-agent',
+      agent: 'summed-agent',
       model: 'claude-opus-4',
     });
     await insert_span(once_workflow, {
@@ -1486,13 +1480,13 @@ describe('a request spends the sum of its spans', () => {
       token_cost: '0.0004000000',
       server_cost: '0.0000400000',
       total_cost: '0.0004400000',
-      agent_id: 'summed-agent',
+      agent: 'summed-agent',
       model: 'claude-opus-4',
     });
   });
 
   test('KPIs sum the executions once', async () => {
-    const res = await api.workflows[once_workflow]!.metrics.kpis.get({
+    const res = await group_workflow(once_workflow).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(once_token),
     });
@@ -1505,19 +1499,19 @@ describe('a request spends the sum of its spans', () => {
   });
 
   test('the block breakdown has no agent-less group', async () => {
-    const res = await api.workflows[once_workflow]!.metrics.blocks.get({
+    const res = await group_workflow(once_workflow).metrics.blocks.get({
       $headers: bearer(once_token),
       $query: { ...range(30) },
     });
     expect(res.data!.total_cost).toBe('0.0006600000');
     expect(res.data!.blocks).toHaveLength(1);
-    expect(res.data!.blocks[0]!.agent_id).toBe('summed-agent');
+    expect(res.data!.blocks[0]!.agent_id).toBe(Bun.randomUUIDv5('summed-agent', once_workflow));
     expect(res.data!.blocks[0]!.block_count).toBe(2);
     expect(res.data!.blocks.some((block) => block.agent_id === null)).toBe(false);
   });
 
   test('the requests listing rolls up the executions once', async () => {
-    const res = await api.workflows[once_workflow]!.requests.get({
+    const res = await group_workflow(once_workflow).requests.get({
       $headers: bearer(once_token),
       $query: { ...range(30), limit: 20, offset: 0 },
     });
@@ -1541,7 +1535,7 @@ describe('a request spends the sum of its spans', () => {
       total_cost: '0.0001100000',
     });
 
-    const res = await api.workflows[solo_workflow]!.metrics.kpis.get({
+    const res = await group_workflow(solo_workflow).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(token),
     });

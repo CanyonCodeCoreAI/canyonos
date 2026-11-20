@@ -27,10 +27,10 @@ class LogHandler(logging.Handler):
     widening this handler's range would double-record the same failure.
     """
 
-    def __init__(self, redis_client, agent_id=None, agent_name=None, address=None):
+    def __init__(self, redis_client, replica_id=None, agent_name=None, address=None):
         super().__init__(level=logging.DEBUG)
         self._redis = redis_client
-        self._agent_id = agent_id
+        self._replica_id = replica_id
         self._agent_name = agent_name
         self._address = address
 
@@ -46,7 +46,7 @@ class LogHandler(logging.Handler):
         try:
             entry = build_log_entry(
                 record,
-                agent_id=self._agent_id,
+                replica_id=self._replica_id,
                 agent_name=self._agent_name,
                 address=self._address,
             )

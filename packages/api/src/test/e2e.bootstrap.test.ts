@@ -86,15 +86,17 @@ describe('an API started beside a Global Controller on the configured Redis', ()
       const client = createApi(url);
       const headers = bearer(TEST_API_KEY);
 
-      const listed = await client.workflows.get({ $headers: headers });
+      const listed = await client.v1.workflows.get({ $headers: headers });
       expect(listed.error).toBeNull();
       expect(listed.data!.map(({ id }) => id)).toEqual(expect.arrayContaining([first, named]));
 
-      const detail = await client.workflows[first]!.get({ $headers: headers });
+      const detail = await client.v1.workflows[first]!.get({ $headers: headers });
       expect(detail.error).toBeNull();
       expect(detail.data?.name).toBe('workflow_1');
 
-      const requests = await client.workflows[first]!.requests.get({
+      const requests = await client.v1['workflow-groups'][workflow_group_id]!.workflows[
+        first
+      ]!.requests.get({
         $headers: headers,
         $query: {
           from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
@@ -128,7 +130,7 @@ describe('an API started beside a Global Controller on the configured Redis', ()
     for (const identity of ['0', '', '   ', 'not-a-uuid', null]) {
       await seed_controller_identity(identity, { [workflow_id]: 'workflow_1' });
       await with_api({}, async ({ url }) => {
-        expect((await fetch(`${url}/readyz`)).status).toBe(200);
+        expect((await fetch(`${url}/v1/readyz`)).status).toBe(200);
       });
     }
 
@@ -143,7 +145,7 @@ describe('an API started beside a Global Controller on the configured Redis', ()
     const before = await count_workflows();
 
     await with_api({ CANYONOS_REDIS_PORT: String(free_port()) }, async ({ url }) => {
-      expect((await fetch(`${url}/readyz`)).status).toBe(200);
+      expect((await fetch(`${url}/v1/readyz`)).status).toBe(200);
     });
 
     expect(await read_workflow(workflow_id)).toBeUndefined();
@@ -189,7 +191,9 @@ describe('an API started on Kubernetes', () => {
         expect(await read_workflow(listed_id)).toBeUndefined();
         expect(await read_workflow(unread_id)).toBeUndefined();
 
-        const prompts = await createApi(url).workflows[workflow_id]!.prompts.get({
+        const prompts = await createApi(url).v1['workflow-groups'][listed_id]!.workflows[
+          workflow_id
+        ]!.prompts.get({
           $headers: bearer(TEST_API_KEY),
         });
         expect(prompts.error).toBeNull();

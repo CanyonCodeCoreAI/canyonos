@@ -59,9 +59,10 @@ The Global Controller builds the collector's config from the list in three steps
    way back to the laptop.
 3. If `CANYONOS_DASHBOARD_OTLP_ENDPOINT` is set (the operator sets it when the cluster
    has a dashboard), add a `canyonos-dashboard` destination. On Kubernetes this is how
-   telemetry reaches the dashboard, whose API ingests the three signals at
-   `POST /v1/traces`, `/v1/metrics` and `/v1/logs`. On Kubernetes the Global Controller
-   never writes to the dashboard's Postgres itself.
+   telemetry reaches the dashboard, whose API ingests the three signals at `POST
+   /v1/workflow-groups/<workflow_group_id>/traces`, `/metrics` and `/logs`, with no key,
+   and stores only what carries that workflow group's ID. On Kubernetes the Global
+   Controller never writes to the dashboard's Postgres itself.
 
 A config reload that changes the destinations rewrites the config and restarts the
 collector. With no destinations left, it stops.

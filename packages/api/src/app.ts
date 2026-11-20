@@ -22,7 +22,6 @@ import {
 } from '@api/modules/registry/registry.service';
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
-import { telemetryRoutes } from '@api/modules/telemetry/telemetry.routes';
 import { resume_apply_loops } from '@api/modules/workflow-groups/workflow-groups.apply';
 import { workflowGroupsGuard } from '@api/modules/workflow-groups/workflow-groups.caller';
 import {
@@ -44,7 +43,7 @@ const http_logger = logger.child({ domain: LOG_DOMAINS.HTTP });
 const database_logger = logger.child({ domain: LOG_DOMAINS.DB });
 
 // Probes, asked every few seconds: no request metric for them.
-const UNMEASURED_PATHS = new Set(['/healthz', '/readyz']);
+const UNMEASURED_PATHS = new Set(['/v1/healthz', '/v1/readyz']);
 
 // The API reference page /docs loads; pinned, so it does not change under a running API.
 const SCALAR_VERSION = '1.76.4';
@@ -104,7 +103,7 @@ export const app = new Elysia({ name: 'canyonos.api' })
   // Before every guard: a `..` the router matches but request.url resolves would let a guard
   // judge another path than the route that answers.
   .use(dotSegmentGuard)
-  // Before the CORS plugin, so a /v1 request it refuses gets no CORS answer.
+  // Before the CORS plugin, so a /v1/workflow-groups request it refuses gets no CORS answer.
   .use(workflowGroupsGuard)
   .use(cors())
   .use(noCorsOnControlPaths)
@@ -125,7 +124,7 @@ export const app = new Elysia({ name: 'canyonos.api' })
           // The version every CanyonOS package shares, which `bun run version:set` writes.
           version: packageJson.version,
           description:
-            'With CANYONOS_API_KEY_HASH set, every /workflows and /resources route, and /auth/check, needs the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /readyz says when the API is ready. On Docker every /v1 route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash every /v1 route is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) every /v1 route needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
+            'With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash each of them is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
         },
         tags: [
           { name: 'Auth' },
@@ -155,8 +154,6 @@ export const app = new Elysia({ name: 'canyonos.api' })
   .use(authRoutes)
   .use(resourcesRoutes)
   .use(workflowsRoutes)
-  // Deliberately unauthenticated: the OTLP emitter is an agent process, which holds no API key.
-  .use(telemetryRoutes)
   .use(workflowGroupsRoutes);
 
 export type CanyonosApi = typeof app;
@@ -194,8 +191,8 @@ export interface RunningApi {
   stop(): Promise<void>;
 }
 
-/** Listens at once and readies the database in the background, so /healthz, /readyz and
- * /auth/status answer while it is down and every route that needs it answers 503. A setup that
+/** Listens at once and readies the database in the background, so /v1/healthz, /v1/readyz and
+ * /v1/auth/status answer while it is down and every route that needs it answers 503. A setup that
  * fails once the database answers (a migration, a restore) exits the process with code 1, so its
  * restart policy, or Kubernetes, starts it again; a database that does not answer is waited for. */
 export function start_api({ host, port }: { host: string; port: number }): RunningApi {

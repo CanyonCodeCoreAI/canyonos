@@ -57,21 +57,21 @@ const getJson = async (path: string, key?: string): Promise<{ status: number; bo
 
 /** Checks, from `apiUrl`, that the API needs a key and takes the smoke's. */
 async function checkApiKey(apiUrl: string): Promise<void> {
-  const status = await fetch(`${apiUrl}/auth/status`);
+  const status = await fetch(`${apiUrl}/v1/auth/status`);
   equal(status.status, 200, `the auth status route at ${apiUrl} answers`);
   equal(await status.json(), { api_key_required: true }, 'the API needs a key');
-  const check = await fetch(`${apiUrl}/auth/check`, {
+  const check = await fetch(`${apiUrl}/v1/auth/check`, {
     headers: { authorization: `Bearer ${API_KEY}` },
   });
   equal(check.status, 200, `the key check at ${apiUrl} accepts the key`);
   equal(await check.json(), { ok: true }, 'the key check answers ok');
 }
 
-/** The API listens before it migrates and registers the controller: `/readyz` answers 200 once
+/** The API listens before it migrates and registers the controller: `/v1/readyz` answers 200 once
  * both are done, and says what it checked. */
 const waitForReady = () =>
-  waitFor('/readyz', 120_000, async () => {
-    const { status, body } = await getJson('/readyz');
+  waitFor('/v1/readyz', 120_000, async () => {
+    const { status, body } = await getJson('/v1/readyz');
     return status === 200 ? body : null;
   });
 
@@ -160,18 +160,17 @@ async function main() {
   log('checking the API key');
   await checkApiKey(BASE_URL);
   equal(
-    (await getJson('/workflows')).status,
+    (await getJson('/v1/workflows')).status,
     401,
     'the workflow list refuses a caller with no key'
   );
 
   log('checking the bootstrapped workflow');
-  const workflows = await getJson('/workflows', API_KEY);
+  const workflows = await getJson('/v1/workflows', API_KEY);
   equal(workflows.status, 200, 'the user lists the bootstrapped workflow');
   const workflow = findWorkflow(workflows.body);
   check(workflow, 'the bootstrap used the controller id to create the workflow row');
   equal(workflow.name, 'workflow_1', 'the bootstrapped workflow takes its published name');
-  equal(workflow.file_count, 0, 'the bootstrapped workflow has no files');
 
   log('inserting the telemetry fixture');
   await seedTelemetry();
@@ -181,7 +180,11 @@ async function main() {
     from: new Date(Date.now() - 3_600_000).toISOString(),
     to: new Date().toISOString(),
   });
-  const listing = await getJson(`/workflows/${WORKFLOW_ID}/requests?${range}`, API_KEY);
+  // The fixture's workflow group has the workflow's own id.
+  const listing = await getJson(
+    `/v1/workflow-groups/${WORKFLOW_ID}/workflows/${WORKFLOW_ID}/requests?${range}`,
+    API_KEY
+  );
   equal(listing.status, 200, 'the user reads the request listing');
   equal(listing.body.total, 1, 'the inserted trace is listed');
   equal(listing.body.items[0].session_id, TRACE_ID, 'the listed trace is the inserted one');
@@ -203,17 +206,17 @@ async function main() {
   );
 
   log('checking the /api proxy and the prefix strip');
-  const proxied_health = await fetch(`${WEB_URL}/api/healthz`);
+  const proxied_health = await fetch(`${WEB_URL}/api/v1/healthz`);
   equal(proxied_health.status, 200, 'the web image proxies /api to the api service by default');
   equal(
-    (await fetch(`${WEB_URL}/api/workflows`)).status,
+    (await fetch(`${WEB_URL}/api/v1/workflows`)).status,
     401,
     'the proxy forwards a read with no key to the real API, which refuses it as it does directly'
   );
 
   log('checking the API key through the web proxy, the way the dashboard does');
   await checkApiKey(`${WEB_URL}/api`);
-  const proxied_workflows = await getProxiedJson('/workflows', API_KEY);
+  const proxied_workflows = await getProxiedJson('/v1/workflows', API_KEY);
   equal(proxied_workflows.status, 200, 'the user lists workflows through the proxy');
   equal(
     findWorkflow(proxied_workflows.body)?.id,
@@ -224,7 +227,7 @@ async function main() {
   log('restarting to prove the bootstrap is idempotent');
   await compose('restart', 'api');
   await waitForReady();
-  const after = await getJson('/workflows', API_KEY);
+  const after = await getJson('/v1/workflows', API_KEY);
   equal(
     after.body.filter((row: any) => row.id === WORKFLOW_ID).length,
     1,

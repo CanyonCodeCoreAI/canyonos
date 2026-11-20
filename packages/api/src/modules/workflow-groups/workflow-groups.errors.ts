@@ -13,6 +13,6 @@ export function unknown_workflow_group(workflow_group_id: string): AppError {
   );
 }
 
-export function unknown_workflow(name: string): AppError {
-  return notFound('workflow_groups.unknown_workflow', `No workflow is named ${name}`);
+export function unknown_workflow(workflow_id: string): AppError {
+  return notFound('workflow_groups.unknown_workflow', `No workflow has the id ${workflow_id}`);
 }

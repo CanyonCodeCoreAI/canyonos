@@ -12,6 +12,7 @@ export const GEN_AI = {
 } as const;
 
 export const RUNTIME_ATTRIBUTES = {
+  REPLICA_ID: 'canyonos.replica.id',
   TOKEN_COST: 'token_cost',
   SERVER_COST: 'server_cost',
   ERROR_COUNT: 'error_count',

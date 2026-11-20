@@ -9,7 +9,7 @@ import {
   decode_logs_export_request,
   decode_metrics_export_request,
 } from './otlp.decode';
-import { STATUS_CODE } from './telemetry.contract';
+import { STATUS_CODE, WORKFLOW_GROUP_ID_ATTRIBUTE } from './telemetry.contract';
 import { insert_logs, insert_metrics, insert_spans } from './telemetry.repo';
 import type {
   OtlpAnyValue,
@@ -126,8 +126,12 @@ export interface IngestOutcome {
   readonly rejected: number;
 }
 
-/** Decode an OTLP trace export and store every usable span. */
-export async function ingest_trace_export(payload: Uint8Array): Promise<IngestOutcome> {
+/** Decode an OTLP trace export and store every usable span of workflow group
+ * `workflow_group_id`; a span that carries another group's id, or none, is rejected. */
+export async function ingest_trace_export(
+  payload: Uint8Array,
+  workflow_group_id: string
+): Promise<IngestOutcome> {
   let request;
   try {
     request = decode_export_request(payload);
@@ -144,7 +148,8 @@ export async function ingest_trace_export(payload: Uint8Array): Promise<IngestOu
     for (const scope of resource.scopeSpans ?? []) {
       for (const span of scope.spans ?? []) {
         const row = map_span(span);
-        if (row) rows.push(row);
+        const attributes = row?.attributes as Record<string, unknown> | undefined;
+        if (row && attributes?.[WORKFLOW_GROUP_ID_ATTRIBUTE] === workflow_group_id) rows.push(row);
         else rejected += 1;
       }
     }
@@ -208,12 +213,14 @@ const metric_type_of = (metric: OtlpMetric): MetricType | null => {
 };
 
 /**
- * Decode an OTLP metric export and store every usable gauge/sum data point as one long-form row.
- * Anything this table cannot hold is skipped and counted, not rejected: reporting it back would
- * make every exporter warn on every push about data we chose not to keep.
+ * Decode an OTLP metric export and store every usable gauge/sum data point of workflow group
+ * `workflow_group_id` as one long-form row. Anything this table cannot hold, or that carries
+ * another group's id or none, is skipped and counted, not rejected: reporting it back would make
+ * every exporter warn on every push about data we chose not to keep.
  */
 export async function ingest_metric_export(
-  payload: Uint8Array
+  payload: Uint8Array,
+  workflow_group_id: string
 ): Promise<{ accepted: number; skipped: number }> {
   let request;
   try {
@@ -229,6 +236,10 @@ export async function ingest_metric_export(
   let skipped = 0;
   for (const resource of request.resourceMetrics ?? []) {
     const context = resource_context(resource.resource?.attributes);
+    if (context.resource_attributes[WORKFLOW_GROUP_ID_ATTRIBUTE] !== workflow_group_id) {
+      skipped += 1;
+      continue;
+    }
     for (const scope of resource.scopeMetrics ?? []) {
       const scoped = scope_context(context, scope.scope?.name);
       for (const metric of scope.metrics ?? []) {
@@ -309,8 +320,12 @@ export const map_log_record = (record: OtlpLogRecord, context: ScopeContext): Lo
   };
 };
 
-/** Decode an OTLP logs export and store every record it does not already hold. */
-export async function ingest_logs_export(payload: Uint8Array): Promise<{ accepted: number }> {
+/** Decode an OTLP logs export and store every record of workflow group `workflow_group_id` it
+ * does not already hold; records that carry another group's id, or none, are skipped and counted. */
+export async function ingest_logs_export(
+  payload: Uint8Array,
+  workflow_group_id: string
+): Promise<{ accepted: number; skipped: number }> {
   let request;
   try {
     request = decode_logs_export_request(payload);
@@ -322,8 +337,13 @@ export async function ingest_logs_export(payload: Uint8Array): Promise<{ accepte
   }
 
   const rows: LogRow[] = [];
+  let skipped = 0;
   for (const resource of request.resourceLogs ?? []) {
     const context = resource_context(resource.resource?.attributes);
+    if (context.resource_attributes[WORKFLOW_GROUP_ID_ATTRIBUTE] !== workflow_group_id) {
+      skipped += 1;
+      continue;
+    }
     for (const scope of resource.scopeLogs ?? []) {
       const scoped = scope_context(context, scope.scope?.name);
       for (const record of scope.logRecords ?? []) rows.push(map_log_record(record, scoped));
@@ -331,6 +351,6 @@ export async function ingest_logs_export(payload: Uint8Array): Promise<{ accepte
   }
 
   await insert_logs(rows);
-  telemetryLogger.info('OTLP logs export ingested', { accepted: rows.length });
-  return { accepted: rows.length };
+  telemetryLogger.info('OTLP logs export ingested', { accepted: rows.length, skipped });
+  return { accepted: rows.length, skipped };
 }

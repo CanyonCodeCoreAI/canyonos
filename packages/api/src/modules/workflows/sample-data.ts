@@ -6,6 +6,7 @@ import { gunzipSync } from 'node:zlib';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
+import { GEN_AI } from '@api/modules/metrics/metrics.contract';
 import {
   RESOURCE_WORKFLOW_ATTRIBUTE,
   WORKFLOW_GROUP_ID_ATTRIBUTE,
@@ -119,6 +120,11 @@ export async function add_sample_data(
     end_time_unix_nano: at(span.end_nanos_ago),
     attributes: {
       ...span.attributes,
+      // A span is named `<agent>.<method>`; its agent's id is per workflow, so set here.
+      [GEN_AI.AGENT_ID]: Bun.randomUUIDv5(
+        span.name.slice(0, span.name.lastIndexOf('.')),
+        workflow_id
+      ),
       [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
       [WORKFLOW_GROUP_ID_ATTRIBUTE]: workflow_group_id,
       [SAMPLE_ATTRIBUTE]: true,

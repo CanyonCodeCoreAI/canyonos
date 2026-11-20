@@ -13,7 +13,6 @@ import type { GridQuery, TimeRange } from '@core/time-range';
 import {
   isModelSpan,
   requestStart,
-  spanAgentId,
   spanAgentName,
   spanCacheHitRatio,
   spanCost,
@@ -23,6 +22,7 @@ import {
   spanInputTokens,
   spanModel,
   spanOutputTokens,
+  spanReplicaId,
   spanStart,
   workflowGroupId,
   workflowRequestSpans,
@@ -205,13 +205,13 @@ const ERROR_SEVERITY = sql`(l.severity_number >= ${ERROR_SEVERITY_NUMBER}
 
 const LOG_AGENT = sql.raw(`coalesce(
   nullif(l.attributes ->> 'canyonos.agent.name', ''),
-  nullif(l.attributes ->> 'canyonos.agent.id', ''),
+  nullif(l.attributes ->> 'canyonos.replica.id', ''),
   l.service_name,
   'unknown'
 )`);
 
 const LOG_REPLICA = sql.raw(`coalesce(
-  nullif(l.attributes ->> 'canyonos.agent.id', ''),
+  nullif(l.attributes ->> 'canyonos.replica.id', ''),
   l.service_name,
   'unknown'
 )`);
@@ -334,8 +334,13 @@ export const monitoring_repo = {
     return (rows as unknown as [SeriesRow])[0];
   },
 
-  async logs(workflow_id: string, query: MonitoringLogsQuery): Promise<MonitoringLog[]> {
-    const { limit, errors_only, agent, replica } = query;
+  /** The workflow's log records, newest first; `agent` keeps only those of the agent so named. */
+  async logs(
+    workflow_id: string,
+    query: MonitoringLogsQuery,
+    agent: string | undefined
+  ): Promise<MonitoringLog[]> {
+    const { limit, errors_only, replica } = query;
     const range = query;
     const severity_filter = errors_only ? sql`and ${ERROR_SEVERITY}` : sql``;
     const agent_filter = agent === undefined ? sql`` : sql`and ${LOG_AGENT} = ${agent}`;
@@ -349,11 +354,11 @@ export const monitoring_repo = {
         l.severity_text as severity,
         l.severity_number,
         (l.attributes ->> 'canyonos.agent.name') as agent,
-        coalesce(l.attributes ->> 'canyonos.agent.id', l.service_name) as replica,
+        coalesce(l.attributes ->> 'canyonos.replica.id', l.service_name) as replica,
         l.body,
         l.trace_id,
         l.span_id,
-        l.attributes - 'canyonos.agent.id' - 'canyonos.agent.name' as attributes
+        l.attributes - 'canyonos.replica.id' - 'canyonos.agent.name' as attributes
       from ${otelLogs} l
       where ${log_scope(workflow_id, range)}
         ${severity_filter}
@@ -373,7 +378,7 @@ export const monitoring_repo = {
           'YYYY-MM-DD"T"HH24:MI:SSZ') as at,
         s.name,
         ${sql.raw(spanModel('s'))} as model,
-        nullif(${sql.raw(spanAgentId('s'))}, '') as agent,
+        nullif(${sql.raw(spanReplicaId('s'))}, '') as replica,
         ${sql.raw(spanDurationMs('s'))}::float8 as duration_ms,
         ${sql.raw(spanInputTokens('s'))}::int as input_tokens,
         ${sql.raw(spanOutputTokens('s'))}::int as output_tokens,
@@ -395,7 +400,7 @@ export const monitoring_repo = {
   },
 
   async traces(workflow_id: string, query: MonitoringListQuery): Promise<MonitoringTrace[]> {
-    const agent = `nullif(${spanAgentId('s')}, '')`;
+    const replica = `nullif(${spanReplicaId('s')}, '')`;
     const rows = await db.execute(sql`
       with scoped as (${workflowRequestSpans(workflow_id, query)}),
       recent as (
@@ -411,9 +416,9 @@ export const monitoring_repo = {
         (array_agg(s.name order by coalesce(s.parent_span_id, '') <> '', s.start_time_unix_nano))[1]
           as name,
         to_json(coalesce(
-          array_agg(distinct ${sql.raw(agent)}) filter (where ${sql.raw(agent)} is not null),
+          array_agg(distinct ${sql.raw(replica)}) filter (where ${sql.raw(replica)} is not null),
           '{}'::text[]
-        )) as agents,
+        )) as replicas,
         count(*)::int as span_count,
         ((max(s.end_time_unix_nano) - r.start_nanos) / 1e6)::float8 as duration_ms,
         bool_or(${sql.raw(spanFailed('s'))}) as failed,
@@ -423,7 +428,7 @@ export const monitoring_repo = {
             'span_id', s.span_id,
             'parent_span_id', nullif(s.parent_span_id, ''),
             'name', s.name,
-            'agent', ${sql.raw(agent)},
+            'replica', ${sql.raw(replica)},
             'offset_ms', ((s.start_time_unix_nano - r.start_nanos) / 1e6)::float8,
             'duration_ms', ${sql.raw(spanDurationMs('s'))}::float8,
             'failed', ${sql.raw(spanFailed('s'))},
@@ -447,7 +452,10 @@ export const monitoring_repo = {
     return rows as unknown as MonitoringTrace[];
   },
 
-  async log_sources(workflow_id: string, range: TimeRange): Promise<MonitoringLogSource[]> {
+  async log_sources(
+    workflow_id: string,
+    range: TimeRange
+  ): Promise<Omit<MonitoringLogSource, 'agent_id'>[]> {
     const rows = await db.execute(sql`
       with scoped as (${workflowSpans(workflow_id, range)}),
       workflow_traces as (select distinct s.trace_id from scoped s),
@@ -459,7 +467,7 @@ export const monitoring_repo = {
       select agent, json_agg(replica order by replica) as replicas
       from sources group by agent order by agent
     `);
-    return rows as unknown as MonitoringLogSource[];
+    return rows as unknown as Omit<MonitoringLogSource, 'agent_id'>[];
   },
 
   async resource_utilization(
@@ -490,7 +498,7 @@ export const monitoring_repo = {
           coalesce(nullif(l.attributes ->> 'exception.type', ''), ${UNTYPED_ERROR}) as error_type,
           coalesce(
             nullif(l.attributes ->> 'canyonos.agent.name', ''),
-            nullif(l.attributes ->> 'canyonos.agent.id', ''),
+            nullif(l.attributes ->> 'canyonos.replica.id', ''),
             l.service_name,
             ${UNKNOWN_AGENT}
           ) as agent

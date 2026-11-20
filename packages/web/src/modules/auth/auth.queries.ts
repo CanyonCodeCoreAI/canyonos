@@ -9,7 +9,7 @@ import { apiCall, canyonosPublicApi } from '@/api';
 
 export const authStatusQuery = queryOptions({
   queryKey: ['auth', 'status'],
-  queryFn: () => apiCall<AuthStatus>(() => canyonosPublicApi.auth.status.get()),
+  queryFn: () => apiCall<AuthStatus>(() => canyonosPublicApi.v1.auth.status.get()),
   staleTime: 0,
 });
 
@@ -19,7 +19,7 @@ export const apiKeyCheckQuery = (apiKey: string) =>
     queryKey: ['auth', 'check', apiKey],
     queryFn: () =>
       apiCall<AuthCheck>(() =>
-        canyonosPublicApi.auth.check.get({ $headers: { authorization: `Bearer ${apiKey}` } })
+        canyonosPublicApi.v1.auth.check.get({ $headers: { authorization: `Bearer ${apiKey}` } })
       ),
     retry: false,
   });

@@ -7,8 +7,8 @@ import { config } from '@core/env';
 
 import { AuthCheckSchema, AuthStatusSchema } from './auth.types';
 
-// `/auth/check` needs the API key: `apiKeyGuard` checks it as the request arrives.
-export const authRoutes = new Elysia({ prefix: '/auth', name: 'auth.routes' })
+// `/v1/auth/check` needs the API key: `apiKeyGuard` checks it as the request arrives.
+export const authRoutes = new Elysia({ prefix: '/v1/auth', name: 'auth.routes' })
   .get('/status', () => ({ api_key_required: config.auth.apiKeyHash !== null }), {
     response: { 200: AuthStatusSchema },
     detail: { tags: ['Auth'], summary: 'Whether the API needs a key; asked before sign-in' },

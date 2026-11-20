@@ -12,7 +12,7 @@ import { controlKeyGuard, drop_cors_headers, is_control_path } from '../auth/con
 import { deploy_namespace } from './workflow-groups.kubernetes';
 import { workflow_groups_repo } from './workflow-groups.repo';
 
-// Who may call /v1. On Docker, the CLI's control key (auth/control-key.ts). On Kubernetes the
+// Who may call /v1/workflow-groups. On Docker, the CLI's control key (auth/control-key.ts). On Kubernetes the
 // caller sends their own Kubernetes login, `Authorization: Bearer <token>`: the cluster checks
 // the token (a TokenReview, else 401) and whether they may `get` (for a read) or `update` (for a
 // change) CanyonProjects in each namespace the request acts in (a SubjectAccessReview, else
@@ -125,7 +125,7 @@ function unauthenticated(set: Guarded['set'], message: string) {
   return early_refusal(set, unauthorized('auth.unauthenticated', message));
 }
 
-/** Lets a /v1 request through only from a user the cluster signs in with its token, who may
+/** Lets a /v1/workflow-groups request through only from a user the cluster signs in with its token, who may
  * act on CanyonProjects in the namespaces the request acts in. A request naming no workflow
  * group this API knows, such as the list, needs the sign-in only. */
 export async function requireKubernetesCaller({ request, set }: Guarded) {
@@ -166,8 +166,8 @@ export async function check_settings_caller(request: Request, config_text: strin
   if (!(await may(user, 'update', namespace))) throw refused(user, 'update', namespace);
 }
 
-/** Checks the caller of every /v1 request, by this API's target; mount it before the CORS
- * plugin, so a /v1 preflight gets no CORS answer. */
+/** Checks the caller of every /v1/workflow-groups request, by this API's target; mount it before the CORS
+ * plugin, so a /v1/workflow-groups preflight gets no CORS answer. */
 export const workflowGroupsGuard =
   config.workflowGroups.target === 'kubernetes'
     ? new Elysia({ name: 'auth.kubernetes-caller' }).onRequest(requireKubernetesCaller)

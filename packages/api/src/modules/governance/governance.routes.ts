@@ -6,26 +6,30 @@ import { z } from 'zod';
 
 import { databasePlugin } from '@api/db/database';
 
-import { resolve_workflow_access } from '../workflows/workflows.access';
-import { WorkflowIdParams } from '../workflows/workflows.types';
+import { resolve_group_workflow_access } from '../workflows/workflows.access';
+import { GroupWorkflowParams } from '../workflows/workflows.types';
 import { get_governance, save_agent_rules, set_stopped } from './governance.service';
 import { AgentRulesSchema, GovernanceResponseSchema, StoppedBodySchema } from './governance.types';
 
 const doc = { tags: ['Governance'], security: [{ bearerAuth: [] }] };
 
-const AgentParams = WorkflowIdParams.extend({ agent: z.string().min(1) });
+const AgentParams = GroupWorkflowParams.extend({ agent_id: z.string().uuid() });
 
 export const governanceRoutes = new Elysia({ name: 'governance.routes' })
   .use(databasePlugin)
-  .resolve(resolve_workflow_access)
-  .get('/:workflow_id/governance', ({ params }) => get_governance(params.workflow_id), {
-    params: WorkflowIdParams,
-    response: { 200: GovernanceResponseSchema },
-    detail: { ...doc, summary: 'Get every agent state, rules and spend, and who calls whom' },
-  })
+  .resolve(resolve_group_workflow_access)
+  .get(
+    '/:workflow_group_id/workflows/:workflow_id/governance',
+    ({ params }) => get_governance(params.workflow_id),
+    {
+      params: GroupWorkflowParams,
+      response: { 200: GovernanceResponseSchema },
+      detail: { ...doc, summary: 'Get every agent state, rules and spend, and who calls whom' },
+    }
+  )
   .put(
-    '/:workflow_id/governance/agents/:agent',
-    ({ params, body }) => save_agent_rules(params.workflow_id, params.agent, body),
+    '/:workflow_group_id/workflows/:workflow_id/governance/agents/:agent_id',
+    ({ params, body }) => save_agent_rules(params.workflow_id, params.agent_id, body),
     {
       params: AgentParams,
       body: AgentRulesSchema,
@@ -34,8 +38,8 @@ export const governanceRoutes = new Elysia({ name: 'governance.routes' })
     }
   )
   .put(
-    '/:workflow_id/governance/agents/:agent/stopped',
-    ({ params, body }) => set_stopped(params.workflow_id, params.agent, body.stopped),
+    '/:workflow_group_id/workflows/:workflow_id/governance/agents/:agent_id/stopped',
+    ({ params, body }) => set_stopped(params.workflow_id, params.agent_id, body.stopped),
     {
       params: AgentParams,
       body: StoppedBodySchema,

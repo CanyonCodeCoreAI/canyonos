@@ -13,6 +13,7 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, fulfillJson } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
@@ -22,6 +23,7 @@ const WRONG_KEY = 'not-the-api-key';
 const INVALID_KEY =
   'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`';
 const SCALING = `/workflows/${WORKFLOW.id}/scaling`;
+const SCALING_API = `${WORKFLOW_API}/scaling`;
 const NO_POLICY = { workflows: { app: { status: 'none' } } } satisfies ScalingResponse;
 
 const keyField = (page: Page) => page.getByTestId('auth-api-key');
@@ -30,7 +32,7 @@ const formError = (page: Page) => page.getByTestId('auth-error');
 
 const isApiCall = (request: Request) => new URL(request.url()).origin === apiOrigin;
 const isKeyCheck = (request: Request) =>
-  isApiCall(request) && new URL(request.url()).pathname === '/auth/check';
+  isApiCall(request) && new URL(request.url()).pathname === '/v1/auth/check';
 
 function countKeyChecks(page: Page): () => number {
   let checks = 0;
@@ -165,7 +167,7 @@ test('a 401 in a session signs out and comes back to the page after a new sign-i
   await stubFleetSpend(page);
   let refuse = true;
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/workflows',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/workflows',
     (route) =>
       refuse
         ? fulfillJson(
@@ -196,7 +198,7 @@ test('every API call carries the API key, reads and writes alike', async ({ page
   });
   await stubWorkflow(page);
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === SCALING,
+    (url) => url.origin === apiOrigin && url.pathname === SCALING_API,
     (route) =>
       fulfillJson(
         route,
@@ -206,7 +208,7 @@ test('every API call carries the API key, reads and writes alike', async ({ page
       )
   );
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === `${SCALING}/agents`,
+    (url) => url.origin === apiOrigin && url.pathname === `${SCALING_API}/agents`,
     (route) => fulfillJson(route, { agents: [] } satisfies ScalingAgentsResponse)
   );
   await page.goto('/login');
@@ -222,7 +224,7 @@ test('every API call carries the API key, reads and writes alike', async ({ page
 
   const session = calls
     .slice(signedIn)
-    .filter((call) => new URL(call.url()).pathname !== '/auth/status');
+    .filter((call) => new URL(call.url()).pathname !== '/v1/auth/status');
   const bearers = session.map((call) => ({
     method: call.method(),
     authorization: call.headers()['authorization'],
@@ -254,7 +256,7 @@ test('an API that cannot answer the key check keeps the key and offers a retry',
 }) => {
   let down = true;
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === '/auth/check',
+    (url) => url.origin === apiOrigin && url.pathname === '/v1/auth/check',
     (route) =>
       down
         ? fulfillJson(

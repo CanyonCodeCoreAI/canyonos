@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 import type {
@@ -134,7 +134,7 @@ function listing_spans(prefix: string): SeededSpan[] {
 type ListQuery = Record<string, string | number | undefined>;
 
 async function list(token: string, workflow_id: string, query: ListQuery = {}) {
-  const res = await api.workflows[workflow_id]!.requests.get({
+  const res = await group_workflow(workflow_id).requests.get({
     $query: { ...range(60), limit: 20, offset: 0, ...query },
     $headers: bearer(token),
   });
@@ -149,7 +149,7 @@ describe('request trace endpoint', () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await group_workflow(workflow_id).requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -162,7 +162,7 @@ describe('request trace endpoint', () => {
     const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await api.workflows[unknown]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await group_workflow(unknown).requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -174,7 +174,7 @@ describe('request trace endpoint', () => {
   test('a request without the API key is rejected with 401', async () => {
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await group_workflow(workflow_id).requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
     });
     expect(res.error?.status as number).toBe(401);
@@ -184,7 +184,7 @@ describe('request trace endpoint', () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests[VALID_REQUEST_ID]!.get({
+    const res = await group_workflow(workflow_id).requests[VALID_REQUEST_ID]!.get({
       $headers: bearer(token),
     } as never);
     expect(res.error?.status as number).toBe(422);
@@ -194,7 +194,7 @@ describe('request trace endpoint', () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests['x'.repeat(256)]!.get({
+    const res = await group_workflow(workflow_id).requests['x'.repeat(256)]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -203,7 +203,7 @@ describe('request trace endpoint', () => {
 
   test('a non-uuid workflow id is rejected by validation (422)', async () => {
     const token = TEST_API_KEY;
-    const res = await api.workflows['not-a-uuid']!.requests[VALID_REQUEST_ID]!.get({
+    const res = await group_workflow('not-a-uuid').requests[VALID_REQUEST_ID]!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -211,7 +211,7 @@ describe('request trace endpoint', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requests (listing with rollups)', () => {
   test('lists requests newest-first with status, duration, token, and cost rollups', async () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
@@ -387,7 +387,7 @@ describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
     const workflow_id = await create_workflow();
     await seed(workflow_id, listing_spans('guard'));
 
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { ...range(60), limit: 20, offset: 0 },
       $headers: bearer(TEST_API_KEY),
     });
@@ -399,7 +399,7 @@ describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
   test('a listing without the API key is rejected with 401', async () => {
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { ...range(60), limit: 20, offset: 0 },
     });
     expect(res.error?.status as number).toBe(401);
@@ -409,7 +409,7 @@ describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
 
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { ...range(60), limit: 500, offset: 0 },
       $headers: bearer(token),
     });
@@ -417,7 +417,7 @@ describe('GET /workflows/:workflow_id/requests (listing with rollups)', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/requests (ordering)', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requests (ordering)', () => {
   let token: string;
   let workflow_id: string;
 
@@ -531,7 +531,7 @@ describe('GET /workflows/:workflow_id/requests (ordering)', () => {
   });
 
   test('an unknown sort key is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { ...range(60), limit: 20, offset: 0, sort: 'nonsense' as RequestSort },
       $headers: bearer(token),
     });
@@ -539,7 +539,7 @@ describe('GET /workflows/:workflow_id/requests (ordering)', () => {
   });
 
   test('an unknown order direction is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: {
         ...range(60),
         limit: 20,
@@ -553,7 +553,7 @@ describe('GET /workflows/:workflow_id/requests (ordering)', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/requests (metric-range filtering)', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requests (metric-range filtering)', () => {
   let token: string;
   let workflow_id: string;
   let prefix: string;
@@ -655,7 +655,7 @@ describe('GET /workflows/:workflow_id/requests (metric-range filtering)', () => 
   });
 
   test('a half-specified selection is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { ...range(60), limit: 20, offset: 0, metric: 'cost_per_request', min: 1 },
       $headers: bearer(token),
     });
@@ -663,7 +663,7 @@ describe('GET /workflows/:workflow_id/requests (metric-range filtering)', () => 
   });
 
   test('an unknown metric is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       // @ts-expect-error deliberately invalid metric
       $query: { limit: 20, offset: 0, metric: 'vibes', min: 0, max: 1 },
       $headers: bearer(token),
@@ -672,7 +672,7 @@ describe('GET /workflows/:workflow_id/requests (metric-range filtering)', () => 
   });
 });
 
-describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requests (time-range filtering)', () => {
   test('a request is listed and counted whole in the range it started in', async () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
@@ -724,7 +724,7 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
       total_cost: '0.0030000000',
     });
 
-    const traces = await api.workflows[workflow_id]!.monitoring.traces.get({
+    const traces = await group_workflow(workflow_id).monitoring.traces.get({
       $query: { ...query, limit: 200 },
       $headers: bearer(token),
     });
@@ -734,13 +734,13 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
     ).toEqual([{ trace_id: 'whole', span_count: 2 }]);
 
     const [kpis, timeseries, blocks, monitoring] = await Promise.all([
-      api.workflows[workflow_id]!.metrics.kpis.get({ $query: query, $headers: bearer(token) }),
-      api.workflows[workflow_id]!.metrics.timeseries.get({
+      group_workflow(workflow_id).metrics.kpis.get({ $query: query, $headers: bearer(token) }),
+      group_workflow(workflow_id).metrics.timeseries.get({
         $query: query,
         $headers: bearer(token),
       }),
-      api.workflows[workflow_id]!.metrics.blocks.get({ $query: query, $headers: bearer(token) }),
-      api.workflows[workflow_id]!.monitoring.series.get({ $query: query, $headers: bearer(token) }),
+      group_workflow(workflow_id).metrics.blocks.get({ $query: query, $headers: bearer(token) }),
+      group_workflow(workflow_id).monitoring.series.get({ $query: query, $headers: bearer(token) }),
     ]);
     expect(kpis.data).toMatchObject({
       request_count: 1,
@@ -875,7 +875,7 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
   });
 
   test('a day that ends before it starts is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: {
         limit: 20,
         offset: 0,
@@ -890,7 +890,7 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
   });
 
   test('a window that ends before it starts is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { limit: 20, offset: 0, from: day_end, to: day_start },
       $headers: bearer(token),
     });
@@ -898,7 +898,7 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
   });
 
   test('a bound that is not an instant is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.requests.get({
+    const res = await group_workflow(workflow_id).requests.get({
       $query: { limit: 20, offset: 0, from: '2026-09-01T00:00:00', to: day_end },
       $headers: bearer(token),
     });
@@ -906,13 +906,13 @@ describe('GET /workflows/:workflow_id/requests (time-range filtering)', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/requests/:request_id', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requests/:request_id', () => {
   test('returns one request trace with ordered blocks and the workflow median', async () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
     await seed(workflow_id, listing_spans('tr'));
 
-    const res = await api.workflows[workflow_id]!.requests['tr-done']!.get({
+    const res = await group_workflow(workflow_id).requests['tr-done']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -964,7 +964,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
     const workflow_id = await create_workflow();
     await seed(workflow_id, listing_spans('trf'));
 
-    const res = await api.workflows[workflow_id]!.requests['trf-failed']!.get({
+    const res = await group_workflow(workflow_id).requests['trf-failed']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1002,7 +1002,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       end_time_unix_nano: plus(start, 200),
     });
 
-    const res = await api.workflows[workflow_id]!.requests['refused']!.get({
+    const res = await group_workflow(workflow_id).requests['refused']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1025,7 +1025,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
     const workflow_id = await create_workflow();
     await seed(workflow_id, listing_spans('trt'));
 
-    const res = await api.workflows[workflow_id]!.requests['trt-recent']!.get({
+    const res = await group_workflow(workflow_id).requests['trt-recent']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1068,7 +1068,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       cost: 9,
     });
 
-    const res = await api.workflows[workflow_id]!.requests['med-billed-1']!.get({
+    const res = await group_workflow(workflow_id).requests['med-billed-1']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1079,7 +1079,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
     expect(res.data?.harness_cost_vs_median).toBeNull();
     expect(res.data?.token_count_vs_median).toBeNull();
 
-    const wider = await api.workflows[workflow_id]!.requests['med-billed-1']!.get({
+    const wider = await group_workflow(workflow_id).requests['med-billed-1']!.get({
       $query: range(41 * 24 * 60),
       $headers: bearer(token),
     });
@@ -1098,7 +1098,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       end_time_unix_nano: plus(start, 100),
     });
 
-    const res = await api.workflows[workflow_id]!.requests['nomed']!.get({
+    const res = await group_workflow(workflow_id).requests['nomed']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1131,7 +1131,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       cost: 0.000099,
     });
 
-    const res = await api.workflows[mine]!.requests['tshare']!.get({
+    const res = await group_workflow(mine).requests['tshare']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(TEST_API_KEY),
     });
@@ -1152,7 +1152,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       end_time_unix_nano: plus(ago(MINUTE_MS), 100),
     });
 
-    const res = await api.workflows[workflow_id]!.requests['lonely']!.get({
+    const res = await group_workflow(workflow_id).requests['lonely']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });
@@ -1199,7 +1199,7 @@ describe('GET /workflows/:workflow_id/requests/:request_id', () => {
       total_cost: '0.0000040000',
     });
 
-    const res = await api.workflows[workflow_id]!.requests['bad']!.get({
+    const res = await group_workflow(workflow_id).requests['bad']!.get({
       $query: range(MONTH_MINUTES),
       $headers: bearer(token),
     });

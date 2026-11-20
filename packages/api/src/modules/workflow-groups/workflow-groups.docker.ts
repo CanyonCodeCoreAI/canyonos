@@ -203,16 +203,19 @@ export const docker_target: WorkflowGroupTarget = {
       OkSchema
     );
     const listed = body.workflows ? new Set(body.workflows) : null;
-    const removed_workflows = listed
-      ? Object.keys(row.workflows).filter((name) => !listed.has(name))
-      : [];
-    if (removed_workflows.length > 0) {
+    const removed = Object.entries(row.workflows).filter(
+      ([workflow_id]) => listed && !listed.has(workflow_id)
+    );
+    if (removed.length > 0) {
       core_answer(
-        await run_job(controller, ['remove-workflows', ...removed_workflows]),
+        await run_job(controller, [
+          'remove-workflows',
+          ...removed.map(([, workflow]) => workflow.name),
+        ]),
         RemovedSchema
       );
     }
-    return { removed_workflows };
+    return { removed_workflows: removed.map(([workflow_id]) => workflow_id) };
   },
 
   async receive_archive(body) {

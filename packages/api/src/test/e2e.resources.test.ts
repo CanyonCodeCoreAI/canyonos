@@ -68,7 +68,7 @@ const range = (from_ms_ago: number, to_ms_ago = 0) => ({
 });
 
 const overview = (token: string, query: { from: string; to: string }) =>
-  api.resources.overview.get({ $headers: bearer(token), $query: query });
+  api.v1.resources.overview.get({ $headers: bearer(token), $query: query });
 
 const tokens_usage = (workflow: {
   resource_usage: { resource_id: string; usage: number }[];
@@ -83,9 +83,9 @@ const fleet_row = (data: { workflows: FleetWorkflow[] }, workflow_id: string): F
 const fleet_rows = (data: { workflows: FleetWorkflow[] }, ids: string[]): FleetWorkflow[] =>
   data.workflows.filter((workflow) => ids.includes(workflow.id));
 
-describe('GET /resources/overview', () => {
+describe('GET /v1/resources/overview', () => {
   test('a request without the API key is rejected with 401', async () => {
-    const res = await api.resources.overview.get({ $query: range(30 * DAY_MS) });
+    const res = await api.v1.resources.overview.get({ $query: range(30 * DAY_MS) });
     expect(res.error?.status as number).toBe(401);
   });
 

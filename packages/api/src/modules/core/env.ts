@@ -37,13 +37,13 @@ export function resolveApiKeyHash(value: string | undefined): string | null {
 }
 
 /** `CANYONOS_CONTROL_KEY_HASH`: the sha256 of the control key the CLI drives workflow groups with,
- * in lowercase hex, or null when unset, which refuses every /v1 request. */
+ * in lowercase hex, or null when unset, which refuses every /v1/workflow-groups request. */
 export function resolveControlKeyHash(value: string | undefined): string | null {
   if (value === undefined || value === '') return null;
   if (API_KEY_HASH.test(value)) return value;
   throw new Error(
     'CANYONOS_CONTROL_KEY_HASH must be the sha256 of the control key as 64 lowercase hex ' +
-      'characters, or empty to refuse every /v1 request'
+      'characters, or empty to refuse every /v1/workflow-groups request'
   );
 }
 
@@ -110,8 +110,8 @@ const metrics = {
 };
 
 const docker = {
-  // The Docker Engine socket /v1 drives each workflow group's Global Controller container
-  // through; empty runs the API without Docker, and every /v1 route answers 503.
+  // The Docker Engine socket /v1/workflow-groups drives each workflow group's Global Controller container
+  // through; empty runs the API without Docker, and every /v1/workflow-groups route answers 503.
   socket: env.DOCKER_SOCKET === '' ? null : (env.DOCKER_SOCKET ?? '/var/run/docker.sock'),
   // `CANYONOS_API_CONTAINER`: the container this API runs in, which joins each Docker workflow
   // group's network to reach its Redis by name. Unset, as on the host or in a cluster, it
@@ -119,7 +119,7 @@ const docker = {
   apiContainer: env.CANYONOS_API_CONTAINER || null,
 };
 
-/** `CANYONOS_TARGET`: where /v1 runs workflow groups, `kubernetes` in the cluster this API runs
+/** `CANYONOS_TARGET`: where /v1/workflow-groups runs workflow groups, `kubernetes` in the cluster this API runs
  * in, anything else on Docker. One per process, never both. */
 export type WorkflowGroupTargetName = 'docker' | 'kubernetes';
 

@@ -25,14 +25,13 @@ import {
 import {
   RESOURCE_WORKFLOW_ATTRIBUTE,
   STATUS_CODE,
-  WORKFLOW_GROUP_ID_ATTRIBUTE,
   WORKFLOW_ID_ATTRIBUTE,
 } from '@api/modules/telemetry/telemetry.contract';
 import { ROLLUP_SECONDS } from '@api/modules/telemetry/telemetry.rollup';
 import { otelLogs, otelMetrics, otelSpans } from '@api/modules/telemetry/telemetry.schema';
 import type { MonitoringGrid, MonitoringLogsQuery } from '@api/modules/monitoring/monitoring.types';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import { reset_controller, seed_endpoint, seed_running_workflow } from './redis-test.utils';
 import {
   encode_metrics_export,
@@ -133,13 +132,13 @@ async function ingest_gauge(reading: GaugeReading): Promise<void> {
       dataPoints: [{ timeUnixNano: String(reading.time_unix_nano), asDouble: reading.value }],
     },
   };
+  // Machine readings are their workflow group's, which has the workflow's id in these tests.
   const response = await post_otlp(
-    '/v1/metrics',
+    reading.workflow_id,
+    'metrics',
     encode_metrics_export(
-      metrics_export(reading.service_name, METRIC_SCOPE, [gauge], {
+      metrics_export(reading.workflow_id, reading.service_name, METRIC_SCOPE, [gauge], {
         [RESOURCE_WORKFLOW_ATTRIBUTE]: reading.workflow_id,
-        // Machine readings are their workflow group's, which has the workflow's id in these tests.
-        [WORKFLOW_GROUP_ID_ATTRIBUTE]: reading.workflow_id,
         ...(reading.host === undefined ? {} : { 'host.name': reading.host }),
       })
     )
@@ -263,7 +262,7 @@ beforeAll(async () => {
   token = TEST_API_KEY;
 });
 
-describe('GET /workflows/:workflow_id/monitoring/series', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/series', () => {
   let workflow_id: string;
   let foreign_id: string;
 
@@ -336,7 +335,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 
   test('the four golden signals on one 24-hour grid, scoped to the workflow', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.series.get({
+    const res = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -404,7 +403,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 
   test('the grid is 24 hourly buckets ending on the current hour', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.series.get({
+    const res = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -424,7 +423,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
       { range: range_days(90), bucket_seconds: (3 * DAY_MS) / 1000 },
     ];
     for (const { range, bucket_seconds } of ranges) {
-      const res = await api.workflows[workflow_id]!.monitoring.series.get({
+      const res = await group_workflow(workflow_id).monitoring.series.get({
         $headers: bearer(token),
         $query: range,
       });
@@ -445,7 +444,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
       minute: 'numeric',
       hourCycle: 'h23',
     });
-    const res = await api.workflows[workflow_id]!.monitoring.series.get({
+    const res = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: { ...range_days(30), time_zone },
     });
@@ -456,7 +455,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 
   test('a zone ICU accepts but Postgres rejects is a 422, not a 500', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.series.get({
+    const res = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: { ...range_days(30), time_zone: '-0800' },
     });
@@ -465,7 +464,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
 
   test('a workflow with no telemetry has zero flows and unmeasured stocks', async () => {
     const { workflow_id: empty_id } = await create_workflow(token, 'Empty Series');
-    const res = await api.workflows[empty_id]!.monitoring.series.get({
+    const res = await group_workflow(empty_id).monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -490,7 +489,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 
   test('the foreign workflow sees only its own trace and reading', async () => {
-    const res = await api.workflows[foreign_id]!.monitoring.series.get({
+    const res = await group_workflow(foreign_id).monitoring.series.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -503,7 +502,7 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 
   test('a range whose from is not before its to is rejected by validation (422)', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.series.get({
+    const res = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: { from: ONE_DAY_RANGE.to, to: ONE_DAY_RANGE.from },
     });
@@ -511,11 +510,11 @@ describe('GET /workflows/:workflow_id/monitoring/series', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/logs', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/logs', () => {
   let workflow_id: string;
   let foreign_id: string;
 
-  const price_agent = { 'canyonos.agent.name': 'PriceAgent', 'canyonos.agent.id': 'price-0' };
+  const price_agent = { 'canyonos.agent.name': 'PriceAgent', 'canyonos.replica.id': 'price-0' };
 
   /**
    * Newest first: `hello` (1h), `boom` (2h, scoped only through its trace), `fatal` (3h),
@@ -558,7 +557,7 @@ describe('GET /workflows/:workflow_id/monitoring/logs', () => {
       span_id: 'log-span',
       attributes: {
         'canyonos.agent.name': 'RiskAgent',
-        'canyonos.agent.id': 'risk-0',
+        'canyonos.replica.id': 'risk-0',
         'exception.type': 'ValueError',
       },
     });
@@ -567,7 +566,7 @@ describe('GET /workflows/:workflow_id/monitoring/logs', () => {
       ms_ago: 3 * HOUR_MS,
       body: 'fatal',
       severity_text: 'FATAL',
-      attributes: { 'canyonos.agent.name': 'PriceAgent', 'canyonos.agent.id': 'price-1' },
+      attributes: { 'canyonos.agent.name': 'PriceAgent', 'canyonos.replica.id': 'price-1' },
     });
     await write_log({
       workflow_id,
@@ -590,7 +589,7 @@ describe('GET /workflows/:workflow_id/monitoring/logs', () => {
   });
 
   const read_logs = (query: Partial<MonitoringLogsQuery>, id = workflow_id) =>
-    api.workflows[id]!.monitoring.logs.get({
+    group_workflow(id).monitoring.logs.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200, errors_only: false, ...query },
     });
@@ -672,15 +671,20 @@ describe('GET /workflows/:workflow_id/monitoring/logs', () => {
     expect(res.data!.logs.map((log) => log.body)).toEqual(['boom', 'fatal']);
   });
 
-  test('agent and replica filter on the resolved source', async () => {
-    const by_agent = await read_logs({ agent: 'PriceAgent' });
+  test('agent_id and replica filter on the resolved source, and an id of no source keeps none', async () => {
+    const price_id = Bun.randomUUIDv5('PriceAgent', workflow_id);
+    const by_agent = await read_logs({ agent_id: price_id });
     expect(by_agent.data!.logs.map((log) => log.body)).toEqual(['hello', 'fatal']);
 
-    const by_replica = await read_logs({ agent: 'PriceAgent', replica: 'price-1' });
+    const by_replica = await read_logs({ agent_id: price_id, replica: 'price-1' });
     expect(by_replica.data!.logs.map((log) => log.body)).toEqual(['fatal']);
 
-    const by_service = await read_logs({ agent: 'svc-a' });
+    const by_service = await read_logs({ agent_id: Bun.randomUUIDv5('svc-a', workflow_id) });
     expect(by_service.data!.logs.map((log) => log.body)).toEqual(['warn']);
+
+    const unknown = await read_logs({ agent_id: Bun.randomUUIDv5('Ghost', workflow_id) });
+    expect(unknown.error).toBeNull();
+    expect(unknown.data!.logs).toEqual([]);
   });
 
   test('the window bounds the records', async () => {
@@ -712,13 +716,13 @@ describe('GET /workflows/:workflow_id/monitoring/logs', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
-  test('agents with their replicas, both sorted, scoped, with an unknown fallback', async () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/logs/sources', () => {
+  test('agents with their ids and replicas, both sorted, scoped, with an unknown fallback', async () => {
     const { workflow_id } = await create_workflow(token, 'Sources Workflow');
     const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Sources');
     const agent = (name: string, id: string) => ({
       'canyonos.agent.name': name,
-      'canyonos.agent.id': id,
+      'canyonos.replica.id': id,
     });
 
     await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'a', attributes: agent('Risk', 'r-0') });
@@ -729,7 +733,7 @@ describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
       workflow_id,
       ms_ago: HOUR_MS,
       body: 'e',
-      attributes: { 'canyonos.agent.id': 'solo-0' },
+      attributes: { 'canyonos.replica.id': 'solo-0' },
     });
     await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'f', service_name: 'svc-a' });
     await write_log({ workflow_id, ms_ago: HOUR_MS, body: 'g' });
@@ -740,7 +744,7 @@ describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
       attributes: agent('Foreign', 'f-0'),
     });
 
-    const res = await api.workflows[workflow_id]!.monitoring.logs.sources.get({
+    const res = await group_workflow(workflow_id).monitoring.logs.sources.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -754,13 +758,13 @@ describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
         { agent: 'solo-0', replicas: ['solo-0'] },
         { agent: 'svc-a', replicas: ['svc-a'] },
         { agent: 'unknown', replicas: ['unknown'] },
-      ],
+      ].map((source) => ({ agent_id: Bun.randomUUIDv5(source.agent, workflow_id), ...source })),
     });
   });
 
   test('a workflow with no logs has no sources', async () => {
     const { workflow_id } = await create_workflow(token, 'Empty Sources');
-    const res = await api.workflows[workflow_id]!.monitoring.logs.sources.get({
+    const res = await group_workflow(workflow_id).monitoring.logs.sources.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
@@ -768,12 +772,12 @@ describe('GET /workflows/:workflow_id/monitoring/logs/sources', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/llm', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/llm', () => {
   let workflow_id: string;
 
   const first_call_attributes = {
     [GEN_AI.REQUEST_MODEL]: 'gpt-x',
-    [GEN_AI.AGENT_ID]: 'price-0',
+    [RUNTIME_ATTRIBUTES.REPLICA_ID]: 'price-0',
     [GEN_AI.INPUT_TOKENS]: 100,
     [GEN_AI.OUTPUT_TOKENS]: 50,
     [GEN_AI.CACHE_READ_INPUT_TOKENS]: 50,
@@ -821,7 +825,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
   });
 
   test('only model spans of the workflow, newest first, with usage mapped', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.llm.get({
+    const res = await group_workflow(workflow_id).monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -834,7 +838,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
           at: at_ago(HOUR_MS),
           name: 'quote',
           model: 'gpt-x',
-          agent: 'price-0',
+          replica: 'price-0',
           duration_ms: 1500,
           input_tokens: 100,
           output_tokens: 50,
@@ -852,7 +856,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
           at: at_ago(2 * HOUR_MS),
           name: 'assess',
           model: 'claude-y',
-          agent: null,
+          replica: null,
           duration_ms: 250,
           input_tokens: null,
           output_tokens: null,
@@ -871,7 +875,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
   });
 
   test('limit keeps the newest calls', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.llm.get({
+    const res = await group_workflow(workflow_id).monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
@@ -880,7 +884,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
 
   test('a workflow with no model spans returns no calls', async () => {
     const { workflow_id: empty_id } = await create_workflow(token, 'Empty LLM');
-    const res = await api.workflows[empty_id]!.monitoring.llm.get({
+    const res = await group_workflow(empty_id).monitoring.llm.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -888,7 +892,7 @@ describe('GET /workflows/:workflow_id/monitoring/llm', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/traces', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/traces', () => {
   let workflow_id: string;
 
   /**
@@ -898,7 +902,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
   beforeAll(async () => {
     ({ workflow_id } = await create_workflow(token, 'Traces Workflow'));
     const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Traces');
-    const agent = (id: string) => ({ [GEN_AI.AGENT_ID]: id });
+    const replica = (id: string) => ({ [RUNTIME_ATTRIBUTES.REPLICA_ID]: id });
     const start = 3 * HOUR_MS;
 
     await write_span(workflow_id, {
@@ -907,7 +911,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       name: 'handle',
       ms_ago: start,
       duration_ms: 4000,
-      attributes: agent('price-0'),
+      attributes: replica('price-0'),
     });
     await write_span(workflow_id, {
       span_id: 'tr-a-llm',
@@ -918,7 +922,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       duration_ms: 1000,
       failed: true,
       status_message: 'llm down',
-      attributes: agent('risk-0'),
+      attributes: replica('risk-0'),
     });
     await write_span(workflow_id, {
       span_id: 'tr-a-fetch',
@@ -927,7 +931,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       name: 'fetch',
       ms_ago: start - 2000,
       duration_ms: 500,
-      attributes: agent('price-0'),
+      attributes: replica('price-0'),
     });
     await write_span(workflow_id, {
       span_id: 'tr-c',
@@ -935,7 +939,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       name: 'third',
       ms_ago: 2 * HOUR_MS,
       duration_ms: 300,
-      attributes: agent('advisor-0'),
+      attributes: replica('advisor-0'),
     });
     await write_span(workflow_id, {
       span_id: 'tr-b',
@@ -954,7 +958,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
   });
 
   test('traces newest first, each with its spans in start order', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.traces.get({
+    const res = await group_workflow(workflow_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -967,7 +971,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
           at: at_ago(HOUR_MS),
           trace_id: 'tr-b',
           name: 'other',
-          agents: [],
+          replicas: [],
           span_count: 1,
           duration_ms: 200,
           failed: false,
@@ -977,7 +981,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
               span_id: 'tr-b',
               parent_span_id: null,
               name: 'other',
-              agent: null,
+              replica: null,
               offset_ms: 0,
               duration_ms: 200,
               failed: false,
@@ -990,7 +994,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
           at: at_ago(2 * HOUR_MS),
           trace_id: 'tr-c',
           name: 'third',
-          agents: ['advisor-0'],
+          replicas: ['advisor-0'],
           span_count: 1,
           duration_ms: 300,
           failed: false,
@@ -1000,7 +1004,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
               span_id: 'tr-c',
               parent_span_id: null,
               name: 'third',
-              agent: 'advisor-0',
+              replica: 'advisor-0',
               offset_ms: 0,
               duration_ms: 300,
               failed: false,
@@ -1013,7 +1017,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
           at: at_ago(3 * HOUR_MS),
           trace_id: 'tr-a',
           name: 'handle',
-          agents: ['price-0', 'risk-0'],
+          replicas: ['price-0', 'risk-0'],
           span_count: 3,
           duration_ms: 4000,
           failed: true,
@@ -1023,7 +1027,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
               span_id: 'tr-a-root',
               parent_span_id: null,
               name: 'handle',
-              agent: 'price-0',
+              replica: 'price-0',
               offset_ms: 0,
               duration_ms: 4000,
               failed: false,
@@ -1034,7 +1038,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
               span_id: 'tr-a-llm',
               parent_span_id: 'tr-a-root',
               name: 'call-llm',
-              agent: 'risk-0',
+              replica: 'risk-0',
               offset_ms: 1000,
               duration_ms: 1000,
               failed: true,
@@ -1045,7 +1049,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
               span_id: 'tr-a-fetch',
               parent_span_id: 'tr-a-root',
               name: 'fetch',
-              agent: 'price-0',
+              replica: 'price-0',
               offset_ms: 2000,
               duration_ms: 500,
               failed: false,
@@ -1085,7 +1089,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       output: 'here is the plan',
     });
 
-    const res = await api.workflows[llm_id]!.monitoring.traces.get({
+    const res = await group_workflow(llm_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -1119,7 +1123,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
       attributes: { [GEN_AI.USAGE_COST]: 0 },
     });
 
-    const res = await api.workflows[free_id]!.monitoring.traces.get({
+    const res = await group_workflow(free_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -1129,13 +1133,13 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
   });
 
   test('limit counts traces, not spans', async () => {
-    const res = await api.workflows[workflow_id]!.monitoring.traces.get({
+    const res = await group_workflow(workflow_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 1 },
     });
     expect(res.data!.traces.map((trace) => trace.trace_id)).toEqual(['tr-b']);
 
-    const oldest = await api.workflows[workflow_id]!.monitoring.traces.get({
+    const oldest = await group_workflow(workflow_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 3 },
     });
@@ -1144,7 +1148,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
 
   test('a workflow with no spans returns no traces', async () => {
     const { workflow_id: empty_id } = await create_workflow(token, 'Empty Traces');
-    const res = await api.workflows[empty_id]!.monitoring.traces.get({
+    const res = await group_workflow(empty_id).monitoring.traces.get({
       $headers: bearer(token),
       $query: { ...ONE_DAY_RANGE, limit: 200 },
     });
@@ -1152,7 +1156,7 @@ describe('GET /workflows/:workflow_id/monitoring/traces', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/errors/summary', () => {
   const error_log = (
     workflow_id: string | null,
     body: string,
@@ -1164,7 +1168,7 @@ describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
     const { workflow_id } = await create_workflow(token, 'Errors Workflow');
     const { workflow_id: foreign_id } = await create_workflow(token, 'Foreign Errors');
     const price = { 'canyonos.agent.name': 'PriceAgent' };
-    const risk = { 'canyonos.agent.id': 'risk-0' };
+    const risk = { 'canyonos.replica.id': 'risk-0' };
 
     for (const body of ['v1', 'v2', 'v3']) {
       await error_log(workflow_id, body, { ...price, 'exception.type': 'ValueError' });
@@ -1180,7 +1184,7 @@ describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
     await error_log(workflow_id, 'info', { 'exception.type': 'Ignored' }, { severity_number: 9 });
     await error_log(foreign_id, 'foreign', { 'exception.type': 'ForeignError' });
 
-    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
+    const res = await group_workflow(workflow_id).monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1208,7 +1212,7 @@ describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
     const types = Array.from({ length: 12 }, (_, i) => `E${String(i + 1).padStart(2, '0')}`);
     for (const type of types) await error_log(workflow_id, type, { 'exception.type': type });
 
-    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
+    const res = await group_workflow(workflow_id).monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1219,7 +1223,7 @@ describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
 
   test('a workflow with no errors returns an empty summary', async () => {
     const { workflow_id } = await create_workflow(token, 'No Errors');
-    const res = await api.workflows[workflow_id]!.monitoring.errors.summary.get({
+    const res = await group_workflow(workflow_id).monitoring.errors.summary.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1233,7 +1237,7 @@ describe('GET /workflows/:workflow_id/monitoring/errors/summary', () => {
   });
 });
 
-describe('GET /workflows/:workflow_id/monitoring/resources', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/resources', () => {
   /**
    * Machines: `host-b` CPU 80 (1.5h); `host-a` CPU 20 (3.5h) and 40 (1.5h), memory 70 (1.5h);
    * `svc-m` (no host name) disk 10 (1.5h). Agents from span CPU, keyed on the agent that names the
@@ -1284,7 +1288,7 @@ describe('GET /workflows/:workflow_id/monitoring/resources', () => {
     const cpu_span = (
       span_id: string,
       name: string,
-      agent_id: string,
+      replica_id: string,
       ms_ago: number,
       value: number
     ) =>
@@ -1294,7 +1298,10 @@ describe('GET /workflows/:workflow_id/monitoring/resources', () => {
         name,
         ms_ago,
         duration_ms: 10,
-        attributes: { [GEN_AI.AGENT_ID]: agent_id, [RUNTIME_ATTRIBUTES.CPU_PERCENT]: value },
+        attributes: {
+          [RUNTIME_ATTRIBUTES.REPLICA_ID]: replica_id,
+          [RUNTIME_ATTRIBUTES.CPU_PERCENT]: value,
+        },
       });
     await cpu_span('res-price-1', 'Price.quote', 'price-0', middle, 25);
     await cpu_span('res-price-2', 'Price.requote', 'price-1', recent, 35);
@@ -1304,10 +1311,10 @@ describe('GET /workflows/:workflow_id/monitoring/resources', () => {
       trace_id: 'res-no-cpu',
       ms_ago: 5 * HOUR_MS,
       duration_ms: 10,
-      attributes: { [GEN_AI.AGENT_ID]: 'idle-0' },
+      attributes: { [RUNTIME_ATTRIBUTES.REPLICA_ID]: 'idle-0' },
     });
 
-    const res = await api.workflows[workflow_id]!.monitoring.resources.get({
+    const res = await group_workflow(workflow_id).monitoring.resources.get({
       $headers: bearer(token),
       $query: ONE_DAY_RANGE,
     });
@@ -1385,7 +1392,7 @@ describe('GET /workflows/:workflow_id/monitoring/resources', () => {
   test('a workflow with no readings keeps the full grid', async () => {
     const { workflow_id } = await create_workflow(token, 'Empty Resources');
     for (const range of [ONE_DAY_RANGE, SEVEN_DAY_RANGE]) {
-      const res = await api.workflows[workflow_id]!.monitoring.resources.get({
+      const res = await group_workflow(workflow_id).monitoring.resources.get({
         $headers: bearer(token),
         $query: range,
       });
@@ -1440,7 +1447,7 @@ async function write_replica_samples(
   );
 }
 
-describe('GET /workflows/:workflow_id/monitoring/replicas', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/replicas', () => {
   test('lists identified replicas whose latest up sample is fresh and 1, with their load and drain state', async () => {
     const { workflow_id } = await create_workflow(token, 'Replicas Workflow');
     const { workflow_id: other_workflow_id } = await create_workflow(token, 'Foreign Replicas');
@@ -1468,7 +1475,7 @@ describe('GET /workflows/:workflow_id/monitoring/replicas', () => {
       sample('Planner', 'foreign-0', AGENT_UP_METRIC, 1, 1_000),
     ]);
 
-    const res = await api.workflows[workflow_id]!.monitoring.replicas.get({
+    const res = await group_workflow(workflow_id).monitoring.replicas.get({
       $headers: bearer(token),
     });
 
@@ -1504,7 +1511,7 @@ describe('GET /workflows/:workflow_id/monitoring/replicas', () => {
   test('a workflow with no replica samples lists no replicas', async () => {
     const { workflow_id } = await create_workflow(token, 'Empty Replicas');
 
-    const res = await api.workflows[workflow_id]!.monitoring.replicas.get({
+    const res = await group_workflow(workflow_id).monitoring.replicas.get({
       $headers: bearer(token),
     });
 
@@ -1602,7 +1609,7 @@ describe('metric reads after raw retention', () => {
   });
 
   test('series and resources on a 7-day range still show the readings', async () => {
-    const series = await api.workflows[workflow_id]!.monitoring.series.get({
+    const series = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
@@ -1612,7 +1619,7 @@ describe('metric reads after raw retention', () => {
       grid_values(series.data!, null, [[first_ms_ago, weighted_average]])
     );
 
-    const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
+    const resources = await group_workflow(workflow_id).monitoring.resources.get({
       $headers: bearer(token),
       $query: SEVEN_DAY_RANGE,
     });
@@ -1640,7 +1647,7 @@ describe('metric reads after raw retention', () => {
       to: new Date(bucket_ms + 15 * 60_000).toISOString(),
     };
 
-    const series = await api.workflows[workflow_id]!.monitoring.series.get({
+    const series = await group_workflow(workflow_id).monitoring.series.get({
       $headers: bearer(token),
       $query: range,
     });
@@ -1649,7 +1656,7 @@ describe('metric reads after raw retention', () => {
     const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
     expect(saturation.values).toEqual(Array.from({ length: 15 }, () => null));
 
-    const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
+    const resources = await group_workflow(workflow_id).monitoring.resources.get({
       $headers: bearer(token),
       $query: range,
     });
@@ -1680,7 +1687,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
     });
   }
 
-  const series = await api.workflows[workflow_id]!.monitoring.series.get({
+  const series = await group_workflow(workflow_id).monitoring.series.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1690,7 +1697,7 @@ test('an unaligned from counts the five-minute bucket that contains it', async (
   const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
   expect(saturation.values[0]).toBe(30);
 
-  const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
+  const resources = await group_workflow(workflow_id).monitoring.resources.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1725,7 +1732,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
     });
   }
 
-  const series = await api.workflows[workflow_id]!.monitoring.series.get({
+  const series = await group_workflow(workflow_id).monitoring.series.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1735,7 +1742,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
   const saturation = series.data!.series.find((entry) => entry.signal === 'saturation')!;
   expect(saturation.values.at(-1)).toBe(50);
 
-  const resources = await api.workflows[workflow_id]!.monitoring.resources.get({
+  const resources = await group_workflow(workflow_id).monitoring.resources.get({
     $headers: bearer(token),
     $query: range,
   });
@@ -1745,7 +1752,7 @@ test('an unaligned to counts the five-minute bucket that contains it', async () 
   expect(cpu.values.at(-1)).toBe(50);
 });
 
-describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
+describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/endpoint', () => {
   beforeEach(reset_controller);
 
   // The workflow's own route, and one of another workflow of its workflow group.
@@ -1775,7 +1782,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
   test('a workflow the controller is not running is 404 registry.workflow_not_running', async () => {
     const { workflow_id } = await create_workflow(token, 'Idle Endpoint');
 
-    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
+    const res = await group_workflow(workflow_id).monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1788,7 +1795,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     await seed_running_workflow(workflow_id, { prompts: {} });
     await seed_endpoint(recorded_endpoint(workflow_id));
 
-    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
+    const res = await group_workflow(workflow_id).monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1816,7 +1823,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     const { workflow_id } = await create_workflow(token, 'No Endpoint Workflow');
     await seed_running_workflow(workflow_id, { prompts: {} });
 
-    const res = await api.workflows[workflow_id]!.monitoring.endpoint.get({
+    const res = await group_workflow(workflow_id).monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1829,7 +1836,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     await seed_running_workflow(workflow_id, { prompts: {} });
     await seed_endpoint({ ...recorded_endpoint(workflow_id), routes: 'not json' });
 
-    const malformed = await api.workflows[workflow_id]!.monitoring.endpoint.get({
+    const malformed = await group_workflow(workflow_id).monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1840,7 +1847,7 @@ describe('GET /workflows/:workflow_id/monitoring/endpoint', () => {
     await seed_running_workflow(workflow_id, { prompts: {} });
     await seed_endpoint({ public_host: '203.0.113.7', api_port: '8080' });
 
-    const partial = await api.workflows[workflow_id]!.monitoring.endpoint.get({
+    const partial = await group_workflow(workflow_id).monitoring.endpoint.get({
       $headers: bearer(token),
     });
 
@@ -1854,7 +1861,7 @@ describe('monitoring access', () => {
     const { workflow_id } = await create_workflow(token, 'Access Monitoring');
     const unknown = '00000000-0000-4000-8000-000000000000';
     const routes = (id: string, headers: Record<string, string> = {}) => {
-      const monitoring = api.workflows[id]!.monitoring;
+      const monitoring = group_workflow(id).monitoring;
       const read = { $headers: headers, $query: ONE_DAY_RANGE };
       const list = { ...read, $query: { ...read.$query, limit: 200 } };
       return Promise.all([
@@ -1890,7 +1897,7 @@ describe('monitoring endpoints read exactly [from, to)', () => {
 
   let workflow_id: string;
 
-  const monitoring = () => api.workflows[workflow_id]!.monitoring;
+  const monitoring = () => group_workflow(workflow_id).monitoring;
 
   async function write_range_log(minutes: number, severity_text: string, body: string) {
     await db.insert(otelLogs).values({

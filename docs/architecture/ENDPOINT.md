@@ -109,7 +109,7 @@ On Kubernetes the operator sets `CANYONOS_ENDPOINT_URL` to the Route, Ingress or
 Three components read this hash:
 
 - The CanyonOS API, as `endpoint` in `GET /v1/workflow-groups/<workflow_group_id>`, which it reads from the workflow group's Redis (`packages/api/src/modules/workflow-groups/workflow-groups.runtime.ts`). The CLI uses it for `canyonos test`, `canyonos status` and the deploy summary.
-- The dashboard API, at `GET /workflows/:workflow_id/monitoring/endpoint`.
+- The dashboard API, at `GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/monitoring/endpoint`.
 - The Reconciler, which reads `api_port` before it launches the endpoint.
 
 Without `endpoint.api_port` in `workflow_group.yaml`, the endpoint keeps the port it had. On Docker, the Reconciler moves to the next free port when it is taken, and rewrites the hash.

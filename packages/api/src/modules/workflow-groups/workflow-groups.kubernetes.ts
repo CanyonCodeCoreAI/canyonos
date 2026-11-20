@@ -614,7 +614,7 @@ async function reload(
 }
 
 /** The workflow ids the uploaded workflow_group.yaml gives its workflows, by name. */
-function workflow_ids(config: string | null): Record<string, string> {
+export function workflow_ids(config: string | null): Record<string, string> {
   if (config === null) return {};
   try {
     const parsed = Bun.YAML.parse(config) as {
@@ -658,21 +658,22 @@ function endpoint_of(project: CanyonProject | null, row: WorkflowGroupRow | null
   };
 }
 
-function agents_of(agents: CanyonAgent[]): Record<string, AgentStatus> {
-  return Object.fromEntries(
-    agents.map((agent) => {
-      const ready = conditions_of(agent).Ready;
-      const fatal = ready?.reason && [...FATAL_REASONS, 'Unschedulable'].includes(ready.reason);
-      return [
-        agent.spec?.agentName ?? agent.metadata.name,
-        {
-          desired_replicas: agent.spec?.replicas ?? 1,
-          running_replicas: agent.status?.readyReplicas ?? 0,
-          launch_error: fatal ? (ready.message ?? null) : null,
-        },
-      ];
-    })
-  );
+function agents_of(agents: CanyonAgent[], row: WorkflowGroupRow | null): AgentStatus[] {
+  const ids = workflow_ids(row?.config ?? null);
+  return agents.map((agent) => {
+    const ready = conditions_of(agent).Ready;
+    const fatal = ready?.reason && [...FATAL_REASONS, 'Unschedulable'].includes(ready.reason);
+    const name = agent.spec?.agentName ?? agent.metadata.name;
+    // Agents are named `<workflow>.<agent>`.
+    const workflow_id = ids[name.split('.')[0]!];
+    return {
+      agent_id: workflow_id ? Bun.randomUUIDv5(name, workflow_id) : null,
+      name,
+      desired_replicas: agent.spec?.replicas ?? 1,
+      running_replicas: agent.status?.readyReplicas ?? 0,
+      launch_error: fatal ? (ready.message ?? null) : null,
+    };
+  });
 }
 
 function not_running(): AppError {
@@ -855,12 +856,17 @@ export const kubernetes_target: WorkflowGroupTarget = {
     const row = await workflow_groups_repo.claim(workflow_group_id, null);
     await write_group_files(workflow_group_id, body.config, body.env);
     const listed = body.workflows ? new Set(body.workflows) : null;
-    const removed_workflows = listed
-      ? Object.keys(row.workflows).filter((name) => !listed.has(name))
-      : [];
-    if (removed_workflows.length > 0) await remove_workflows(workflow_group_id, removed_workflows);
+    const removed = Object.entries(row.workflows).filter(
+      ([workflow_id]) => listed && !listed.has(workflow_id)
+    );
+    if (removed.length > 0) {
+      await remove_workflows(
+        workflow_group_id,
+        removed.map(([, workflow]) => workflow.name)
+      );
+    }
     if (listed) forgotten.delete(workflow_group_id);
-    return { removed_workflows };
+    return { removed_workflows: removed.map(([workflow_id]) => workflow_id) };
   },
 
   receive_archive,
@@ -984,7 +990,7 @@ export const kubernetes_target: WorkflowGroupTarget = {
     try {
       const { project, agents } = await project_objects(deploy);
       report.endpoint = endpoint_of(project, row);
-      report.agents = agents_of(agents);
+      report.agents = agents_of(agents, row);
     } catch (error) {
       report.errors.push(`Could not read the deploy in the cluster: ${message_of(error)}`);
     }

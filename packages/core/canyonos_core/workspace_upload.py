@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Read a workflow archive the CLI uploads to the server's
-`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<name>`: list and fingerprint
+`PUT /v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>`: list and fingerprint
 its entries, and remove from the workspace what the previous upload had and this one
 lacks."""
 

@@ -20,13 +20,15 @@ import {
   stubWorkflowDashboard,
   stubWorkflowsList,
   WORKFLOW,
+  WORKFLOW_API,
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const SCALING_PATH = `/workflows/${WORKFLOW.id}/scaling`;
-const AGENTS_PATH = `${SCALING_PATH}/agents`;
+const SCALING_API = `${WORKFLOW_API}/scaling`;
+const AGENTS_PATH = `${SCALING_API}/agents`;
 // The workflow's name: its agents are named `app.<agent>`.
 const APP = 'app';
 const UNREACHABLE = 'The running controller could not be reached';
@@ -59,6 +61,7 @@ const INVALID: ScalingStatus = {
 
 const AGENTS: ScalingAgent[] = [
   {
+    agent_id: 'id-app.PriceAgent',
     name: 'app.PriceAgent',
     replicas_expected: 2,
     replicas_running: 1,
@@ -68,7 +71,13 @@ const AGENTS: ScalingAgent[] = [
       observed_at: '2026-10-06T12:00:00.000Z',
     },
   },
-  { name: 'app.RiskAgent', replicas_expected: 1, replicas_running: 1, load: null },
+  {
+    agent_id: 'id-app.RiskAgent',
+    name: 'app.RiskAgent',
+    replicas_expected: 1,
+    replicas_running: 1,
+    load: null,
+  },
 ];
 
 type Respond = (route: Route) => Promise<void>;
@@ -133,7 +142,7 @@ async function stubScaling(
     }
   );
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === SCALING_API,
     async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       stub.reads += 1;
@@ -144,7 +153,7 @@ async function stubScaling(
   );
   // Writes behave like the controller config: a PUT stores app's policy, a DELETE drops it.
   await page.route(
-    (url) => url.origin === apiOrigin && url.pathname === SCALING_PATH,
+    (url) => url.origin === apiOrigin && url.pathname === SCALING_API,
     async (route) => {
       const request = route.request();
       if (request.method() !== 'PUT' && request.method() !== 'DELETE') return route.fallback();

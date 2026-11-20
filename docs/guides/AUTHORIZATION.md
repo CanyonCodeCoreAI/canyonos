@@ -69,7 +69,7 @@ curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<req
 To the dashboard API, on port `3000`, from a script:
 
 ```bash
-curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:3000/workflows
+curl -H "Authorization: Bearer <your api key>" http://127.0.0.1:3000/v1/workflows
 ```
 
 - The `curl` lines the CLI prints show the `<your api key>` placeholder, never the key.

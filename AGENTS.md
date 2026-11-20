@@ -60,7 +60,7 @@ Run `bun run check` and the E2E suite that covers the change before calling it d
   - _orchestrator_: what starts, replaces and removes an agent's replicas; on Docker and EC2, CanyonOS's own reconciler; on Kubernetes, the operator and Kubernetes. The Global Controller decides how many replicas each agent should have and asks `gc.orchestrator` (`controller/orchestrator.py`) to run them. Never "replica manager" or "backend", and never call it "replicas", which are the running copies.
   - _workflow_: one folder deployed with `canyonos deploy`, keyed by its `workflow_id`. Never "project" or "folder".
   - _workflow group_: the workflows deployed together, keyed by `workflow_group_id`; `workflow_group` in code. Never "deployment".
-  - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, exported telemetry names such as `canyonos.agent.id` (it holds a replica ID), AWS API names such as `run_instances` or `InstanceType`, and Kubernetes and operator names such as the `CanyonProject` resource, its `project_id` and `apply-project`.
+  - Names that predate this and stay: stored Redis keys such as `agent_instance:*` and `agent:<name>:instances`, AWS API names such as `run_instances` or `InstanceType`, and Kubernetes and operator names such as the `CanyonProject` resource, its `project_id` and `apply-project`.
 - Name a variable for what it holds, with its subject: `memory_per_call`, not `per_call`. If the code already has a word for that thing, use it rather than a new one: the cap on one replica's calls is `max_workers`, not `replica_limit`.
 - Core modules are also imported as flat modules inside container images. Do not "fix" those fallback imports or the `E402` ignore in `pyproject.toml`.
 

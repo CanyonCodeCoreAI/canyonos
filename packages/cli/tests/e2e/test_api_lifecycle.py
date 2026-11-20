@@ -183,8 +183,8 @@ def test_sync_goes_through_a_recreated_api(deployed_workflow):
     assert "Sync complete." in synced, synced
     assert _api_running(), "sync did not bring the API back"
     status = _status(case, folder)
-    agents = status["agents"] or {}
-    hello = [agent for name, agent in agents.items() if name.endswith(".HelloAgent")]
+    agents = status["agents"] or []
+    hello = [agent for agent in agents if agent["name"].endswith(".HelloAgent")]
     [workflow] = {route["workflow"] for route in status["endpoint"]["routes"]}
     assert [agent["desired_replicas"] for agent in hello] == [2], (
         f"{synced}\n{json.dumps(status)}\n{_controller_view(folder, workflow)}"

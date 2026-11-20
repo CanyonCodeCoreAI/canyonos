@@ -248,7 +248,16 @@ describe('the Kubernetes target', () => {
           },
         ],
       },
-      agents: { HelloAgent: { desired_replicas: 2, running_replicas: 1, launch_error: null } },
+      // No uploaded workflow names it, so it has no id.
+      agents: [
+        {
+          agent_id: null,
+          name: 'HelloAgent',
+          desired_replicas: 2,
+          running_replicas: 1,
+          launch_error: null,
+        },
+      ],
       errors: [],
     });
     // Asked of the cluster in the namespace the restored deploy runs in.

@@ -140,7 +140,8 @@ export async function seedMonitoringDemo(workflow_id: string): Promise<void> {
           output: model && !span_failed ? COMPLETIONS[step_index]! : null,
           attributes: {
             [WORKFLOW_ID_ATTRIBUTE]: workflow_id,
-            'gen_ai.agent.id': replica,
+            'gen_ai.agent.id': Bun.randomUUIDv5(agent.name, workflow_id),
+            'canyonos.replica.id': replica,
             cpu: Math.min(99, AGENT_CPU_BASE[step_index]! + random() * 20),
             ...(model
               ? {
@@ -174,7 +175,7 @@ export async function seedMonitoringDemo(workflow_id: string): Promise<void> {
           span_id: `${trace_id}-${step_index}`,
           attributes: {
             'canyonos.agent.name': agent.name,
-            'canyonos.agent.id': replica,
+            'canyonos.replica.id': replica,
             'logger.name': `canyonos.${agent.name}`,
             ...(span_failed && failure.type !== null
               ? {
@@ -229,7 +230,7 @@ export async function seedMonitoringDemo(workflow_id: string): Promise<void> {
     span_id: null,
     attributes: {
       'canyonos.agent.name': 'report-writer',
-      'canyonos.agent.id': 'report-writer-0',
+      'canyonos.replica.id': 'report-writer-0',
       'exception.type': 'SystemExit',
       'exception.message': FATAL_BODY,
     },

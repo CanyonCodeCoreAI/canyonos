@@ -73,6 +73,7 @@ from ..harness import (
     stage,
     stop_workflow_group,
     traces,
+    workflow_group_id,
     workflow_name,
 )
 from ..fleet import redis_reply
@@ -233,9 +234,13 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
     """The Redis routes show this workflow's own agents, endpoint and prompts, which
     differ between the two workflows, so a Redis read from the other one fails."""
     directory = fleet.dirs[name]
-    base = f"/workflows/{fleet.ids[name]}"
+    group_id = workflow_group_id(directory)
+    base = f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids[name]}"
     agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
-    assert {agent["name"] for agent in agents} == _agent_names(directory), agents
+    namespace = uuid.UUID(fleet.ids[name])
+    assert {(agent["name"], agent["agent_id"]) for agent in agents} == {
+        (agent, str(uuid.uuid5(namespace, agent))) for agent in _agent_names(directory)
+    }, agents
     endpoint = fleet.api.get(f"{base}/monitoring/endpoint").json()["endpoint"]
     assert endpoint is not None, f"{name} records no endpoint"
     served = [(route["agent"], route["method"]) for route in endpoint["routes"]]
@@ -409,13 +414,15 @@ def test_one_api_key_lists_both_workflows(recorder, fleet):
     """The dashboard needs the API key, and the key is for the whole machine, not
     for one workflow."""
     base_url = fleet.api.base_url
-    status = http(recorder, "GET", f"{base_url}/auth/status").json()
+    status = http(recorder, "GET", f"{base_url}/v1/auth/status").json()
     assert status == {"api_key_required": True}, status
-    anonymous = http(recorder, "GET", f"{base_url}/workflows", check=False)
+    anonymous = http(recorder, "GET", f"{base_url}/v1/workflows", check=False)
     assert anonymous.code == 401, anonymous.output
     assert anonymous.json()["error"] == "auth.missing_key", anonymous.output
     headers = bearer(recorder.api_key)
-    workflows = http(recorder, "GET", f"{base_url}/workflows", headers=headers).json()
+    workflows = http(
+        recorder, "GET", f"{base_url}/v1/workflows", headers=headers
+    ).json()
     listed = {workflow["id"] for workflow in workflows}
     assert set(fleet.ids.values()) <= listed, workflows
 
@@ -448,7 +455,8 @@ def test_pinned_ports_are_the_published_host_ports(recorder, fleet):
 def test_dashboard_reads_each_workflow_groups_own_redis(recorder, fleet):
     for name in WORKFLOWS:
         _reads_own_redis(recorder, fleet, name)
-        base = f"/workflows/{fleet.ids[name]}"
+        group_id = workflow_group_id(fleet.dirs[name])
+        base = f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids[name]}"
 
         def all_replicas_up(base=base):
             agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
@@ -508,7 +516,7 @@ def test_helloworld_without_an_otel_block_sends_traces_to_the_dashboard(
     def helloworld_trace():
         return [
             trace
-            for trace in traces(fleet.api, fleet.ids["helloworld"])
+            for trace in traces(fleet.api, directory, fleet.ids["helloworld"])
             if trace["trace_id"] == request_id
             and any(span["name"] == hello_call for span in trace["spans"])
         ]
@@ -542,11 +550,11 @@ def test_a_stopped_database_is_named_until_it_runs_again(recorder, fleet):
     base_url = fleet.api.base_url
     docker(recorder, ["stop", DASHBOARD_DB])
     try:
-        assert http(recorder, "GET", f"{base_url}/healthz").code == 200
-        ready = http(recorder, "GET", f"{base_url}/readyz", check=False)
+        assert http(recorder, "GET", f"{base_url}/v1/healthz").code == 200
+        ready = http(recorder, "GET", f"{base_url}/v1/readyz", check=False)
         assert ready.code == 503, ready.output
         assert ready.json()["checks"]["database"] != "ok", ready.output
-        listed = fleet.api.get("/workflows", check=False)
+        listed = fleet.api.get("/v1/workflows", check=False)
         assert listed.code == 503, listed.output
         assert listed.json()["error"] == "database.unavailable", listed.output
         for name in WORKFLOWS:
@@ -610,7 +618,7 @@ def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, flee
     refused = http(recorder, "GET", other, headers=bearer(new_key), check=False)
     assert _refused_with(refused, "auth.invalid_key"), refused.output
 
-    workflows = f"{fleet.api.base_url}/workflows"
+    workflows = f"{fleet.api.base_url}/v1/workflows"
     listed = http(recorder, "GET", workflows, headers=bearer(new_key)).json()
     assert set(fleet.ids.values()) <= {workflow["id"] for workflow in listed}, listed
     stale = http(recorder, "GET", workflows, headers=bearer(old_key), check=False)
@@ -619,7 +627,7 @@ def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, flee
     assert status.code == 0 and status.json()["running"] is True, status.output
 
     canyonos(recorder, ["serve"], cwd=kept, timeout=600)
-    assert fleet.api.get("/workflows").code == 200
+    assert fleet.api.get("/v1/workflows").code == 200
 
 
 def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
@@ -642,8 +650,10 @@ def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
     _all_running(recorder, fleet, "portfolio")
     assert dashboard_containers(recorder) == DASHBOARD_CONTAINERS
     _reads_own_redis(recorder, fleet, "portfolio")
+    group_id = workflow_group_id(fleet.dirs["helloworld"])
     stopped = fleet.api.get(
-        f"/workflows/{fleet.ids['helloworld']}/prompts", check=False
+        f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids['helloworld']}/prompts",
+        check=False,
     )
     assert stopped.code == 502, stopped.output
 
@@ -742,7 +752,8 @@ def test_the_cli_sends_the_api_key_to_add_sample_data(recorder, fleet):
     added = cli_value(
         recorder,
         fleet.dirs["portfolio"],
-        f"add_sample_data({fleet.ids['portfolio']!r}, 'portfolio')",
+        f"add_sample_data({workflow_group_id(fleet.dirs['portfolio'])!r}, "
+        f"{fleet.ids['portfolio']!r}, 'portfolio')",
         "from canyonos.dashboard_registration import add_sample_data",
     )
     assert added["spans"] > 0, added

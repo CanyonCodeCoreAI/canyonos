@@ -69,26 +69,31 @@ function desired_replicas(raw: string | null): number {
 
 /** Each published agent's desired and running replica counts and why its last launch failed,
  * if it did; none while no agent spec is published. */
-async function read_agents(redis: RedisClient): Promise<Record<string, AgentStatus>> {
+async function read_agents(
+  redis: RedisClient,
+  running: Record<string, string>
+): Promise<AgentStatus[]> {
+  const workflow_ids = new Map(Object.entries(running).map(([id, workflow]) => [workflow, id]));
   const names = AgentNamesSchema.safeParse(parse_json(await redis.get(ACTIVE_AGENTS_KEY)));
-  if (!names.success) return {};
+  if (!names.success) return [];
   const launch_errors = await redis.hgetall(LAUNCH_ERRORS_KEY);
   const agents = await Promise.all(
-    names.data.map(async (listed): Promise<[string, AgentStatus] | null> => {
+    names.data.map(async (listed): Promise<AgentStatus | null> => {
       const spec = AgentSpecSchema.safeParse(parse_json(await redis.get(agent_spec_key(listed))));
       if (!spec.success) return null;
       const { name } = spec.data;
-      return [
+      // Agents are named `<workflow>.<agent>`.
+      const workflow_id = workflow_ids.get(name.split('.')[0]!);
+      return {
+        agent_id: workflow_id ? Bun.randomUUIDv5(name, workflow_id) : null,
         name,
-        {
-          desired_replicas: desired_replicas(await redis.get(desired_replicas_key(name))),
-          running_replicas: await running_replicas(redis, name),
-          launch_error: launch_errors[name] ?? null,
-        },
-      ];
+        desired_replicas: desired_replicas(await redis.get(desired_replicas_key(name))),
+        running_replicas: await running_replicas(redis, name),
+        launch_error: launch_errors[name] ?? null,
+      };
     })
   );
-  return Object.fromEntries(agents.filter((agent) => agent !== null));
+  return agents.filter((agent) => agent !== null);
 }
 
 /** What the controller on redis keeps of the deploy, unless it runs none of `workflow_ids`:
@@ -102,7 +107,7 @@ async function read_runtime(
   const { endpoint, error } = await read_endpoint(redis);
   return {
     endpoint,
-    agents: await read_agents(redis),
+    agents: await read_agents(redis, running),
     machine_errors: await redis.hgetall(MACHINE_ERRORS_KEY),
     errors: error ? [error] : [],
   };

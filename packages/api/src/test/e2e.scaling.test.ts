@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 
-import { api, setupE2ETests } from './e2e.setup';
+import { group_workflow, setupE2ETests } from './e2e.setup';
 import {
   read_scaling_config,
   reset_controller,
@@ -54,7 +54,7 @@ describe('workflow scaling policy', () => {
   test('returns the stored policy as applied', async () => {
     const { token, workflow_id } = await running_workflow();
 
-    const res = await api.workflows[workflow_id]!.scaling.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({ workflows: { app: { status: 'applied', policy: POLICY } } });
@@ -64,11 +64,11 @@ describe('workflow scaling policy', () => {
     const { token, workflow_id } = await running_workflow(null);
     const headers = bearer(token);
 
-    const listed = await api.workflows[workflow_id]!.scaling.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).scaling.get({ $headers: headers });
     expect(listed.error).toBeNull();
     expect(listed.data).toEqual({ workflows: { app: { status: 'none' } } });
 
-    const saved = await api.workflows[workflow_id]!.scaling.put(POLICY, { headers: key_headers });
+    const saved = await group_workflow(workflow_id).scaling.put(POLICY, { headers: key_headers });
     expect(saved.error).toBeNull();
     expect(saved.data).toEqual(POLICY);
     expect(await read_scaling_config()).toEqual({ workflows: { app: POLICY } });
@@ -79,19 +79,19 @@ describe('workflow scaling policy', () => {
     const headers = bearer(token);
     const edited: ScalingPolicy = { ...POLICY, max_replicas: 3, scale_up_above: 20 };
 
-    const saved = await api.workflows[workflow_id]!.scaling.put(edited, { headers: key_headers });
+    const saved = await group_workflow(workflow_id).scaling.put(edited, { headers: key_headers });
 
     expect(saved.error).toBeNull();
     expect(saved.data).toEqual(edited);
     expect(await read_scaling_config()).toEqual({ ...CONFIG, workflows: { app: edited } });
-    const listed = await api.workflows[workflow_id]!.scaling.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).scaling.get({ $headers: headers });
     expect(listed.data).toEqual({ workflows: { app: { status: 'applied', policy: edited } } });
   });
 
   test('a save strips fields the policy does not have', async () => {
     const { workflow_id } = await running_workflow(null);
 
-    const saved = await api.workflows[workflow_id]!.scaling.put(
+    const saved = await group_workflow(workflow_id).scaling.put(
       { ...POLICY, agent_name: 'app.PriceAgent' } as ScalingPolicy,
       { headers: key_headers }
     );
@@ -117,7 +117,7 @@ describe('workflow scaling policy', () => {
 
     const responses = await Promise.all(
       invalid.map((body) =>
-        api.workflows[workflow_id]!.scaling.put(body as ScalingPolicy, { headers: key_headers })
+        group_workflow(workflow_id).scaling.put(body as ScalingPolicy, { headers: key_headers })
       )
     );
 
@@ -134,7 +134,7 @@ describe('workflow scaling policy', () => {
     const { workflow_id: running_id } = await create_test_workflow({ name: 'Running' });
     await seed_running_workflow(running_id, { prompts: {} });
     await seed_scaling(JSON.stringify(CONFIG));
-    const scaling = api.workflows[workflow_id]!.scaling;
+    const scaling = group_workflow(workflow_id).scaling;
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
@@ -152,7 +152,7 @@ describe('workflow scaling policy', () => {
 
   test('a caller with no API key is rejected on every route', async () => {
     const { workflow_id } = await running_workflow();
-    const scaling = api.workflows[workflow_id]!.scaling;
+    const scaling = group_workflow(workflow_id).scaling;
 
     const responses = await Promise.all([
       scaling.get(),
@@ -170,7 +170,7 @@ describe('workflow scaling policy', () => {
   test('a workflow that does not exist is 404 workflows.not_found on every route', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const scaling = api.workflows['11111111-1111-4111-8111-111111111111']!.scaling;
+    const scaling = group_workflow('11111111-1111-4111-8111-111111111111').scaling;
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
@@ -190,8 +190,8 @@ describe('workflow scaling policy', () => {
     const { workflow_id } = await running_workflow();
     const headers = bearer(TEST_API_KEY);
 
-    const listed = await api.workflows[workflow_id]!.scaling.get({ $headers: headers });
-    const saved = await api.workflows[workflow_id]!.scaling.put(
+    const listed = await group_workflow(workflow_id).scaling.get({ $headers: headers });
+    const saved = await group_workflow(workflow_id).scaling.put(
       { ...POLICY, max_replicas: 2 },
       { headers: key_headers }
     );
@@ -214,7 +214,7 @@ describe('workflow scaling policy', () => {
 
     const responses = await Promise.all(
       policies.map((policy) =>
-        api.workflows[workflow_id]!.scaling.put(policy, { headers: key_headers })
+        group_workflow(workflow_id).scaling.put(policy, { headers: key_headers })
       )
     );
 
@@ -230,7 +230,7 @@ describe('workflow scaling policy', () => {
 
   test('a save racing a delete ends with the policy stored or gone, never half-written', async () => {
     const { workflow_id } = await running_workflow();
-    const scaling = api.workflows[workflow_id]!.scaling;
+    const scaling = group_workflow(workflow_id).scaling;
 
     const [saved, deleted] = await Promise.all([
       scaling.put({ ...POLICY, max_replicas: 2 }, { headers: key_headers }),
@@ -248,7 +248,7 @@ describe('workflow scaling policy', () => {
   test('a corrupt config is 502 scaling.config_invalid on the policy routes', async () => {
     const { token, workflow_id } = await running_workflow('{oops');
     const headers = bearer(token);
-    const scaling = api.workflows[workflow_id]!.scaling;
+    const scaling = group_workflow(workflow_id).scaling;
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),
@@ -287,7 +287,7 @@ describe('workflow scaling policy', () => {
       const config = { workflows: { app: scaling }, owner: 'platform' };
       const { token, workflow_id } = await running_workflow(JSON.stringify(config));
 
-      const res = await api.workflows[workflow_id]!.scaling.get({ $headers: bearer(token) });
+      const res = await group_workflow(workflow_id).scaling.get({ $headers: bearer(token) });
 
       expect(res.error).toBeNull();
       expect(res.data).toEqual({ workflows: { app: { status: 'invalid', reason } } });
@@ -299,14 +299,14 @@ describe('workflow scaling policy', () => {
     const { token, workflow_id } = await running_workflow();
     const headers = bearer(token);
 
-    const deleted = await api.workflows[workflow_id]!.scaling.delete(undefined, {
+    const deleted = await group_workflow(workflow_id).scaling.delete(undefined, {
       headers: key_headers,
     });
 
     expect(deleted.error).toBeNull();
     expect(deleted.data).toEqual({ status: 'none' });
     expect(await read_scaling_config()).toEqual({ ...CONFIG, workflows: {} });
-    const listed = await api.workflows[workflow_id]!.scaling.get({ $headers: headers });
+    const listed = await group_workflow(workflow_id).scaling.get({ $headers: headers });
     expect(listed.data).toEqual({ workflows: { app: { status: 'none' } } });
   });
 
@@ -315,7 +315,7 @@ describe('workflow scaling policy', () => {
       JSON.stringify({ workflows: { app: { ...POLICY, min_replicas: 0 } } })
     );
 
-    const res = await api.workflows[workflow_id]!.scaling.delete(undefined, {
+    const res = await group_workflow(workflow_id).scaling.delete(undefined, {
       headers: key_headers,
     });
 
@@ -326,7 +326,7 @@ describe('workflow scaling policy', () => {
   test('deleting when no policy is stored is 404 scaling.policy_not_found and creates nothing', async () => {
     const { workflow_id } = await running_workflow(null);
 
-    const res = await api.workflows[workflow_id]!.scaling.delete(undefined, {
+    const res = await group_workflow(workflow_id).scaling.delete(undefined, {
       headers: key_headers,
     });
 
@@ -345,10 +345,10 @@ describe('workflow scaling policy', () => {
     const { workflow_id: ops_id } = await create_test_workflow({ name: 'ops' });
     await seed_workflows({ [workflow_id]: 'app', [ops_id]: 'ops' });
 
-    const saved = await api.workflows[workflow_id]!.scaling.put(POLICY, { headers: key_headers });
-    const listed = await api.workflows[workflow_id]!.scaling.get({ $headers: bearer(token) });
-    const ops_listed = await api.workflows[ops_id]!.scaling.get({ $headers: bearer(token) });
-    const deleted = await api.workflows[ops_id]!.scaling.delete(undefined, {
+    const saved = await group_workflow(workflow_id).scaling.put(POLICY, { headers: key_headers });
+    const listed = await group_workflow(workflow_id).scaling.get({ $headers: bearer(token) });
+    const ops_listed = await group_workflow(ops_id).scaling.get({ $headers: bearer(token) });
+    const deleted = await group_workflow(ops_id).scaling.delete(undefined, {
       headers: key_headers,
     });
 
@@ -380,12 +380,13 @@ describe('workflow scaling agents', () => {
       { name: 'app.StateDB', type: 'database' },
     ]);
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       agents: [
         {
+          agent_id: Bun.randomUUIDv5('app.PriceAgent', workflow_id),
           name: 'app.PriceAgent',
           replicas_expected: 2,
           replicas_running: 2,
@@ -395,7 +396,13 @@ describe('workflow scaling agents', () => {
             observed_at: '2027-01-15T08:00:00.250Z',
           },
         },
-        { name: 'app.IntentAgent', replicas_expected: 1, replicas_running: 0, load: null },
+        {
+          agent_id: Bun.randomUUIDv5('app.IntentAgent', workflow_id),
+          name: 'app.IntentAgent',
+          replicas_expected: 1,
+          replicas_running: 0,
+          load: null,
+        },
       ],
     });
   });
@@ -404,17 +411,25 @@ describe('workflow scaling agents', () => {
     const { token, workflow_id } = await running_workflow();
     await seed_scaling_agents([{ name: 'app.PriceAgent', replicas: 3 }]);
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.data).toEqual({
-      agents: [{ name: 'app.PriceAgent', replicas_expected: 3, replicas_running: 0, load: null }],
+      agents: [
+        {
+          agent_id: Bun.randomUUIDv5('app.PriceAgent', workflow_id),
+          name: 'app.PriceAgent',
+          replicas_expected: 3,
+          replicas_running: 0,
+          load: null,
+        },
+      ],
     });
   });
 
   test('a controller that has published no agents lists none', async () => {
     const { token, workflow_id } = await running_workflow(JSON.stringify(CONFIG), []);
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({ agents: [] });
@@ -429,19 +444,32 @@ describe('workflow scaling agents', () => {
       { name: 'app.MetricsAgent', raw_sample: '{oops' },
     ]);
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data).toEqual({
       agents: [
         {
+          agent_id: Bun.randomUUIDv5('app.PriceAgent', workflow_id),
           name: 'app.PriceAgent',
           replicas_expected: 2,
           replicas_running: 2,
           load: expect.any(Object),
         },
-        { name: 'app.RiskAgent', replicas_expected: 2, replicas_running: 0, load: null },
-        { name: 'app.MetricsAgent', replicas_expected: 1, replicas_running: 0, load: null },
+        {
+          agent_id: Bun.randomUUIDv5('app.RiskAgent', workflow_id),
+          name: 'app.RiskAgent',
+          replicas_expected: 2,
+          replicas_running: 0,
+          load: null,
+        },
+        {
+          agent_id: Bun.randomUUIDv5('app.MetricsAgent', workflow_id),
+          name: 'app.MetricsAgent',
+          replicas_expected: 1,
+          replicas_running: 0,
+          load: null,
+        },
       ],
     });
   });
@@ -451,7 +479,7 @@ describe('workflow scaling agents', () => {
     await seed_scaling_agents([{ name: 'app.PriceAgent' }]);
     await seed_active_agents('{oops');
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error?.status as number).toBe(502);
     expect(error_code(res)).toBe('scaling.config_invalid');
@@ -461,7 +489,7 @@ describe('workflow scaling agents', () => {
     const { token, workflow_id } = await running_workflow('{oops');
     await seed_scaling_agents([{ name: 'app.PriceAgent' }]);
 
-    const res = await api.workflows[workflow_id]!.scaling.agents.get({ $headers: bearer(token) });
+    const res = await group_workflow(workflow_id).scaling.agents.get({ $headers: bearer(token) });
 
     expect(res.error).toBeNull();
     expect(res.data?.agents.map((agent) => agent.name)).toEqual(['app.PriceAgent']);

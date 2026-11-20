@@ -5,11 +5,22 @@ import { describe, expect, test } from 'bun:test';
 import { sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
-import { WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
+import {
+  WORKFLOW_GROUP_ID_ATTRIBUTE,
+  WORKFLOW_ID_ATTRIBUTE,
+} from '@api/modules/telemetry/telemetry.contract';
 import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { setupE2ETests } from './e2e.setup';
-import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';
+import {
+  attribute,
+  decode_trace_response,
+  encode_trace_export,
+  post_otlp,
+  write_unattributed_span,
+  write_workflow_span,
+} from './telemetry-test.utils';
+import type { OtlpExportFixture } from './telemetry-test.utils';
 
 setupE2ETests();
 
@@ -127,5 +138,56 @@ describe('otel span schema', () => {
     expect(span?.start_time_unix_nano).toBe(start);
     expect(span?.end_time_unix_nano).toBe(end);
     expect(BigInt(Number(start))).not.toBe(start);
+  });
+});
+
+describe('otlp trace ingest', () => {
+  test("a span with another workflow group's id, or none, is rejected and not stored", async () => {
+    const workflow_group_id = crypto.randomUUID();
+    const trace_id = crypto.getRandomValues(new Uint8Array(16));
+    const span = (name: string, attributes: readonly OtlpExportFixture[]) => ({
+      traceId: trace_id,
+      spanId: crypto.getRandomValues(new Uint8Array(8)),
+      name,
+      startTimeUnixNano: '1788000000000000000',
+      endTimeUnixNano: '1788000000001000000',
+      attributes,
+    });
+
+    const response = await post_otlp(
+      workflow_group_id,
+      'traces',
+      encode_trace_export({
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  span('other-group', [
+                    attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, crypto.randomUUID()),
+                  ]),
+                  span('no-group', []),
+                  span('kept', [attribute(WORKFLOW_GROUP_ID_ATTRIBUTE, workflow_group_id)]),
+                ],
+              },
+            ],
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(decode_trace_response(await response.arrayBuffer())).toEqual({
+      partialSuccess: {
+        rejectedSpans: 2,
+        errorMessage:
+          "2 span(s) rejected: a span needs a span id, a trace id, a non-zero end time and this workflow group's id.",
+      },
+    });
+    const stored = await db
+      .select({ name: otelSpans.name })
+      .from(otelSpans)
+      .where(sql`${otelSpans.trace_id} = ${Buffer.from(trace_id).toString('hex')}`);
+    expect(stored).toEqual([{ name: 'kept' }]);
   });
 });
