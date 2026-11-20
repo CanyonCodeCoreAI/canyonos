@@ -44,7 +44,6 @@ from canyonos.constants import (
     load_yaml,
     read_config,
     round_trip_yaml,
-    sends_to_dashboard,
     workflow_config_path,
     workflow_folder,
     write_config,
@@ -247,27 +246,18 @@ def _curl_example(url, body, keyed):
 
 def summary_body(dashboard_url, endpoint, keyed):
     """Build the deploy panel's text: the dashboard URL, a warning when the dashboard
-    is down or the workflow group's `otel:` block leaves it out, and how to call, poll and
+    is down, and how to call, poll and
     answer the endpoint described by its published record, when there is one, each
     `curl` sending the API key when the deploy is `keyed`."""
     body = Text()
     body.append("Dashboard  ", "dim")
-    config_path = deployment_config_path()
-    to_dashboard = sends_to_dashboard(config_path)
-    no_telemetry = (
-        "No telemetry configured -- add the `local` entry to your `otel:` block"
-    )
     if dashboard_url:
         body.append(dashboard_url, f"bold {GREEN}")
-        if not to_dashboard:
-            body.append(f"  {no_telemetry}", "yellow")
-    elif to_dashboard:
+    else:
         body.append(
             "Not running -- run `canyonos serve` to bring it up for telemetry",
             "yellow",
         )
-    else:
-        body.append(f"Not running. {no_telemetry}", "yellow")
 
     if endpoint:
         host, api_port = endpoint["public_host"], endpoint["api_port"]

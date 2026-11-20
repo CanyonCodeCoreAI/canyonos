@@ -20,10 +20,6 @@ class ProcessSupervisor:
         self._specs = {}  # name -> (argv, env) tuple
         self._procs = {}  # name -> subprocess.Popen
 
-    def is_registered(self, name):
-        """Return True if a process with this name is already registered."""
-        return name in self._specs
-
     def register(self, name, argv, env=None):
         """Declare a process to manage. Does not start it -- call start_all() once
         everything is registered. `env`, if given, is merged on top of (not a
@@ -35,6 +31,23 @@ class ProcessSupervisor:
         """Start every registered process."""
         for name, (argv, env) in self._specs.items():
             self._start(name, argv, env)
+
+    def start(self, name):
+        """Start one registered process."""
+        self._start(name, *self._specs[name])
+
+    def stop(self, name):
+        """Terminate one process and stop managing it; nothing happens if it is unknown."""
+        self._specs.pop(name, None)
+        proc = self._procs.pop(name, None)
+        if proc is None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
     def _start(self, name, argv, env=None):
         merged_env = {**os.environ, **env} if env else None

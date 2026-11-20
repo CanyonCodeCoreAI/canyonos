@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The Global Controller: deploys a workflow group's agents, runs the reconciler and OTel
-exporter beside it, and tracks controller health in Redis."""
+Collector beside it, and tracks controller health in Redis."""
 # Global Controller
 # Daemon process that maintains a routing table in Redis for multiple local controllers.
 # Periodically polls Redis to check controller health and updates the routing table.
@@ -38,7 +38,11 @@ from canyonos_core.endpoint import (
     read_endpoint_record,
 )
 from canyonos_core.scaling import contract
-from canyonos_core.controller.utils import otel_writer, pricing_refresh, schema
+from canyonos_core.controller.utils import (
+    otel_collector,
+    otel_writer,
+    pricing_refresh,
+)
 from canyonos_core.controller.utils.otel_writer import send_telemetry
 from canyonos_core.controller.utils.container_log import dump_container_log
 from canyonos_core.controller.utils.container_names import (
@@ -81,7 +85,6 @@ from canyonos_core.schema import (
     workflow_names,
 )
 from canyonos_core.schema.otel_destinations import (
-    LOCAL_DASHBOARD_DESTINATION,
     LOCAL_DASHBOARD_ENDPOINT,
 )
 from canyonos_core.schema.yaml_lines import parse_failure
@@ -218,20 +221,11 @@ class GlobalController(ControllerContext):
     """
 
     POLICY_RULES_KEY = "policy:rules"
-    OTEL_DESTINATIONS_KEY = "otel:destinations"  # otel_exporter subprocess polls this to pick up config changes
     # Redis keys of the config files last published, so a removed file's key is cleared.
     CONFIG_FILES_KEY = "config:files"
 
     def __init__(self, workspace):
         super().__init__(workspace)
-
-        redis_cfg = self.config.get("redis", {})
-        # Kept in step with self.redis, including the reassignment in
-        # _launch_redis_containers -- the otel_exporter subprocess is handed these.
-        self._redis_addr = (
-            _redis_connect_host(redis_cfg.get("host", "localhost")),
-            redis_cfg.get("port", DEFAULT_REDIS_PORT),
-        )
 
         self.cleanup_interval = self.config.get("cleanup_interval", 10)
         self.running = False
@@ -263,48 +257,18 @@ class GlobalController(ControllerContext):
                 len(self.agent_specs),
             )
 
-            # Spawn the OTLP exporter as a separate process,
-            # supervised so it gets restarted if it ever exits unexpectedly.
-            otel_exporter_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "otlp_exporter",
-            )
-            otel_exporter_script = os.path.join(otel_exporter_dir, "otel_exporter.py")
-
-            # Exporter polls self.OTEL_DESTINATIONS_KEY in Redis each cycle instead of
-            # reading env once, so reload_config() can update it without a restart.
-            destinations = self._otel_destinations(self.config.get("otel", {}))
-            if destinations is not None:
-                self._write_otel_destinations(destinations)
-            else:
-                logger.info(
-                    "otel.destinations not configured -- the exporter will flush queued "
-                    "telemetry each poll instead of exporting it."
-                )
-            # Always start the exporter: with destinations it exports; without, it flushes the
-            # queue each poll so waiting/metrics_waiting can't grow unbounded.
-            self.process_supervisor.register(
-                "otel_exporter",
-                [sys.executable, otel_exporter_script],
-                env={
-                    "CANYONOS_OTEL_REDIS_HOST": str(self._redis_addr[0]),
-                    "CANYONOS_OTEL_REDIS_PORT": str(self._redis_addr[1]),
-                },
-            )
-
-            # Initialize the waiting table synchronously before either the GC or
-            # exporter process can access it. GC owns schema creation; because GC spawns the
-            # exporter, the tables always exist before the exporter reads them.
-            schema.init_db()
+            self._process_logs = None
             if self.config.get("logs", True):
-                logging.getLogger().addHandler(
-                    otel_writer.ProcessLogHandler(
-                        GLOBAL_CONTROLLER_LOG_SOURCE,
-                        self.config.get("workflow_group_id"),
-                    )
+                self._process_logs = otel_writer.ProcessLogHandler(
+                    GLOBAL_CONTROLLER_LOG_SOURCE, self.config.get("workflow_group_id")
                 )
+                logging.getLogger().addHandler(self._process_logs)
             self.orchestrator.register_background_processes(self.process_supervisor)
             self.process_supervisor.start_all()
+            self._collector_destinations = self._otel_destinations(
+                self.config.get("otel", {})
+            )
+            otel_collector.run(self.process_supervisor, self._collector_destinations)
 
             self._cleanup_ready = threading.Event()
             self._cleanup_thread = threading.Thread(
@@ -357,53 +321,35 @@ class GlobalController(ControllerContext):
 
     @staticmethod
     def _otel_destinations(otel_cfg):
-        """Resolve otel.destinations (the local dashboard when unset, ${ENV_VAR} refs
-        expanded), plus the dashboard CANYONOS_DASHBOARD_OTLP_ENDPOINT names, or None
-        when there are none.
+        """The destinations the collector forwards to: otel.destinations with ${ENV_VAR}
+        refs expanded, plus the dashboard CANYONOS_DASHBOARD_OTLP_ENDPOINT names.
 
-        On Kubernetes, destinations on host.docker.internal (Docker Desktop's way back
-        to the laptop, which no cluster has) or on the local dashboard are skipped.
-        None makes the exporter flush instead of exporting."""
-        destinations = expand_env_value(
-            otel_cfg.get("destinations") or [LOCAL_DASHBOARD_DESTINATION]
-        )
-        if os.environ.get(TARGET_ENV) == "kubernetes":
-            kept = []
-            for destination in destinations:
-                endpoint = str(destination.get("endpoint", ""))
-                if DOCKER_HOST in endpoint or endpoint.startswith(
-                    LOCAL_DASHBOARD_ENDPOINT
-                ):
-                    logger.info(
-                        "Skipping OTel destination %s on Kubernetes: %s is unreachable "
-                        "in a cluster.",
-                        destination.get("name"),
-                        endpoint,
-                    )
-                else:
-                    kept.append(destination)
-            destinations = kept
+        The local dashboard is left out, since telemetry is written straight to its
+        database, and so is host.docker.internal on Kubernetes, which no cluster has."""
+        destinations = []
+        for destination in expand_env_value(otel_cfg.get("destinations") or []):
+            endpoint = str(destination.get("endpoint", ""))
+            if endpoint.startswith(LOCAL_DASHBOARD_ENDPOINT):
+                continue
+            if os.environ.get(TARGET_ENV) == "kubernetes" and DOCKER_HOST in endpoint:
+                logger.info(
+                    "Skipping OTel destination %s on Kubernetes: %s is unreachable "
+                    "in a cluster.",
+                    destination.get("name"),
+                    endpoint,
+                )
+                continue
+            destinations.append(destination)
         dashboard = os.environ.get("CANYONOS_DASHBOARD_OTLP_ENDPOINT")
         if dashboard:
-            destinations = [
-                *destinations,
+            destinations.append(
                 {
                     "name": "canyonos-dashboard",
                     "protocol": "http",
                     "endpoint": dashboard,
-                    "headers": {},
-                },
-            ]
-        return destinations or None
-
-    def _write_otel_destinations(self, destinations):
-        try:
-            payload = json.dumps(destinations)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "otel.destinations must contain JSON-serializable values"
-            ) from exc
-        self.redis.set(self.OTEL_DESTINATIONS_KEY, payload)
+                }
+            )
+        return destinations
 
     def reload_config(self):
         """Re-read the config, republish the spec, and let the reconciler converge.
@@ -423,12 +369,10 @@ class GlobalController(ControllerContext):
             previous - set(self.agent_specs_by_name)
         )
 
-        # Only meaningful if the exporter was already running.
-        destinations = self._otel_destinations(self.config.get("otel", {}))
-        if destinations is not None and self.process_supervisor.is_registered(
-            "otel_exporter"
-        ):
-            self._write_otel_destinations(destinations)
+        # The poll loop restarts the collector: only it touches the process supervisor.
+        self._collector_destinations = self._otel_destinations(
+            self.config.get("otel", {})
+        )
 
     def _apply_config(self, config_files, manifest):
         """Publish the loaded config to Redis: agent specs, replica counts, policies,
@@ -822,7 +766,6 @@ class GlobalController(ControllerContext):
             logger.critical("%s", e)
             sys.exit(1)
         self.machine_redis[host] = redis_client
-        self._redis_addr = (connect_host, redis_port)
         # Update the primary redis client to the local machine's Redis
         self.redis = redis_client
 
@@ -1095,6 +1038,7 @@ class GlobalController(ControllerContext):
         """
         # Prevents a process from restarting if a deliberate kill-cmd happens
         if self.running:
+            otel_collector.run(self.process_supervisor, self._collector_destinations)
             self.process_supervisor.check_and_respawn()
 
         # Polled in parallel, one replica's slow Redis round-trip no longer
@@ -1107,6 +1051,13 @@ class GlobalController(ControllerContext):
                 replica_samples = list(executor.map(self._poll_one_replica, replicas))
 
         self._send_telemetry_per_host()
+        if self._process_logs is not None:
+            try:
+                self._process_logs.store()
+            except Exception as e:
+                logger.warning(
+                    "Failed to store the Global Controller's logs (non-fatal): %s", e
+                )
 
         # Machine-level metrics are per-host, so they're read once per host here rather
         # than inside the per-replica loop above (N replicas on a box would otherwise
@@ -1122,16 +1073,16 @@ class GlobalController(ControllerContext):
         )
 
     def _send_telemetry_per_host(self):
-        """Queue the futures' telemetry from each machine's Redis, once per poll.
+        """Store the futures' telemetry from each machine's Redis, once per poll.
 
         Telemetry lives in the machine's Redis, not in a replica: polled per replica,
-        every replica on a machine would scan and queue the same futures again. Hosts
+        every replica on a machine would scan and store the same futures again. Hosts
         are read in parallel, like _poll_machine_metrics, so a slow one does not hold
         up the others.
         """
         # No machine Redis (Kubernetes: every replica writes to the workflow group's): this one.
         hosts = dict(self.machine_redis) or {"workflow_group": self.redis}
-        # Futures already queued finished, per host, so a poll reads only those still
+        # Futures already stored finished, per host, so a poll reads only those still
         # running or new. One set per host: the threads share nothing.
         finished = self.__dict__.setdefault("_finished_futures", {})
         for host in list(finished):
@@ -1152,7 +1103,7 @@ class GlobalController(ControllerContext):
                 )
             except Exception as e:
                 logger.warning(
-                    "Failed to queue telemetry for host %s (non-fatal): %s", host, e
+                    "Failed to store telemetry for host %s (non-fatal): %s", host, e
                 )
 
         with ThreadPoolExecutor(max_workers=len(hosts)) as executor:
@@ -1200,7 +1151,7 @@ class GlobalController(ControllerContext):
                 )
         if rows:
             try:
-                otel_writer.metric_write_rows(rows)
+                otel_writer.store_metrics(rows)
             except Exception as e:
                 logger.warning("Failed to record machine metrics (non-fatal): %s", e)
 
@@ -1225,11 +1176,8 @@ class GlobalController(ControllerContext):
         try:
             metrics = machine_redis.hgetall(metrics_key)
             if metrics:
-                # Persist the replica's hash verbatim; all per-metric logic lives in
-                # metric_convert. Counters are cumulative and never reset, so they
-                # export as monotonic Sums.
                 try:
-                    otel_writer.metric_write_rows(
+                    otel_writer.store_metrics(
                         [
                             {
                                 "kind": "agent",
@@ -1320,18 +1268,17 @@ class GlobalController(ControllerContext):
         previous = contract.latest(self.redis, key)
         observed_at = contract.now()
         counters = {
-            field: int(metrics.get(field, 0))
-            for field in (
-                "requests_served",
-                "full_failures",
-                "requests_completed",
-                "queue_time_ms_total",
-                "execution_ms_total",
-            )
+            "requests_served": int(metrics.get("canyonos.agent.requests", 0)),
+            "full_failures": int(metrics.get("canyonos.agent.failures", 0)),
+            "requests_completed": int(
+                metrics.get("canyonos.agent.requests.completed", 0)
+            ),
+            "queue_time_ms_total": int(metrics.get("queue_time_ms_total", 0)),
+            "execution_ms_total": int(metrics.get("execution_ms_total", 0)),
         }
         sample = contract.replica_sample(
             agent_name=replica["agent_name"],
-            queue_length=int(metrics.get("queue_length", 0)),
+            queue_length=int(metrics.get("canyonos.agent.queue.length", 0)),
             **counters,
             requests_per_minute=contract.per_minute(
                 previous,

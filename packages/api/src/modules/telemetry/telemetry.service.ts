@@ -43,6 +43,9 @@ const OUTPUT_ATTRIBUTE = 'gen_ai.completion';
 const ABSENT_SPAN_ID = '0'.repeat(16);
 const ABSENT_TRACE_ID = '0'.repeat(32);
 
+// The Global Controller's id for a log, so one it sends again is stored once.
+const LOG_ID_ATTRIBUTE = 'canyonos.log.id';
+
 const hex = (bytes: Uint8Array | undefined): string =>
   bytes && bytes.length > 0 ? Buffer.from(bytes).toString('hex') : '';
 
@@ -288,6 +291,7 @@ export const map_log_record = (record: OtlpLogRecord, context: ScopeContext): Lo
   const time = record.timeUnixNano ?? record.observedTimeUnixNano ?? '0';
   const trace_id = hex(record.traceId);
   const span_id = hex(record.spanId);
+  const { [LOG_ID_ATTRIBUTE]: log_id, ...attributes } = flatten_attributes(record.attributes);
 
   return {
     service_name: context.service_name,
@@ -300,11 +304,12 @@ export const map_log_record = (record: OtlpLogRecord, context: ScopeContext): Lo
     body: log_body_text(record.body),
     trace_id: trace_id && trace_id !== ABSENT_TRACE_ID ? trace_id : null,
     span_id: span_id && span_id !== ABSENT_SPAN_ID ? span_id : null,
-    attributes: flatten_attributes(record.attributes),
+    attributes,
+    log_id: typeof log_id === 'string' ? log_id : null,
   };
 };
 
-/** Decode an OTLP logs export and store every record. */
+/** Decode an OTLP logs export and store every record it does not already hold. */
 export async function ingest_logs_export(payload: Uint8Array): Promise<{ accepted: number }> {
   let request;
   try {

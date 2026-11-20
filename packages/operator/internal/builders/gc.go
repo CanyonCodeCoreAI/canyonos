@@ -27,7 +27,6 @@ const (
 	GCUID = 1001
 
 	gcConfigPath = "/etc/canyonos/config"
-	gcDataPath   = "/var/lib/canyonos"
 	apiGroup     = "canyonos.canyoncode.ai"
 )
 
@@ -102,7 +101,6 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboa
 			Ports:   []corev1.ContainerPort{{Name: portHealth, ContainerPort: HealthPort}},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: volumeConfig, MountPath: gcConfigPath, ReadOnly: true},
-				{Name: volumeData, MountPath: gcDataPath},
 				{Name: volumeTmp, MountPath: tmpDir},
 			},
 			StartupProbe:   probe("/startupz", 5, 72),
@@ -120,11 +118,6 @@ func GCDeployment(p *canyonosv1alpha1.CanyonProject, image, endpointURL, dashboa
 		Volumes: []corev1.Volume{
 			{Name: volumeConfig, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: p.Spec.ConfigRef},
-			}}},
-			// The telemetry queue and refreshed prices (CANYONOS_DATA_DIR); scratch, not
-			// a disk: a volume bound to one zone would pin the pod and block Recreate.
-			{Name: volumeData, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-				SizeLimit: new(resource.MustParse("1Gi")),
 			}}},
 			{Name: volumeTmp, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		},
@@ -159,7 +152,6 @@ func gcEnv(p *canyonosv1alpha1.CanyonProject, endpointURL, dashboardNamespace st
 		{Name: "CANYONOS_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 		}},
-		{Name: "CANYONOS_DATA_DIR", Value: gcDataPath},
 		{Name: envHealthPort, Value: strconv.Itoa(HealthPort)},
 		{Name: "CANYONOS_ENDPOINT_URL", Value: endpointURL},
 		// The name the dashboard shows for the project.

@@ -17,6 +17,21 @@ RUN case "$TARGETARCH" in \
     && echo "$sha256  /tmp/docker.tgz" | sha256sum -c - \
     && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker
 
+# The OTLP-only OpenTelemetry Collector build, which forwards telemetry to external destinations.
+FROM --platform=$BUILDPLATFORM alpine:3.23.6 AS otelcol
+ARG TARGETARCH
+ARG OTELCOL_VERSION=0.165.0
+ARG OTELCOL_SHA256_AMD64=d3cdf316b2855bb95220d6038c4bb81b73fd3d5742652c8b55bc41cc463af589
+ARG OTELCOL_SHA256_ARM64=3e5c51258ad87172c7488781d97f093adc90be1c57cfd38257ab6868853608ad
+RUN case "$TARGETARCH" in \
+        amd64) sha256=$OTELCOL_SHA256_AMD64 ;; \
+        arm64) sha256=$OTELCOL_SHA256_ARM64 ;; \
+        *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && wget -qO /tmp/otelcol.tgz "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v$OTELCOL_VERSION/otelcol-otlp_${OTELCOL_VERSION}_linux_$TARGETARCH.tar.gz" \
+    && echo "$sha256  /tmp/otelcol.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/otelcol.tgz -C /usr/local/bin otelcol-otlp
+
 # Built from source so buildx links golang.org/x/net and github.com/moby/go-archive releases
 # with CVE fixes instead of the vulnerable versions v0.38.0 pins.
 FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.23 AS buildx
@@ -43,6 +58,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends zstd openssh-client && rm -rf /var/lib/apt/lists/*
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=buildx /out/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+COPY --from=otelcol /usr/local/bin/otelcol-otlp /usr/local/bin/otelcol-otlp
 
 # The base image's setuptools vendors wheel and jaraco.context releases with high CVEs.
 RUN pip install --no-cache-dir setuptools==84.0.0

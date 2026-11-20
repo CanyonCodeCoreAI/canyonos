@@ -128,7 +128,7 @@ def _all_done(recorder, limited, request_ids, mb):
 
 
 def test_memory_heavy_calls_lower_the_limit(recorder, limited):
-    idle = int(limited.store.hget(limited.heartbeat, "container_memory_bytes"))
+    idle = int(limited.store.hget(limited.heartbeat, "canyonos.agent.memory.used"))
     mb = int(PEAK_SHARE * MEMORY_LIMIT - idle) // CALLS >> 20
     assert mb >= 10, f"the idle replica already uses {idle} of {MEMORY_LIMIT} bytes"
     request_ids = [
@@ -136,7 +136,7 @@ def test_memory_heavy_calls_lower_the_limit(recorder, limited):
     ]
     _heartbeat_where(
         limited,
-        lambda beat: int(beat["max_workers"]) < CEILING,
+        lambda beat: int(beat["canyonos.agent.concurrency.limit"]) < CEILING,
         f"max_workers to drop below {CEILING} with {CALLS} calls of {mb} MB",
     )
     _all_done(recorder, limited, request_ids, mb)
@@ -153,7 +153,9 @@ def test_memory_heavy_calls_lower_the_limit(recorder, limited):
 
 
 def test_calls_past_the_limit_wait_and_all_finish(recorder, limited):
-    limit = int(limited.store.hget(limited.heartbeat, "max_workers"))
+    limit = int(
+        limited.store.hget(limited.heartbeat, "canyonos.agent.concurrency.limit")
+    )
     assert limit < CEILING, limit
     # Twice the limit, so calls still wait if the limit rises while they are sent.
     request_ids = [
@@ -162,33 +164,33 @@ def test_calls_past_the_limit_wait_and_all_finish(recorder, limited):
     ]
     beat = _heartbeat_where(
         limited,
-        lambda beat: int(beat["queue_length"]) >= 1,
+        lambda beat: int(beat["canyonos.agent.queue.length"]) >= 1,
         f"calls waiting with {2 * limit} calls sent and max_workers {limit}",
     )
-    assert int(beat["max_workers"]) < CEILING, beat
+    assert int(beat["canyonos.agent.concurrency.limit"]) < CEILING, beat
     _all_done(recorder, limited, request_ids, 0)
 
 
 def test_heartbeat_reports_the_container_memory(limited):
     beat = limited.store.hgetall(limited.heartbeat)
-    assert int(beat["container_memory_limit_bytes"]) == MEMORY_LIMIT, beat
-    assert 0 < int(beat["container_memory_bytes"]) < MEMORY_LIMIT, beat
-    assert 1 <= int(beat["max_workers"]) < CEILING, beat
+    assert int(beat["canyonos.agent.memory.limit"]) == MEMORY_LIMIT, beat
+    assert 0 < int(beat["canyonos.agent.memory.used"]) < MEMORY_LIMIT, beat
+    assert 1 <= int(beat["canyonos.agent.concurrency.limit"]) < CEILING, beat
 
 
 def test_a_full_cpu_holds_new_calls_in_line(recorder, limited):
     spinning = [submit(recorder, limited.endpoint, "spin") for _ in range(SPINNERS)]
     _heartbeat_where(
         limited,
-        lambda beat: int(beat["max_workers"]) <= SPINNERS,
+        lambda beat: int(beat["canyonos.agent.concurrency.limit"]) <= SPINNERS,
         f"max_workers held at the {SPINNERS} calls running while the CPU is full",
     )
     waiting = [submit(recorder, limited.endpoint, "0 5") for _ in range(SPINNERS)]
     beat = _heartbeat_where(
         limited,
-        lambda beat: int(beat["queue_length"]) >= 1,
+        lambda beat: int(beat["canyonos.agent.queue.length"]) >= 1,
         f"calls waiting behind {SPINNERS} calls that fill the CPU",
     )
-    assert int(beat["max_workers"]) <= SPINNERS, beat
+    assert int(beat["canyonos.agent.concurrency.limit"]) <= SPINNERS, beat
     # Once the spinning calls end, the CPU frees up and the held calls run.
     _all_done(recorder, limited, spinning + waiting, 0)

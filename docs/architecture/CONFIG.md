@@ -71,7 +71,7 @@ on Kubernetes checks its config with `_validate_or_exit` (`kubernetes/commands.p
 | `manifest.py`          | The schema of both files, `load_workflow` and `load_deployment`                  |
 | `functions.py`         | An agent's `functions`                                                           |
 | `kubernetes_block.py`  | The `kubernetes:` section, read only by a Kubernetes deploy                      |
-| `otel_destinations.py` | `otel.destinations`, shared with the exporter at runtime                         |
+| `otel_destinations.py` | `otel.destinations`, shared with the OTel Collector's config                     |
 | `_checks.py`           | The field readers every module uses, including the `${VAR}` rule                 |
 | `yaml_lines.py`        | A YAML loader that keeps line numbers, so each violation names its line          |
 | `errors.py`            | `SchemaViolation` and `SchemaError`; each violation renders as one line          |
@@ -119,7 +119,6 @@ deploy, so it stays the same across reloads and redeploys.
 | Governance rules from `governance.yaml`, for agents the dashboard hasn't set | `governance:config`                  | `_seed_governance`           |
 | The workflow group's id, and each workflow's name by its id                  | `controller:identity`                | `_write_identity`            |
 | Where callers reach the endpoint                                             | `endpoint:address`                   | `_apply_config`              |
-| OTel destinations, at startup and on reload                                  | `otel:destinations`                  | `_write_otel_destinations`   |
 
 Each governed agent's USD spend since its `spend.since` (`governance:spend`) is not
 config: the dashboard API writes it, every minute by default. Every key is listed in

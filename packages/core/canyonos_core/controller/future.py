@@ -30,12 +30,9 @@ except ImportError:
     from grpc_options import call_with_retry, open_channel
 
 try:
-    from canyonos_core.controller.utils.log_entry import (
-        build_failure_entry,
-        append_log_entry,
-    )
+    from canyonos_core.controller.utils.log_entry import build_failure_entry
 except ImportError:
-    from log_entry import build_failure_entry, append_log_entry
+    from log_entry import build_failure_entry
 
 # How often a wait reads Redis anyway, for a value written by another process. A value
 # this process's local controller writes wakes it at once (notify_result).
@@ -331,7 +328,7 @@ class Future(object):
     def _submit_request(self):
         """Send the gRPC request to the local controller."""
         stub = self._get_stub()
-        self.redis.hset(self._key(), "created_at", time.time())
+        self.redis.hset(self._key(), "created_at", time.time_ns())
 
         # Send the whole future hash as the request payload -- args and the id/method fields
         # are overridden below since the hash stores args are JSON-encoded (the executor needs the real dict)
@@ -370,13 +367,16 @@ class Future(object):
                     {
                         "error": message,
                         "failed": 1,
+                        "finished_at": time.time_ns(),
+                        # The future is new, so this is its only log.
+                        "logs": json.dumps(
+                            [build_failure_entry(message, error_name="SendFailed")]
+                        ),
                     },
                 )
-                append_log_entry(
-                    self.redis,
-                    f"future:{self.id}",
-                    build_failure_entry(message, error_name="SendFailed"),
-                )
+                # A root call that was never sent still needs its request cleaned up.
+                if self.request_id and not self.parent:
+                    self.redis.sadd("request:completed", self.request_id)
             except Exception as record_error:
                 # Never let the failure-recording path itself raise out of the constructor.
                 logger.error(

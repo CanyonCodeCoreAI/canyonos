@@ -282,8 +282,8 @@ def drain_overlap(agent_name, timeout):
     def busy():
         metrics = machine_redis.hgetall(f"controller:{record['address']}:metrics")
         # Served counts calls started, completed those finished.
-        return int(metrics.get("requests_served", 0)) > int(
-            metrics.get("requests_completed", 0)
+        return int(metrics.get("canyonos.agent.requests", 0)) > int(
+            metrics.get("canyonos.agent.requests.completed", 0)
         )
 
     # An idle replica drains at once, which would leave nothing to overlap with.

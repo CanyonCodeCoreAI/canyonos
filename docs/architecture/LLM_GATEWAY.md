@@ -128,10 +128,10 @@ The gateway ties each call to the future that made it:
 - At startup the Local Controller installs `gateway_headers`. It adds `x-canyonos-future-id`, `x-canyonos-agent` and `x-canyonos-function` to every LLM call from the agent's process.
 - The gateway takes the calling agent from `x-canyonos-agent` only when the replica runs that agent, which is how a toy bundle's agents keep their own rules and prompts. Any other name, or none, counts as the replica's own agent.
 - After each response, the gateway adds the call to `future:<future_id>` in the machine Redis. A future that makes several calls sums them.
-- It records `model` and `price_prefix`, and `prompt_name` and `prompt_version` when a prompt was applied.
-- It counts `errors`, `input_token_count`, `output_token_count`, `token_count`, and the cache read and write tokens. Input counts include cache tokens.
+- It records `gen_ai.request.model` and `price_prefix`, and `prompt_name` and `prompt_version` when a prompt was applied.
+- It counts `error_count`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `token_count`, and the cache read and write tokens. Input counts include cache tokens.
 - A call without a future id is not recorded. A caller that disconnects mid-stream records no usage.
-- On each poll, the Global Controller scans `future:*` and queues the rows for the dashboard, where `otel_writer.py` prices them. See [Controller](CONTROLLER.md).
+- On each poll, the Global Controller scans `future:*` and sends the rows to the dashboard; `otel_writer.py` prices them. See [Controller](CONTROLLER.md).
 
 ## Changing it
 

@@ -1182,7 +1182,7 @@ describe('every histogram bucket lists exactly the requests it counted', () => {
 });
 
 describe('workflow scoping at the data boundary', () => {
-  test('a span with no canyon.workflow.id is invisible to KPI and requests', async () => {
+  test('a span with no canyonos.workflow.id is invisible to KPI and requests', async () => {
     const owner = await create_workflow();
     register_agent_name('orphan-agent');
     await insert_span(owner.workflow_id, {

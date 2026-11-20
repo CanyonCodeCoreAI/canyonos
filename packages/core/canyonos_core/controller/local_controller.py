@@ -40,7 +40,7 @@ try:
     from canyonos_core.controller.utils.log_handler import LogHandler
     from canyonos_core.controller.utils.log_entry import (
         build_failure_entry,
-        append_log_entry,
+        logs_with_entry,
     )
     from canyonos_core.controller.utils.worker_controller import WorkerLimit
 except ImportError:
@@ -52,7 +52,7 @@ except ImportError:
     from log_handler import LogHandler
     from redis_client import RedisClient
     from grpc_options import call_with_retry, open_channel
-    from log_entry import build_failure_entry, append_log_entry
+    from log_entry import build_failure_entry, logs_with_entry
     from worker_controller import WorkerLimit
 
 # Add local generated grpc_stubs to path (Docker context copies them directly to /app)
@@ -306,9 +306,9 @@ class LocalController(object):
             {
                 "started_at": now,
                 "observed_at": now,
-                "requests_served": 0,
-                "full_failures": 0,
-                "requests_completed": 0,
+                "canyonos.agent.requests": 0,
+                "canyonos.agent.failures": 0,
+                "canyonos.agent.requests.completed": 0,
                 "queue_time_ms_total": 0,
                 "execution_ms_total": 0,
             },
@@ -375,8 +375,8 @@ class LocalController(object):
             )
             self._worker_limit = WorkerLimit(
                 max_workers,
-                int(container_memory["container_memory_bytes"]),
-                int(container_memory["container_memory_limit_bytes"]),
+                int(container_memory["canyonos.agent.memory.used"]),
+                int(container_memory["canyonos.agent.memory.limit"]),
                 has_swap,
             )
 
@@ -550,17 +550,17 @@ class LocalController(object):
         per-machine collector container (see GlobalController._launch_metrics_collectors);
         only in-process state a sibling process can't observe stays here.
 
-        requests_served is deliberately absent here -- it's incremented directly on
+        canyonos.agent.requests is deliberately absent here -- it's incremented directly on
         the metrics hash (see _execute_locally) and drained by GlobalController after
         it reads it, not self-reset on this heartbeat's own timer. Self-resetting it
         here would silently drop counts for any interval GlobalController's poll
         loop falls behind on.
         """
         return {
-            "status": "healthy",
-            "queue_length": str(len(self._agent_queue)),
-            "max_workers": str(self._max_workers),
-            "draining": str(int(self._draining)),
+            "canyonos.agent.up": "1",
+            "canyonos.agent.queue.length": str(len(self._agent_queue)),
+            "canyonos.agent.concurrency.limit": str(self._max_workers),
+            "canyonos.agent.draining": str(int(self._draining)),
             "open_requests": str(len(self.servicer.open_requests)),
             "pending_requests": str(self.request_queue.unfinished_tasks + self._unsent),
             "observed_at": str(time.time()),
@@ -581,10 +581,10 @@ class LocalController(object):
                 memory_stat.get("swapcached", 0)
             )
         return {
-            "container_memory_bytes": str(
+            "canyonos.agent.memory.used": str(
                 memory_used - int(memory_stat["inactive_file"])
             ),
-            "container_memory_limit_bytes": (CGROUP / "memory.max").read_text().strip(),
+            "canyonos.agent.memory.limit": (CGROUP / "memory.max").read_text().strip(),
         }
 
     def _cpu_percent(self):
@@ -664,7 +664,7 @@ class LocalController(object):
                         self._worker_limit.update(
                             len(self._executor_futures),
                             len(self._agent_queue),
-                            int(metrics["container_memory_bytes"]),
+                            int(metrics["canyonos.agent.memory.used"]),
                             self._cpu_percent(),
                         )
                     )
@@ -686,8 +686,8 @@ class LocalController(object):
         with self._executor_futures_lock:
             running = bool(self._executor_futures)
         return (
-            metrics["draining"] == "1"
-            and metrics["queue_length"] == "0"
+            metrics["canyonos.agent.draining"] == "1"
+            and metrics["canyonos.agent.queue.length"] == "0"
             and metrics["open_requests"] == "0"
             and metrics["pending_requests"] == "0"
             and not running
@@ -817,7 +817,6 @@ class LocalController(object):
             refusal.message,
             data.get("origin"),
             error_name=refusal.error_name,
-            before_start=True,
         )
         return refusal
 
@@ -934,11 +933,11 @@ class LocalController(object):
         origin=None,
         error_name=None,
         log_entry=True,
-        before_start=False,
+        final=None,
     ):
         """Persist a terminal failure locally and, when needed, notify the origin.
-        `before_start` marks a call failed before it ran, which nothing else will
-        stamp `finished_at` on."""
+        `finished_at` goes in the same write as the failure. `final` holds the final
+        numbers of a call that ran, stored in that write too."""
         if not future_id:
             return
 
@@ -950,19 +949,16 @@ class LocalController(object):
                 error, AgentCallError
             ):
                 message = f"{record.get('service')}.{record.get('method')} failed: {type(error).__name__}: {message}"
-            failure = {"error": message, "failed": 1}
+            failure = {
+                "error": message,
+                "failed": 1,
+                # A call that already ended keeps its end time.
+                "finished_at": record.get("finished_at") or time.time_ns(),
+                **(final or {}),
+            }
             if error_name:
                 failure["error_name"] = error_name
-            # Only before the call ran: telemetry treats finished_at as the last write.
-            if before_start:
-                failure["finished_at"] = time.time()
-            self.redis.hset_multiple(f"future:{future_id}", failure)
-            # A root call, one with no parent, rejected before it started still
-            # needs its request cleaned up.
-            if record.get("request_id") and not record.get("parent"):
-                self.redis.sadd("request:completed", record["request_id"])
-
-            # logs_enabled only gates this richer entry -- the error/failed fields above and
+            # logs_enabled only gates this richer entry -- the error/failed fields and
             # the fan-out/relay below must never be made conditional on it.
             if log_entry and getattr(self, "logs_enabled", True):
                 entry = build_failure_entry(
@@ -972,7 +968,14 @@ class LocalController(object):
                     address=self._my_address,
                     error_name=error_name,
                 )
-                append_log_entry(self.redis, f"future:{future_id}", entry)
+                failure["logs"] = logs_with_entry(record.get("logs"), entry)
+            # One write, so a reader never sees the failure without its log.
+            self.redis.hset_multiple(f"future:{future_id}", failure)
+
+            # A root call, one with no parent, rejected before it started still
+            # needs its request cleaned up.
+            if record.get("request_id") and not record.get("parent"):
+                self.redis.sadd("request:completed", record["request_id"])
 
             # Unblock any consumers waiting on this future so a failed dependency surfaces as an error.
             self._fan_out_to_consumers(future_id, failed=1, error_message=message)
@@ -993,8 +996,6 @@ class LocalController(object):
         asked stops waiting and the request can be cleaned up."""
         while (waiting := self.redis.rpop(f"request:{request_id}:waiting")) is not None:
             future_id = json.loads(waiting)["future_id"]
-            # Telemetry exports only finished spans.
-            self.redis.hset(f"future:{future_id}", "finished_at", time.time())
             self._mark_future_failed(
                 future_id,
                 "Request finished before the question was answered",
@@ -1039,7 +1040,6 @@ class LocalController(object):
                 "Malformed request: missing service, function, or future_id",
                 origin,
                 error_name="MalformedRequest",
-                before_start=True,
             )
             return
 
@@ -1060,7 +1060,6 @@ class LocalController(object):
                     "restarting or being removed.",
                     origin,
                     error_name="NoRunningReplica",
-                    before_start=True,
                 )
                 return
 
@@ -1080,7 +1079,6 @@ class LocalController(object):
                         f"Argument '{key}' of {agent_name}.{function} comes from a different request.",
                         origin,
                         error_name="InvalidArgument",
-                        before_start=True,
                     )
                     return
 
@@ -1320,11 +1318,12 @@ class LocalController(object):
             )
             return
 
-        self.redis.hincrby(self._metrics_key, "requests_served", 1)
+        self.redis.hincrby(self._metrics_key, "canyonos.agent.requests", 1)
 
         succeeded = False
         started = False
         serialized = None
+        failure = None
         try:
             # Resolve any Future IDs in the args before executing
             args = self._resolve_future_args(args, future_args)
@@ -1393,15 +1392,10 @@ class LocalController(object):
             for earlier, later in zip(kept, kept[1:] + [None]):
                 earlier.tb_next = later
             e.__traceback__ = kept[0] if kept else None
-
-            # A call whose arguments never arrived, or that only passed on a called agent's failure, is not this agent's failure.
-            own_failure = started and not isinstance(e, AgentCallError)
-            self._mark_future_failed(future_id, e, log_entry=own_failure)
-            if own_failure:
-                self.redis.hincrby(self._metrics_key, "full_failures", 1)
+            failure = e
         finally:
-            wall_end = time.time()
-            wall_duration = max(wall_end - wall_start, 0.0)
+            wall_end = time.time_ns()
+            wall_duration = max(wall_end / 1e9 - wall_start, 0.0)
             cpu_seconds = max(time.thread_time() - thread_cpu_start, 0.0)
             cpu_percent = (
                 (cpu_seconds / wall_duration * 100.0) if wall_duration else 0.0
@@ -1413,17 +1407,27 @@ class LocalController(object):
                 else None
             )
 
-            self.redis.hset_multiple(
-                f"future:{future_id}",
-                {
-                    "finished_at": wall_end,
-                    "cpu_resource": cpu_percent,
-                    "gpu_resource": gpu_percent,
-                    "agent": self.replica_id,
-                    **({"queue_time": queue_time} if queue_time is not None else {}),
-                },
+            final = {
+                "finished_at": wall_end,
+                "cpu_resource": cpu_percent,
+                "gpu_resource": gpu_percent,
+                "agent": self.replica_id,
+                **({"queue_time": queue_time} if queue_time is not None else {}),
+            }
+            if failure is None:
+                self.redis.hset_multiple(f"future:{future_id}", final)
+            else:
+                # A call whose arguments never arrived, or that only passed on a called agent's failure, is not this agent's failure.
+                own_failure = started and not isinstance(failure, AgentCallError)
+                # One write, so telemetry never reads a failed call without its final numbers.
+                self._mark_future_failed(
+                    future_id, failure, log_entry=own_failure, final=final
+                )
+                if own_failure:
+                    self.redis.hincrby(self._metrics_key, "canyonos.agent.failures", 1)
+            self.redis.hincrby(
+                self._metrics_key, "canyonos.agent.requests.completed", 1
             )
-            self.redis.hincrby(self._metrics_key, "requests_completed", 1)
             self.redis.hincrby(
                 self._metrics_key, "execution_ms_total", round(wall_duration * 1000)
             )

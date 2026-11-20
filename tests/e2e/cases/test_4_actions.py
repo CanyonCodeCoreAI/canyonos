@@ -234,7 +234,7 @@ def test_docker_stop_drains_a_replica_mid_call(recorder, deployed, check):
                 timeout=DRAIN_TIMEOUT + 60,
             )
             poll(
-                lambda: redis_client.hget(heartbeat, "draining") == "1",
+                lambda: redis_client.hget(heartbeat, "canyonos.agent.draining") == "1",
                 timeout=HOLD_LIMIT / 2,
                 interval=0.5,
                 what=f"{stopped.container} to start draining",

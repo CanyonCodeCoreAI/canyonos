@@ -101,8 +101,10 @@ def tokens(future_id):
     a stream's are written after its last chunk; None if nothing was recorded."""
     for _ in range(10):
         future = REDIS.hgetall(f"future:{future_id}")
-        if "input_token_count" in future:
-            return int(future["input_token_count"]), int(future["output_token_count"])
+        if "gen_ai.usage.input_tokens" in future:
+            return int(future["gen_ai.usage.input_tokens"]), int(
+                future["gen_ai.usage.output_tokens"]
+            )
         time.sleep(0.5)
     return None
 

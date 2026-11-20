@@ -246,25 +246,26 @@ def pod_machine_rows(pods, usages, project_id=None):
         cpu_used = sum(parse_cpu(c["usage"].get("cpu", 0)) for c in containers)
         memory_used = sum(parse_bytes(c["usage"].get("memory", 0)) for c in containers)
         metrics = {
-            "memory_used_bytes": str(int(memory_used)),
+            "canyonos.machine.memory.used": str(int(memory_used)),
             "observed_at": str(_epoch(usage.get("timestamp"))),
         }
-        capacity = {}
         cpu_limit = _pod_limit(pod, "cpu", parse_cpu)
         if cpu_limit:
             utilization = 100.0 * cpu_used / cpu_limit
-            metrics["cpu_percent"] = str(utilization)
-            metrics["cpu_available_percent"] = str(max(100.0 - utilization, 0.0))
-            capacity["cpu_count"] = cpu_limit
+            metrics["canyonos.machine.cpu.utilization"] = str(utilization)
+            metrics["canyonos.machine.cpu.available"] = str(
+                max(100.0 - utilization, 0.0)
+            )
+            metrics["canyonos.machine.cpu.count"] = str(cpu_limit)
         memory_limit = _pod_limit(pod, "memory", parse_bytes)
         if memory_limit:
-            metrics["memory_percent"] = str(100.0 * memory_used / memory_limit)
-            metrics["memory_available_bytes"] = str(
+            metrics["canyonos.machine.memory.utilization"] = str(
+                100.0 * memory_used / memory_limit
+            )
+            metrics["canyonos.machine.memory.available"] = str(
                 int(max(memory_limit - memory_used, 0))
             )
-            capacity["memory_total_bytes"] = int(memory_limit)
-        if capacity:
-            metrics["machine_capacity"] = json.dumps(capacity)
+            metrics["canyonos.machine.memory.total"] = str(int(memory_limit))
         rows.append(
             {
                 "kind": "machine",

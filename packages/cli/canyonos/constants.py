@@ -20,9 +20,6 @@ DEFAULT_API_PORT = 8080
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_DASHBOARD_PORT = 8081
 DEFAULT_DASHBOARD_API_PORT = 3000
-# The dashboard's API by its container name, on the network each workflow group shares
-# with it.
-LOCAL_DASHBOARD_ENDPOINT = "http://canyonos-dashboard-api:3000"
 
 _EC2_TOKEN_URL = "http://169.254.169.254/latest/api/token"
 _EC2_PUBLIC_IP_URL = "http://169.254.169.254/latest/meta-data/public-ipv4"
@@ -215,16 +212,6 @@ def port_in_use(port):
 def dashboard_port(config_path):
     """The `dashboard_port` the config sets, or None."""
     return read_config(config_path).get("dashboard_port")
-
-
-def sends_to_dashboard(config_path):
-    """Whether the config's telemetry reaches the local dashboard: it sets no
-    `otel.destinations`, so the default applies, or lists the dashboard's address."""
-    destinations = (read_config(config_path).get("otel") or {}).get("destinations")
-    return not destinations or any(
-        destination["endpoint"] == LOCAL_DASHBOARD_ENDPOINT
-        for destination in destinations
-    )
 
 
 def container_path(relative):

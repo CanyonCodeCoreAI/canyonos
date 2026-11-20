@@ -13,7 +13,6 @@ not restarted if it dies (self-healing is a later concern).
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import signal
@@ -88,35 +87,35 @@ class MachineMetricsPoller:
     def _cpu(self):
         utilization = psutil.cpu_percent(interval=None)
         return {
-            "cpu_percent": str(utilization),  # utilization
-            "cpu_available_percent": str(max(100.0 - utilization, 0.0)),
-            "cpu_pressure": str(self._pressure("cpu")),
+            "canyonos.machine.cpu.utilization": str(utilization),
+            "canyonos.machine.cpu.available": str(max(100.0 - utilization, 0.0)),
+            "canyonos.machine.cpu.pressure": str(self._pressure("cpu")),
         }
 
     def _memory(self):
         vm = psutil.virtual_memory()
         return {
-            "memory_percent": str(vm.percent),
-            "memory_used_bytes": str(vm.used),
-            "memory_available_bytes": str(vm.available),
-            "memory_pressure": str(self._pressure("memory")),
+            "canyonos.machine.memory.utilization": str(vm.percent),
+            "canyonos.machine.memory.used": str(vm.used),
+            "canyonos.machine.memory.available": str(vm.available),
+            "canyonos.machine.memory.pressure": str(self._pressure("memory")),
         }
 
     def _gpu(self):
         utilization, mem_used, mem_free = read_gpu_metrics()
         return {
-            "gpu_percent": str(utilization),  # utilization
-            "gpu_memory_used_bytes": str(mem_used),
-            "gpu_memory_available_bytes": str(mem_free),
+            "canyonos.machine.gpu.utilization": str(utilization),
+            "canyonos.machine.gpu.memory.used": str(mem_used),
+            "canyonos.machine.gpu.memory.available": str(mem_free),
         }
 
     def _disk(self):
         """Return the host's disk metrics, ready to store in Redis."""
         usage = psutil.disk_usage(HOST_ROOT)
         fields = {
-            "disk_percent": str(usage.percent),
-            "disk_free_bytes": str(usage.free),
-            "uptime_seconds": str(max(time.time() - psutil.boot_time(), 0.0)),
+            "canyonos.machine.disk.utilization": str(usage.percent),
+            "canyonos.machine.disk.free": str(usage.free),
+            "canyonos.machine.uptime": str(max(time.time() - psutil.boot_time(), 0.0)),
         }
         io = psutil.disk_io_counters()
         read_bps, write_bps = self._io_rate(
@@ -124,8 +123,8 @@ class MachineMetricsPoller:
             io,
             ("read_bytes", "write_bytes") if io else None,
         )
-        fields["disk_read_bytes_per_sec"] = str(read_bps)
-        fields["disk_write_bytes_per_sec"] = str(write_bps)
+        fields["canyonos.machine.disk.read"] = str(read_bps)
+        fields["canyonos.machine.disk.write"] = str(write_bps)
         return fields
 
     def _network(self):
@@ -136,19 +135,18 @@ class MachineMetricsPoller:
             ("bytes_recv", "bytes_sent") if io else None,
         )
         return {
-            "network_rx_bytes_per_sec": str(rx_bps),
-            "network_tx_bytes_per_sec": str(tx_bps),
+            "canyonos.machine.network.rx": str(rx_bps),
+            "canyonos.machine.network.tx": str(tx_bps),
         }
 
     def _capacity(self):
         """Total physical capacity of this box (machine-level, so it belongs here rather
         than in any single agent's hash)."""
-        capacity = {
-            "cpu_count": psutil.cpu_count(),
-            "memory_total_bytes": psutil.virtual_memory().total,
-            "disk_total_bytes": psutil.disk_usage(HOST_ROOT).total,
+        return {
+            "canyonos.machine.cpu.count": str(psutil.cpu_count()),
+            "canyonos.machine.memory.total": str(psutil.virtual_memory().total),
+            "canyonos.machine.disk.total": str(psutil.disk_usage(HOST_ROOT).total),
         }
-        return {"machine_capacity": json.dumps(capacity)}
 
     # -- helpers ------------------------------------------------------------ #
 

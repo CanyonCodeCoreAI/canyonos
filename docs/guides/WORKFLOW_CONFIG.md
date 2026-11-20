@@ -276,7 +276,7 @@ The rest, in `workflow_group.yaml`, have defaults that suit most workflow groups
 | Key                 | Default                        | What it does                                                                                                                                                                                                        |
 | ------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `endpoint.api_port` | `8080`, else the next free one | The endpoint's port; see [Ports a deploy opens](#ports-a-deploy-opens)                                                                                                                                              |
-| `otel.destinations` | the local dashboard            | Where telemetry goes; see [`otel.destinations`](#oteldestinations)                                                                                                                                                  |
+| `otel.destinations` | none                           | Other places telemetry is also sent; see [`otel.destinations`](#oteldestinations)                                                                                                                                   |
 | `logs`              | `true`                         | Capture each agent's log lines with the call that wrote them. `false` keeps only errors.                                                                                                                            |
 | `dashboard_port`    | `8081`, else the next free one | The local dashboard's port                                                                                                                                                                                          |
 | `redis.host`        | `localhost`                    | The Global Controller's Redis. It requires a password, which the Global Controller makes and keeps in the Redis container's environment; `canyonos stop` removes that container, and the next deploy makes a new one. |
@@ -291,15 +291,15 @@ fixed port: a port you set is never moved, so a taken one stops the deploy.
 
 ### `otel.destinations`
 
-Without this block, telemetry goes to the local dashboard. A block replaces that
-default, so list `local` (as below) beside any other destination.
+Telemetry always goes to the local dashboard. List a destination here to also send it
+to any other OpenTelemetry receiver.
 
 ```yaml
 otel:
   destinations:
-    - name: local
+    - name: my-receiver
       protocol: http
-      endpoint: http://canyonos-dashboard-api:3000
+      endpoint: https://otel.example.com
       headers: {}
 ```
 
@@ -312,19 +312,19 @@ otel:
 | `insecure` | none     | `true` for a gRPC endpoint without TLS. HTTP destinations ignore it.            |
 | `timeout`  | none     | Seconds to wait for each export                                                 |
 
-For `http`, the exporter appends `/v1/traces`, `/v1/metrics` and `/v1/logs` itself. An
+For `http`, `/v1/traces`, `/v1/metrics` and `/v1/logs` are appended for you. An
 endpoint that already ends in `/v1/traces` passes validation and then posts to
 `/v1/traces/v1/traces`.
 
 Only the Global Controller exports telemetry, so a destination only needs to be
-reachable from it: on Docker, from the machine that runs `canyonos deploy`.
-`http://canyonos-dashboard-api:3000` names the local dashboard's API. The dashboard
-joins each workflow group's Docker network, so the address works whatever host port the API
-is on.
+reachable from it: on Docker, from the machine that runs `canyonos deploy`. It runs an
+OpenTelemetry Collector for the destinations, and sends each request's traces and logs
+when the request completes.
 
-On Kubernetes, a destination on the local dashboard or on `host.docker.internal` is
-skipped with a warning, and telemetry also goes to the cluster's dashboard when it has
-one.
+A destination on the local dashboard (`http://canyonos-dashboard-api:3000`) is ignored,
+since the dashboard already gets everything. On Kubernetes, a destination on
+`host.docker.internal` is skipped, and telemetry also goes to the
+cluster's dashboard when it has one.
 
 ## Environment variables
 

@@ -329,12 +329,13 @@ class ReplicaProvisioner(object):
             f"controller:{replica['address']}:metrics"
         )
         return (
-            metrics.get("draining") == "1"
-            and metrics.get("queue_length") == "0"
+            metrics.get("canyonos.agent.draining") == "1"
+            and metrics.get("canyonos.agent.queue.length") == "0"
             and metrics.get("open_requests") == "0"
             and metrics.get("pending_requests") == "0"
             # Served counts calls started here, completed those finished: equal means none running.
-            and metrics.get("requests_served") == metrics.get("requests_completed")
+            and metrics.get("canyonos.agent.requests")
+            == metrics.get("canyonos.agent.requests.completed")
         )
 
     def _delete_controller_status(self, replica):

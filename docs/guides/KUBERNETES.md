@@ -272,8 +272,8 @@ Each agent's `resources` become its pods' limits: `cpu` cores, `memory` in MB, a
 as `nvidia.com/gpu`. Each pod requests 100m of CPU and all of its memory.
 
 On Kubernetes, `provider` and the `ec2-pool:` and `ec2-assign:` sections have no effect.
-An `otel` destination on the local dashboard or on `host.docker.internal` is skipped,
-with a warning. Every other
+An `otel` destination on the local dashboard or on `host.docker.internal` is skipped.
+Every other
 key is described in [Workflow config](WORKFLOW_CONFIG.md).
 
 ### Databases

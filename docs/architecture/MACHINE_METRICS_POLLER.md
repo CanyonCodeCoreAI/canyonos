@@ -22,16 +22,16 @@ It is a container that looks at the host, not at itself. Docker and EC2 deploys 
 └───────────────┼────────────────────────────────────────┘
                 │ HGETALL, once per poll tick
                 ▼
-        Global Controller ──► OTLP exporter ──► dashboard
+        Global Controller ──► dashboard's Postgres
 ```
 
 The poller sees the host because it shares the host's PID and network namespaces and mounts the host root read-only. Without that it would measure its own container.
 
 - It samples every `poll_interval` seconds from `workflow_group.yaml` (default 5).
 - If one source fails (no GPU, no `/proc/pressure`), it logs the failure and still writes the rest of the sample.
-- Each sample overwrites one hash in the machine's Redis. The Global Controller reads it on its poll tick and queues it for the [OTLP exporter](OTLP_EXPORTER.md).
+- Each sample overwrites one hash in the machine's Redis. The Global Controller reads it on its poll tick, stores it in the dashboard's Postgres and hands it to the [OTel Collector](OTEL_COLLECTOR.md).
 
-Every field becomes a gauge on the resource `canyonos-machine-<host>`. `_MACHINE_GAUGES` in `otlp_exporter/metric_convert.py` is the list.
+Each field is stored under its OTel metric name and becomes a gauge on the resource `canyonos-machine-<host>`. `MACHINE_GAUGES` in `schema/otel_metrics.py` is the list.
 
 ## How it starts
 
@@ -56,9 +56,9 @@ There is no poller. A replica's machine is its pod, so `KubernetesOrchestrator.p
 | `packages/core/canyonos_core/reconciler/replicas.py`            | `start_metrics_collector`: the `docker run` flags       |
 | `packages/core/canyonos_core/controller/global_controller.py`   | Starts its own poller; reads every machine's hash       |
 | `packages/core/canyonos_core/reconciler/machine_provisioner.py` | Starts the poller on machines the reconciler provisions |
-| `packages/core/canyonos_core/otlp_exporter/metric_convert.py`   | `_MACHINE_GAUGES`: field to OTel metric                 |
+| `packages/core/canyonos_core/schema/otel_metrics.py`            | `MACHINE_GAUGES`: OTel metric to unit                   |
 
 ## Changing it
 
-- New field: add it in `poller.py`, then to `_MACHINE_GAUGES`, or it is stored but never exported.
+- New field: add it in `poller.py` under its OTel metric name, then to `MACHINE_GAUGES`, or it is stored but never exported.
 - Launch flags and environment: `start_metrics_collector` in `reconciler/replicas.py`. Both launchers share it.

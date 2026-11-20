@@ -21,7 +21,7 @@ flowchart LR
     caller(["Caller"]) -->|"HTTP"| ep["Endpoint"]
     ep -->|"gRPC"| rep
     rep -->|"telemetry"| gc
-    gc -->|"OTLP"| dash(["Dashboard"])
+    gc -->|"telemetry"| dash(["Dashboard"])
 ```
 
 One workflow group runs one Global Controller for all its workflows. Every part shares state through the workflow group's Redis: the config, the replica records, the routing table and each call's result.
@@ -36,7 +36,7 @@ One workflow group runs one Global Controller for all its workflows. Every part 
 | [LLM Gateway](LLM_GATEWAY.md) | Carries each replica's model calls: prompts, limits, tokens | `packages/core/canyonos_core/llm_gateway/` |
 | [Reconciler](RECONCILER.md) | Docker and EC2: keeps each agent at its desired count | `packages/core/canyonos_core/reconciler/` |
 | [Operator](OPERATOR.md) | Kubernetes: runs a workflow group's Redis, Global Controller, endpoint and agents | `packages/operator/` (Go), `packages/core/canyonos_core/kubernetes/` |
-| [OTLP exporter](OTLP_EXPORTER.md) | Sends traces, metrics and logs from a SQLite queue to OTel receivers | `packages/core/canyonos_core/otlp_exporter/` |
+| [OTel Collector](OTEL_COLLECTOR.md) | Sends traces, metrics and logs to the OTel receivers in `otel.destinations` | `packages/core/canyonos_core/controller/utils/otel_collector.py` |
 | [Machine metrics poller](MACHINE_METRICS_POLLER.md) | Samples one machine's CPU, memory, GPU, disk and network | `packages/core/canyonos_core/machine_metrics_poller/` |
 | [Dashboard](../guides/DASHBOARD.md) | Shows requests, traces, prompts and spend | `packages/api/`, `packages/web/` |
 | Redis | Shared state: config, replica records, routing, futures. On Docker and EC2, each workflow group has one per machine (`canyonos-<workflow group>-redis-<host>`). On Kubernetes, one per workflow group. See [Redis keys](CONTROLLER.md#redis-keys) | `controller/utils/redis_client.py` |
@@ -47,7 +47,7 @@ On Docker and EC2:
 
 1. `canyonos deploy` creates the Global Controller's container and uploads `workflow_group.yaml` and each workflow to the CanyonOS API, which writes them into the container and starts it.
 2. In the container, the build generates the stubs and Docker contexts and starts building the agent images, while the Global Controller starts.
-3. The Global Controller starts Redis and a metrics poller on its machine, publishes the config, and starts the Reconciler and the OTLP exporter as supervised processes.
+3. The Global Controller starts Redis and a metrics poller on its machine, publishes the config, and starts the Reconciler and, when `otel.destinations` names a receiver, the OTel Collector as supervised processes.
 4. When the images are built, the Reconciler starts any EC2 machines (each with its own Redis and metrics poller), launches the replicas and the endpoint, and publishes the routing table.
 5. The Global Controller waits for every replica to report healthy, then polls them until the deploy stops.
 
@@ -59,7 +59,7 @@ On Kubernetes, `canyonos deploy --target kubernetes` uploads the workflow to a b
 2. That Local Controller checks governance, picks a replica of the route's agent from the routing table, and forwards the call over gRPC.
 3. The replica's Local Controller runs the method. Each call to another agent is a `Future` that takes the same path. Each model call goes through the replica's LLM Gateway.
 4. Results go back over gRPC to whoever made each call. The root result lands in Redis, where `GET /status/<request_id>` reads it.
-5. The Global Controller queues the request's telemetry for the OTLP exporter, then has every replica expire the request's keys.
+5. The Global Controller stores the request's telemetry in the dashboard's Postgres and hands it to the OTel Collector, then has every replica expire the request's keys.
 
 [Request lifecycle](CONTROLLER.md#request-lifecycle) follows one call hop by hop.
 

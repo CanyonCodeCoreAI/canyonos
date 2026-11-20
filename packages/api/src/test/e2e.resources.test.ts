@@ -182,7 +182,7 @@ describe('GET /resources/overview', () => {
     expect(workflow_row.avg_latency_ms).toBe(2000);
   });
 
-  test('a span with no canyon.workflow.id is invisible', async () => {
+  test('a span with no canyonos.workflow.id is invisible', async () => {
     const token = TEST_API_KEY;
     const workflow = await insert_workflow('Owned', DAY_MS);
 

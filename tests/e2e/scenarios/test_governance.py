@@ -218,7 +218,7 @@ def _review_model(store, request_id: str) -> str:
     """The model the gateway sent ReviewAgent.review's LLM call to, as its future
     records it."""
     future = _future(store, request_id, REVIEWER, "review")
-    return store.hget(f"future:{future}", "model") or ""
+    return store.hget(f"future:{future}", "gen_ai.request.model") or ""
 
 
 def _expect_refusal(status: dict, name: str) -> None:

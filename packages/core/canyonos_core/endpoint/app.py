@@ -31,6 +31,7 @@ from canyonos_core.controller.local_controller import (
     LocalController,
     shutdown_grace_seconds,
 )
+from canyonos_core.controller.utils.postgres_writer import DASHBOARD_DATABASE_URL
 from canyonos_core.controller.utils.redis_client import RedisClient
 from canyonos_core.endpoint import (
     ENDPOINT_CPUS,
@@ -46,10 +47,6 @@ logger = logging.getLogger(__name__)
 
 # How many requests each worker serves at once; the rest wait for a free thread.
 WORKER_THREADS = 16
-# The local dashboard's Postgres, by its container name on the workflow group's network.
-DASHBOARD_DATABASE_URL = (
-    "postgresql://canyonos:canyonos@canyonos-dashboard-db:5432/canyonos"
-)
 # How long a Redis call may take before the request is answered without it, so an
 # unreachable Redis is a quick 503 rather than a hung request.
 REDIS_TIMEOUT_SECONDS = 2
@@ -186,7 +183,7 @@ def create_app(routes, redis_client):
                         {
                             "future_id": future_id,
                             "result": json.dumps(kwargs),
-                            "finished_at": time.time(),
+                            "finished_at": time.time_ns(),
                         }
                     )
                 )

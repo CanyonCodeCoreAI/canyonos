@@ -124,7 +124,7 @@ sequenceDiagram
     RC->>R: HSET agent_instance draining_at
     RC->>MR: SET controller:address:draining = removal time
     L->>MR: GET draining, then refuse new calls
-    L->>MR: heartbeat with draining=1 and open work counts
+    L->>MR: heartbeat with canyonos.agent.draining=1 and open work counts
     RC->>MR: HGETALL controller:address:metrics
     Note over RC: idle, or 180 s since draining_at
     RC->>RC: remove container, delete record, republish routing

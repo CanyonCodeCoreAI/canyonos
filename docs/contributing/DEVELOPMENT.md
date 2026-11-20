@@ -130,8 +130,8 @@ API and web edits reload while it runs. Core edits need `bun run canyonos:dev` a
 redeploy. To check the dashboard as users run it, deploy with the dashboard's images
 instead.
 
-**Send the workflow's telemetry to the host.** By default the Global Controller sends
-it to the dashboard image's API, `http://canyonos-dashboard-api:3000`, which isn't
+**Send the workflow's telemetry to the host.** By default the Global Controller writes
+it to the dashboard image's database, `canyonos-dashboard-db`, which isn't
 running. Set the workflow group's
 [`otel.destinations`](../guides/WORKFLOW_CONFIG.md#oteldestinations) to
 `http://host.docker.internal:3000`.

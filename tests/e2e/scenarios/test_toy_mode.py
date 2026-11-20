@@ -103,6 +103,6 @@ def test_one_replica_runs_every_agent(recorder, toy):
     for name in LLM_CALLS:
         call = calls[qualified(folder, name)]
         future = store.hgetall(f"future:{call.future_id}")
-        assert int(future.get("input_token_count") or 0) > 0, (name, future)
+        assert int(future.get("gen_ai.usage.input_tokens") or 0) > 0, (name, future)
         # The gateway finds the prompt by the agent header, so this proves it arrived.
         assert call.prompt_version, (name, future)

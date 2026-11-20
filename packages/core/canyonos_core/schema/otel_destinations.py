@@ -1,12 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The `otel.destinations` contract, shared by the manifest schema and the exporter.
-
-The Global Controller hands the list to the exporter as written, after `${VAR}`
-expansion, so the schema that gates a deploy and the exporter that reads the
-list at runtime check it with these same rules.
-"""
+"""The `otel.destinations` contract: the rules the manifest schema checks a deploy
+with, and the form the OpenTelemetry Collector's config is written from."""
 
 import math
 
@@ -17,12 +13,6 @@ DESTINATION_KEYS = frozenset(
 # The local dashboard's API by its container name, on the network each workflow shares
 # with it, so its host port never matters here.
 LOCAL_DASHBOARD_ENDPOINT = "http://canyonos-dashboard-api:3000"
-LOCAL_DASHBOARD_DESTINATION = {
-    "name": "local",
-    "protocol": "http",
-    "endpoint": LOCAL_DASHBOARD_ENDPOINT,
-    "headers": {},
-}
 
 
 def _normalize_protocol(protocol):
@@ -87,7 +77,7 @@ def _positive_number(value):
 
 
 def normalize_destination(destination):
-    """A destination that passed `destination_problems`, in the form the exporter uses."""
+    """A destination that passed `destination_problems`, in the form the collector's config is written from."""
     headers = destination.get("headers")
     timeout = destination.get("timeout")
     return {
@@ -101,6 +91,5 @@ def normalize_destination(destination):
 
 
 def duplicate_name_message(name):
-    """Return the error message for an OTel destination name used twice, shared by the
-    config checks and the exporter."""
+    """Return the error message for an OTel destination name used twice."""
     return f"destination names must be unique; duplicate {name!r}"

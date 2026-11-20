@@ -26,6 +26,7 @@ const CORRELATED_SERVICE = 'otlp-logs-correlated';
 const STRUCTURED_SERVICE = 'otlp-logs-structured';
 const OBSERVED_ONLY_SERVICE = 'otlp-logs-observed-only';
 const UNCORRELATED_SERVICE = 'otlp-logs-uncorrelated';
+const RESENT_SERVICE = 'otlp-logs-resent';
 
 const TIME_UNIX_NANO = 1_788_000_000_123_456_789n;
 const TIME_TEXT = String(TIME_UNIX_NANO);
@@ -151,6 +152,27 @@ describe('otlp log ingest', () => {
         attributes: {},
       });
     }
+  });
+
+  test('a record sent twice with the same log id is stored once', async () => {
+    const log_id = hex(random_id(16));
+    const payload = encode_logs_export(
+      logs_export(RESENT_SERVICE, SCOPE, [
+        {
+          timeUnixNano: TIME_TEXT,
+          body: { stringValue: 'sent again' },
+          attributes: [attribute('step', 'plan'), attribute('canyonos.log.id', log_id)],
+        },
+      ])
+    );
+
+    expect((await post_otlp('/v1/logs', payload)).status).toBe(200);
+    expect((await post_otlp('/v1/logs', payload)).status).toBe(200);
+
+    const rows = await stored_logs(RESENT_SERVICE);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ log_id, attributes: { step: 'plan' } });
+    expect(rows[0]?.attributes).not.toHaveProperty('canyonos.log.id');
   });
 
   test('an empty export is accepted with a zero-length protobuf body', async () => {

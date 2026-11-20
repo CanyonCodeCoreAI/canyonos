@@ -171,21 +171,21 @@ class Hooks:
                     is_stream and getattr(resp, "stream_error", False)
                 )
 
-                counts = {"errors": 1 if is_error else 0}
+                counts = {"error_count": 1 if is_error else 0}
                 if usage:
                     counts.update(
                         {
-                            "input_token_count": usage.input_tokens,
-                            "output_token_count": usage.output_tokens,
+                            "gen_ai.usage.input_tokens": usage.input_tokens,
+                            "gen_ai.usage.output_tokens": usage.output_tokens,
                             "token_count": usage.total_tokens,
-                            "input_cache_tokens": usage.input_cache_tokens,
+                            "gen_ai.usage.cache_read.input_tokens": usage.input_cache_tokens,
                             "input_cache_write_tokens": usage.input_cache_write_tokens,
                         }
                     )
 
                 # A future can make several LLM calls, so each call adds to its totals.
                 key = f"future:{future_id}"
-                self._redis.hset(key, "model", model_id)
+                self._redis.hset(key, "gen_ai.request.model", model_id)
                 self._redis.hset(key, "price_prefix", ctx.price_prefix or "")
                 if ctx.prompt_version:
                     self._redis.hset(key, "prompt_name", ctx.prompt_name)

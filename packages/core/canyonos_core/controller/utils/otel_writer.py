@@ -1,27 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Producer side of the OTel export queue: read telemetry from a machine's Redis and write it
-into the SQLite queue tables for the exporter subprocess to drain.
+"""Reads telemetry from a machine's Redis, stores it in the dashboard's Postgres and
+forwards it to the collector for the external destinations.
 
-Runs inside the global controller process (GC calls ``send_telemetry`` and
-``metric_write_rows`` each poll). It only ever writes -- marking rows sent and pruning them
-is the exporter's job (see ``otlp_exporter/otel_reader.py``). The two sides share nothing
-but ``controller/utils/schema.py`` and the database file.
+Runs inside the Global Controller. ``send_telemetry`` stores what each poll reads, so the
+dashboard is live. ``deliver_completed_requests`` stores a request once more when it
+completes and forwards it then, so an external destination gets each request once.
 """
 
-import contextlib
+import collections
 import json
 import logging
-import sqlite3
-import time
 import uuid
 
+from canyonos_core.controller.utils import otel_collector, postgres_writer
 from canyonos_core.controller.utils.log_entry import build_log_entry
-from canyonos_core.controller.utils.schema import DB_PATH
 from canyonos_core.llm_gateway import pricing
-# pricing enriches trace rows with server cost at write time; a candidate to move
-# receiver-side later so the producer stays a pure queue writer.
 
 
 logger = logging.getLogger(__name__)
@@ -45,57 +40,6 @@ def _log_cost_failure(kind, exc):
     )
 
 
-# `sent` is deliberately excluded here so re-upserting a traces_waiting row (e.g. GC
-# re-writing it from Redis) never resets it back to unsent.
-_TRACES_COLUMNS = [
-    "future_id",
-    "parent_id",
-    "session_id",
-    "workflow_group_id",
-    "workflow_id",
-    "agent_id",
-    "model",
-    "prompt_name",
-    "prompt_version",
-    "cpu",
-    "gpu",
-    "started_at",
-    "finished_at",
-    "execution_time_ms",
-    "queue_time_ms",
-    "input_token_count",
-    "output_token_count",
-    "token_count",
-    "errors",
-    "failed",
-    "server_cost",
-    "token_cost",
-    "total_cost",
-    "cached_tokens",
-    "cache_hit_ratio",
-    "error_name",
-    "error_message",
-    "name",
-    "input",
-    "output",
-]
-
-_TRACES_UPSERT = """
-    INSERT INTO traces_waiting ({cols}) VALUES ({placeholders})
-    ON CONFLICT(future_id) DO UPDATE SET {updates}
-    WHERE (
-        traces_waiting.finished_at IS NULL
-        AND COALESCE(traces_waiting.failed, 0) = 0
-    )
-    OR excluded.finished_at IS NOT NULL
-    OR COALESCE(excluded.failed, 0) = 1
-""".format(
-    cols=", ".join(_TRACES_COLUMNS),
-    placeholders=", ".join(f":{c}" for c in _TRACES_COLUMNS),
-    updates=", ".join(f"{c}=excluded.{c}" for c in _TRACES_COLUMNS if c != "future_id"),
-)
-
-
 def _normalize_json_text(value):
     """Return JSON text, encoding scalar strings that are not valid JSON."""
     if value is None:
@@ -107,288 +51,144 @@ def _normalize_json_text(value):
     return value
 
 
-def _trace_write_rows(rows, redis_client=None, workflow_group_id=None, db_path=DB_PATH):
-    """Upsert future rows (as returned by ``_pull_telemetry``) into the traces_waiting
-    table. Rows without finished_at are kept (not skipped) -- that's what "waiting" means
-    here. `redis_client` is only used to look up the executing agent's hourly cost for
-    server-cost pricing; pass None to skip cost lookups (server_cost stays 0)."""
-    if not rows:
-        return
-    conn = sqlite3.connect(db_path)
+def _span_row(raw, redis_client, workflow_group_id):
+    """One finished future row from Redis as a span row with typed values and its costs,
+    or None when it lacks a future or request id. `redis_client` is read for the agent's hourly cost."""
+    fid = raw.get("future_id")
+    session_id = raw.get("request_id")
+    if not fid or not session_id:
+        missing = ", ".join(
+            field
+            for field, present in (
+                ("future_id", fid),
+                ("request_id", session_id),
+            )
+            if not present
+        )
+        logger.warning(
+            "Dropping future row missing %s; it will never be exported "
+            "(future_id=%r, request_id=%r)",
+            missing,
+            fid,
+            session_id,
+        )
+        return None
+    agent_id = raw.get("agent")
+    started_at = int(raw.get("created_at") or 0)
+    finished_at = int(raw["finished_at"])
+    execution_time_ms = round((finished_at - started_at) / 1e6) if started_at else None
+    input_token_count = int(float(raw.get("gen_ai.usage.input_tokens") or 0))
+    output_token_count = int(float(raw.get("gen_ai.usage.output_tokens") or 0))
+    token_count = int(float(raw.get("token_count") or 0))
+    cached_tokens = int(float(raw.get("gen_ai.usage.cache_read.input_tokens") or 0))
+    cache_write_tokens = int(float(raw.get("input_cache_write_tokens") or 0))
+    service = raw.get("service")
+    method = raw.get("method")
+    name = raw.get("name") or ".".join(part for part in (service, method) if part)
+    result = raw.get("result")
+
+    # Cost lookups can fail independently of the telemetry itself (e.g.
+    # a malformed llm_prices.json) -- don't let that drop the whole row,
+    # just cost it at 0.
     try:
-        for raw in rows:
-            fid = raw.get("future_id")
-            session_id = raw.get("request_id")
-            if not fid or not session_id:
-                missing = ", ".join(
-                    field
-                    for field, present in (
-                        ("future_id", fid),
-                        ("request_id", session_id),
-                    )
-                    if not present
-                )
-                logger.warning(
-                    "Dropping future row missing %s; it will never be exported "
-                    "(future_id=%r, request_id=%r)",
-                    missing,
+        token_cost = pricing.compute_token_cost(
+            raw.get("gen_ai.request.model"),
+            input_token_count,
+            output_token_count,
+            cached_tokens,
+            cache_write_tokens,
+            prefix=raw.get("price_prefix"),
+        )
+    except Exception as e:
+        _log_cost_failure("Token cost", e)
+        token_cost = 0.0
+    try:
+        hourly_cost = (
+            redis_client.get(f"agent:{agent_id}:hourly_cost")
+            if redis_client is not None and agent_id
+            else None
+        )
+        server_cost = float(hourly_cost or 0) * (finished_at - started_at) / 3600e9
+    except Exception as e:
+        _log_cost_failure("Server cost", e)
+        server_cost = 0.0
+
+    row = {
+        "span_id": fid,
+        "parent_span_id": raw.get("parent") or None,
+        "trace_id": session_id,
+        "canyonos.workflow_group.id": workflow_group_id,
+        "canyonos.workflow.id": raw.get("workflow_id"),
+        "gen_ai.agent.id": agent_id,
+        "gen_ai.request.model": raw.get("gen_ai.request.model"),
+        "prompt_name": raw.get("prompt_name"),
+        "prompt_version": raw.get("prompt_version"),
+        "cpu": float(raw.get("cpu_resource") or 0),
+        "gpu": float(raw.get("gpu_resource") or 0),
+        "start_time_unix_nano": started_at,
+        "end_time_unix_nano": finished_at,
+        "execution_time_ms": execution_time_ms,
+        "queue_time_ms": (
+            round(float(raw["queue_time"]) * 1000) if raw.get("queue_time") else None
+        ),
+        "gen_ai.usage.input_tokens": input_token_count,
+        "gen_ai.usage.output_tokens": output_token_count,
+        "token_count": token_count,
+        "error_count": int(raw.get("error_count") or 0),
+        "status_code": "ERROR" if int(raw.get("failed") or 0) else "UNSET",
+        "server_cost": server_cost,
+        "token_cost": token_cost,
+        "gen_ai.usage.cost": server_cost + token_cost,
+        "gen_ai.usage.cache_read.input_tokens": cached_tokens,
+        "cache_hit_ratio": cached_tokens / token_count if token_count else 0.0,
+        "exception.type": raw.get("error_name"),
+        "status_message": raw.get("error"),
+        "name": name or agent_id or "unknown_agent",
+        "gen_ai.prompt": _normalize_json_text(raw.get("args")),
+        "gen_ai.completion": _normalize_json_text(result),
+    }
+    return row
+
+
+def _log_rows(rows, workflow_group_id):
+    """One log row per entry in each future row's `logs` field. `log_id` is
+    `{future_id}:{index}`, so a future read again yields the same ids."""
+    log_rows = []
+    for raw in rows:
+        fid = raw.get("future_id")
+        logs_json = raw.get("logs")
+        if not fid or not logs_json:
+            continue
+        try:
+            entries = json.loads(logs_json)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Dropping unparseable logs field for future %s", fid)
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            log_rows.append(
+                _log_params(
+                    entry,
+                    f"{fid}:{index}",
                     fid,
-                    session_id,
+                    raw.get("request_id"),
+                    workflow_group_id,
+                    raw.get("workflow_id"),
+                    raw.get("agent"),
                 )
-                continue
-            agent_id = raw.get("agent")
-            started_at = float(raw.get("created_at") or 0)
-            finished_at = float(raw["finished_at"]) if raw.get("finished_at") else None
-            execution_time_ms = (
-                round((finished_at - started_at) * 1000)
-                if finished_at and started_at
-                else None
             )
-            input_token_count = int(float(raw.get("input_token_count") or 0))
-            output_token_count = int(float(raw.get("output_token_count") or 0))
-            token_count = int(float(raw.get("token_count") or 0))
-            cached_tokens = int(float(raw.get("input_cache_tokens") or 0))
-            cache_write_tokens = int(float(raw.get("input_cache_write_tokens") or 0))
-            service = raw.get("service")
-            method = raw.get("method")
-            name = raw.get("name") or ".".join(
-                part for part in (service, method) if part
-            )
-            result = raw.get("result")
-
-            # Cost figures are only meaningful once the future has finished, so skip
-            # computing them until then rather than recomputing on every poll.
-            if finished_at is not None:
-                # Cost lookups can fail independently of the telemetry itself (e.g.
-                # a malformed llm_prices.json) -- don't let that drop the whole row,
-                # just cost it at 0.
-                try:
-                    token_cost = pricing.compute_token_cost(
-                        raw.get("model"),
-                        input_token_count,
-                        output_token_count,
-                        cached_tokens,
-                        cache_write_tokens,
-                        prefix=raw.get("price_prefix"),
-                    )
-                except Exception as e:
-                    _log_cost_failure("Token cost", e)
-                    token_cost = 0.0
-                try:
-                    hourly_cost = (
-                        redis_client.get(f"agent:{agent_id}:hourly_cost")
-                        if redis_client is not None and agent_id
-                        else None
-                    )
-                    server_cost = (
-                        float(hourly_cost or 0) * (finished_at - started_at) / 3600
-                    )
-                except Exception as e:
-                    _log_cost_failure("Server cost", e)
-                    server_cost = 0.0
-            else:
-                token_cost = 0.0
-                server_cost = 0.0
-
-            conn.execute(
-                _TRACES_UPSERT,
-                {
-                    "future_id": fid,
-                    "parent_id": raw.get("parent") or None,
-                    "session_id": session_id,
-                    "workflow_group_id": workflow_group_id,
-                    "workflow_id": raw.get("workflow_id"),
-                    "agent_id": agent_id,
-                    "model": raw.get("model"),
-                    "prompt_name": raw.get("prompt_name"),
-                    "prompt_version": raw.get("prompt_version"),
-                    "cpu": float(raw.get("cpu_resource") or 0),
-                    "gpu": float(raw.get("gpu_resource") or 0),
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "execution_time_ms": execution_time_ms,
-                    "queue_time_ms": (
-                        round(float(raw["queue_time"]) * 1000)
-                        if raw.get("queue_time")
-                        else None
-                    ),
-                    "input_token_count": input_token_count,
-                    "output_token_count": output_token_count,
-                    "token_count": token_count,
-                    "errors": int(raw.get("errors") or 0),
-                    "failed": bool(int(raw.get("failed") or 0)),
-                    "server_cost": server_cost,
-                    "token_cost": token_cost,
-                    "total_cost": server_cost + token_cost,
-                    "cached_tokens": cached_tokens,
-                    "cache_hit_ratio": cached_tokens / token_count
-                    if token_count
-                    else 0.0,
-                    "error_name": raw.get("error_name"),
-                    "error_message": raw.get("error"),
-                    "name": name or agent_id or "unknown_agent",
-                    "input": _normalize_json_text(raw.get("args")),
-                    "output": _normalize_json_text(result),
-                },
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# `sent` is excluded from the update set for the same reason as `traces_waiting`: re-upserting a
-# sample (GC polling faster than the collector, so it re-reads the same tick) must not
-# reset an already-exported row back to unsent.
-_METRICS_UPSERT = """
-    INSERT INTO metrics_waiting (
-        sample_id, kind, agent_id, agent_name, host, port, workflow_group_id, workflow_id,
-        observed_at, metrics
-    ) VALUES (
-        :sample_id, :kind, :agent_id, :agent_name, :host, :port, :workflow_group_id,
-        :workflow_id, :observed_at, :metrics
-    )
-    ON CONFLICT(sample_id) DO UPDATE SET
-        kind=excluded.kind,
-        agent_id=excluded.agent_id,
-        agent_name=excluded.agent_name,
-        host=excluded.host,
-        port=excluded.port,
-        workflow_group_id=excluded.workflow_group_id,
-        workflow_id=excluded.workflow_id,
-        observed_at=excluded.observed_at,
-        metrics=excluded.metrics
-"""
-
-
-def metric_write_rows(rows, db_path=DB_PATH):
-    """Upsert metrics samples into metrics_waiting. Kind-agnostic -- GlobalController just
-    hands over whatever it read from a Redis hash; all metric interpretation happens later
-    in metric_convert.
-
-    Each entry is ``{"kind", "host", "metrics": <hash dict>}`` plus, for agent rows,
-    ``"port"``/``"agent_id"``/``"agent_name"``/``"workflow_id"``, and optionally
-    ``"workflow_group_id"``. The
-    producer-stamped ``observed_at`` inside the hash is the metric timestamp;
-    ``sample_id = {kind}:{agent_id or host[:port]}:{observed_at_ns}`` so a GC re-poll of the same tick
-    upserts instead of duplicating (and a stalled producer never grows the table).
-    Per-row isolation: one bad sample never drops the rest of the batch.
-    """
-    if not rows:
-        return
-    conn = sqlite3.connect(db_path)
-    try:
-        for raw in rows:
-            try:
-                metrics = raw.get("metrics") or {}
-                host = raw.get("host")
-                if not metrics or not host:
-                    continue
-                kind = raw.get("kind") or "machine"
-                port = raw.get("port")
-                agent_id = raw.get("agent_id")
-                # Producer-stamped timestamp; fall back to read time if absent.
-                observed_at = float(metrics.get("observed_at") or 0) or time.time()
-                identity = agent_id or (f"{host}:{port}" if port else host)
-                sample_id = f"{kind}:{identity}:{int(observed_at * 1e9)}"
-                conn.execute(
-                    _METRICS_UPSERT,
-                    {
-                        "sample_id": sample_id,
-                        "kind": kind,
-                        "agent_id": agent_id,
-                        "agent_name": raw.get("agent_name"),
-                        "host": host,
-                        "port": str(port) if port is not None else None,
-                        "workflow_group_id": raw.get("workflow_group_id"),
-                        "workflow_id": raw.get("workflow_id"),
-                        "observed_at": observed_at,
-                        "metrics": json.dumps(metrics),
-                    },
-                )
-            except Exception as e:
-                # Isolate per row so one malformed sample can't lose the whole tick.
-                logger.warning("Dropping malformed metrics row (non-fatal): %s", e)
-                continue
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# `sent` is excluded from the update set for the same reason as the other tables: re-upserting
-# a log row (a GC re-poll of the same future) must not reset an already-exported row back
-# to unsent.
-_LOGS_UPSERT = """
-    INSERT INTO logs_waiting (
-        log_id, future_id, session_id, workflow_group_id, workflow_id, agent_id,
-        observed_at, severity_number, severity_text, body, attributes
-    ) VALUES (
-        :log_id, :future_id, :session_id, :workflow_group_id, :workflow_id, :agent_id,
-        :observed_at, :severity_number, :severity_text, :body, :attributes
-    )
-    ON CONFLICT(log_id) DO UPDATE SET
-        future_id=excluded.future_id,
-        session_id=excluded.session_id,
-        workflow_group_id=excluded.workflow_group_id,
-        workflow_id=excluded.workflow_id,
-        agent_id=excluded.agent_id,
-        observed_at=excluded.observed_at,
-        severity_number=excluded.severity_number,
-        severity_text=excluded.severity_text,
-        body=excluded.body,
-        attributes=excluded.attributes
-"""
-
-
-def _log_write_rows(rows, workflow_group_id=None, db_path=DB_PATH):
-    """Upsert future rows' `logs` JSON arrays into the logs_waiting table, one row per log
-    record. `log_id = {future_id}:{index}` so a GC re-poll of the same future upserts
-    instead of duplicating, the same rationale as metrics_waiting.sample_id."""
-    if not rows:
-        return
-    conn = sqlite3.connect(db_path)
-    try:
-        for raw in rows:
-            fid = raw.get("future_id")
-            logs_json = raw.get("logs")
-            if not fid or not logs_json:
-                continue
-            try:
-                entries = json.loads(logs_json)
-            except (json.JSONDecodeError, TypeError):
-                logger.warning("Dropping unparseable logs field for future %s", fid)
-                continue
-            if not entries:
-                continue
-            session_id = raw.get("request_id")
-            agent_id = raw.get("agent")
-            for index, entry in enumerate(entries):
-                if not isinstance(entry, dict):
-                    continue
-                conn.execute(
-                    _LOGS_UPSERT,
-                    _log_params(
-                        entry,
-                        f"{fid}:{index}",
-                        fid,
-                        session_id,
-                        workflow_group_id,
-                        raw.get("workflow_id"),
-                        agent_id,
-                    ),
-                )
-        conn.commit()
-    finally:
-        conn.close()
+    return log_rows
 
 
 def _log_params(
     entry, log_id, future_id, session_id, workflow_group_id, workflow_id, agent_id
 ):
-    """The _LOGS_UPSERT parameters for one OTel-shaped log entry."""
+    """One OTel-shaped log entry as a log row."""
     return {
         "log_id": log_id,
-        "future_id": future_id,
-        "session_id": session_id,
+        "span_id": future_id,
+        "trace_id": session_id,
         "workflow_group_id": workflow_group_id,
         "workflow_id": workflow_id,
         "agent_id": agent_id,
@@ -396,34 +196,29 @@ def _log_params(
         "severity_number": entry.get("SeverityNumber"),
         "severity_text": entry.get("SeverityText"),
         "body": entry.get("Body"),
-        "attributes": json.dumps(entry.get("Attributes") or {}),
+        "attributes": entry.get("Attributes") or {},
     }
 
 
 class ProcessLogHandler(logging.Handler):
-    """Queues every INFO-and-above record of this process for OTel export as one log source.
+    """Collects every INFO-and-above record of this process as log rows under one source.
 
     For the Global Controller, which runs no futures: its logs reach the dashboard under
     `source_name` instead of a future's `logs` field. Taking WARNING and above here cannot
     double-record a failure, since `build_failure_entry` only ever writes to futures.
     """
 
-    def __init__(self, source_name, workflow_group_id=None, db_path=DB_PATH):
+    def __init__(self, source_name, workflow_group_id=None):
         super().__init__(level=logging.INFO)
         self._source_name = source_name
         self._workflow_group_id = workflow_group_id
-        self._db_path = db_path
-        self._conn = None
+        self._rows = collections.deque()
 
     def emit(self, record):
-        """Write the record to logs_waiting; a failed write is reported, never raised."""
+        """Keep the record as a log row; a failure is reported, never raised."""
         try:
-            if self._conn is None:
-                # Handler.handle holds self.lock around emit, so threads never share it at once.
-                self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             entry = build_log_entry(record, agent_name=self._source_name)
-            self._conn.execute(
-                _LOGS_UPSERT,
+            self._rows.append(
                 _log_params(
                     entry,
                     uuid.uuid4().hex,
@@ -432,44 +227,29 @@ class ProcessLogHandler(logging.Handler):
                     self._workflow_group_id,
                     None,
                     self._source_name,
-                ),
+                )
             )
-            self._conn.commit()
         except Exception:
-            self._drop_connection()
             self.handleError(record)
 
-    def close(self):
-        """Close the queue connection along with the handler."""
-        self.acquire()
-        try:
-            self._drop_connection()
-        finally:
-            self.release()
-        super().close()
-
-    def _drop_connection(self):
-        """Close the connection, if any, so the next record opens a fresh one."""
-        if self._conn is None:
-            return
-        with contextlib.suppress(sqlite3.Error):
-            self._conn.close()
-        self._conn = None
-
-
-def _is_finished(row):
-    """Whether a future ended, for delivery: it finished or failed."""
-    return bool(row.get("finished_at")) or str(row.get("failed")) == "1"
+    def store(self):
+        """Store the collected rows in the dashboard's Postgres and forward them to the
+        external destinations."""
+        records = [
+            postgres_writer.log_record(self._rows.popleft())
+            for _ in range(len(self._rows))
+        ]
+        postgres_writer.write_logs(records)
+        otel_collector.send_logs(records)
 
 
 def _pull_telemetry(redis_client, finished=None):
     """Scan a machine's Redis for per-execution future rows; each future's identity and
     execution metrics both live at future:{future_id}.
 
-    `finished`, when given, is the set of futures already queued with `finished_at`
+    `finished`, when given, is the set of futures already stored with `finished_at`
     from this Redis: they are not read again, and the set is kept to what is still in
-    Redis. `finished_at` is the last write a future gets when its call ends; a failure
-    marks `failed` before it, so a failed future without it is read again.
+    Redis. `finished_at` is written together with a call's outcome, success or failure.
     """
     rows = []
     present = set()
@@ -477,6 +257,9 @@ def _pull_telemetry(redis_client, finished=None):
         if key.endswith(":children") or key.endswith(":consumers"):
             continue
         future_id = key.split(":")[1]
+        # A Redis scan can return the same key twice.
+        if future_id in present:
+            continue
         present.add(future_id)
         if finished is not None and future_id in finished:
             continue
@@ -500,37 +283,56 @@ def _read_futures(redis_client, future_ids):
     return rows
 
 
-def _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path):
+def _records(rows, redis_client, workflow_group_id, workflow_ids):
+    """The span and log records of these future rows, in the shape of the dashboard's
+    tables: a span for each finished future, and every log. Each gets its agent's
+    workflow_id from `workflow_ids`, by workflow name."""
     for row in rows:
         # A future's service is its agent, named `<workflow>.<agent>`.
         row["workflow_id"] = workflow_ids.get(row.get("service", "").partition(".")[0])
-    _trace_write_rows(rows, redis_client, workflow_group_id, db_path)
-    _log_write_rows(rows, workflow_group_id, db_path)
+    spans = [
+        postgres_writer.span_record(span)
+        for raw in rows
+        if raw.get("finished_at")
+        and (span := _span_row(raw, redis_client, workflow_group_id))
+    ]
+    logs = [
+        postgres_writer.log_record(row) for row in _log_rows(rows, workflow_group_id)
+    ]
+    return spans, logs
 
 
-def send_telemetry(
-    redis_client, workflow_group_id, workflow_ids, db_path=DB_PATH, finished=None
-):
-    """Pull per-execution future rows from Redis and queue them into the ``traces_waiting``
-    and ``logs_waiting`` tables for OTLP export, each with its agent's workflow_id from
-    `workflow_ids`, by workflow name. The GC calls this once per poll for each machine's
-    Redis, keeping `finished` (see _pull_telemetry) between polls. Returns the rows it wrote.
+def store_metrics(samples):
+    """Store machine and replica samples, as the Global Controller reads them from Redis,
+    in the dashboard's Postgres and forward them to the external destinations."""
+    records = postgres_writer.metric_records(samples)
+    postgres_writer.write_metrics(records)
+    otel_collector.send_metrics(records)
+
+
+def send_telemetry(redis_client, workflow_group_id, workflow_ids, finished=None):
+    """Pull per-execution future rows from Redis and store their spans and logs. The GC
+    calls this once per poll for each machine's Redis, keeping `finished` (see
+    _pull_telemetry) between polls. Returns the rows it read.
     """
     rows = _pull_telemetry(redis_client, finished)
-    _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path)
+    spans, logs = _records(rows, redis_client, workflow_group_id, workflow_ids)
+    postgres_writer.write_spans(spans)
+    postgres_writer.write_logs(logs)
     if finished is not None:
         finished.update(row["future_id"] for row in rows if row.get("finished_at"))
     return rows
 
 
 def deliver_completed_requests(
-    redis_clients, request_ids, workflow_group_id, workflow_ids, db_path=DB_PATH
+    redis_clients, request_ids, workflow_group_id, workflow_ids
 ):
-    """Persist a final all-machine snapshot and mark the requests safe to clean up.
+    """Store a final all-machine snapshot, forward each newly delivered request to the
+    external destinations, and mark the requests safe to clean up.
 
     Completion is authoritative in ``request:completed``. The expected future set is
     the union across every machine, while terminal rows are collected from every machine. A
-    marker is written to every machine only after all SQLite writes have committed.
+    marker is written to every machine only after the snapshot was stored and forwarded.
 
     Returns ``(delivered, gone)``: ``delivered`` requests have every expected future
     terminal and are now marked; ``gone`` requests have no futures left on any machine --
@@ -549,12 +351,12 @@ def deliver_completed_requests(
                 )
         return expected
 
-    # Marked on every machine by an earlier cycle: delivered already, nothing to re-read;
+    # Marked on any machine by an earlier cycle: delivered already, nothing to re-read;
     # only whether its futures are gone yet matters.
     marked = {
         request_id
         for request_id in request_ids
-        if all(
+        if any(
             redis_client.get(f"telemetry:delivered:{request_id}")
             for redis_client in redis_clients
         )
@@ -565,13 +367,20 @@ def deliver_completed_requests(
     # machine, and written before anything is judged.
     wanted = set().union(*futures_of(pending).values()) if pending else set()
     terminal_by_request = {request_id: set() for request_id in request_ids}
+    spans, logs = {}, {}
     for redis_client in redis_clients:
         rows = _read_futures(redis_client, wanted)
-        _queue_rows(rows, redis_client, workflow_group_id, workflow_ids, db_path)
+        client_spans, client_logs = _records(
+            rows, redis_client, workflow_group_id, workflow_ids
+        )
+        spans.update((record["span_id"], record) for record in client_spans)
+        logs.update((record["log_id"], record) for record in client_logs)
         for row in rows:
             request_id = row.get("request_id")
-            if request_id in pending and _is_finished(row):
+            if request_id in pending and row.get("finished_at"):
                 terminal_by_request[request_id].add(row["future_id"])
+    postgres_writer.write_spans(list(spans.values()))
+    postgres_writer.write_logs(list(logs.values()))
     # Read again after writing, so a future added meanwhile, unread, is still expected
     # and holds its request back.
     expected_by_request = futures_of(request_ids)
@@ -585,6 +394,15 @@ def deliver_completed_requests(
         if request_id in marked
         or expected_by_request[request_id] <= terminal_by_request[request_id]
     }
+    newly_delivered = delivered - marked
+    sent = otel_collector.send_spans(
+        [span for span in spans.values() if span["trace_id"] in newly_delivered]
+    ) and otel_collector.send_logs(
+        [log for log in logs.values() if log["trace_id"] in newly_delivered]
+    )
+    if not sent:
+        # Left unmarked, so the next cycle reads and forwards them again.
+        delivered -= newly_delivered
     for redis_client in redis_clients:
         for request_id in delivered:
             # NX: never overwrite the marker, so the expiry cleanup gave it survives.

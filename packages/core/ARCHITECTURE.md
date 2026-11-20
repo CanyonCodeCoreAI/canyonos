@@ -20,9 +20,10 @@ CanyonOS API (packages/api), on Docker, through the Docker Engine API:
 │  cli.py deploy ──▶ GlobalController                                  │
 │                      │  ProcessSupervisor                            │
 │                      ├──▶ reconciler      (subprocess)               │
-│                      └──▶ otel_exporter   (subprocess)               │
+│                      └──▶ otel_collector  (subprocess, only with     │
+│                           otel destinations)                         │
 │                                                                      │
-│  SQLite otel_queue.db   (GC writes, otel_exporter reads)             │
+│  GC writes telemetry to the dashboard's Postgres                     │
 └──────────────────────────────────┬───────────────────────────────────┘
                                    │ host docker.sock / ssh
                                    ▼  (sibling containers, one set per host)
@@ -87,16 +88,16 @@ CanyonOS API (packages/api), on Docker, through the Docker Engine API:
 ```
  run()  (every poll_interval)
   │
-  ├─ supervisor.check_and_respawn()          reconciler, otel_exporter
+  ├─ supervisor.check_and_respawn()          reconciler, otel_collector
   │
   ├─ for each agent_instance  (parallel) ─── _poll_one_replica
   │     │
   │     ├─ GET  controller:<ep>:status       ─▶ status transitions
-  │     ├─ SCAN future:*   ──▶ send_telemetry ─▶ SQLite traces_waiting, logs_waiting
-  │     └─ HGETALL controller:<ep>:metrics    ─▶ SQLite metrics_waiting (kind=agent)
+  │     ├─ SCAN future:*   ──▶ send_telemetry ─▶ Postgres otel_spans, otel_logs
+  │     └─ HGETALL controller:<ep>:metrics    ─▶ Postgres otel_metrics (kind=agent)
   │
   ├─ _poll_machine_metrics
-  │     └─ HGETALL machine:<host>:metrics     ─▶ SQLite metrics_waiting (kind=machine)
+  │     └─ HGETALL machine:<host>:metrics     ─▶ Postgres otel_metrics (kind=machine)
   │
   └─ _trigger_cleanup
         ├─ SMEMBERS request:completed          (every machine Redis)
@@ -192,33 +193,33 @@ CanyonOS API (packages/api), on Docker, through the Docker Engine API:
          │ response (or stream)
          ▼
    hooks.on_response
-     └─ HSET future:<id> {model, input/output/cache token counts, errors} ─▶ machine Redis
+     └─ HSET future:<id> {gen_ai.request.model, input/output/cache token counts, error_count} ─▶ machine Redis
 ```
 
 ## Telemetry
 
 ```
-  EMITTERS (machine)                     BUFFER (GC process)                 EXPORT (otel_exporter)
-  ──────────────────                     ───────────────────                 ──────────────────────
+  EMITTERS (machine)                     GC process                          STORED AND SENT
+  ──────────────────                     ──────────                          ───────────────
 
   LC _execute_locally ─┐
   LogHandler (logs) ───┼─▶ future:<id> ──┐
   llm_gateway (tokens) ──┘               │ SCAN each tick
-                                         ├──▶ otel_writer ──▶ traces_waiting ─┐
-                                         │     (+ token &     logs_waiting ───┤
-                                         │      server cost)                  │
-  LC metrics thread ──▶ controller:<ep>:metrics ──▶ metrics_waiting (agent) ──┤
-                                                                              │ every 5s
-  metrics poller ─────▶ machine:<host>:metrics ───▶ metrics_waiting (machine) ┤ sent = 0
-                                                                              ▼
-                                                      trace_convert / metric_convert / log_convert
-                                                                              │
-                                       otel:destinations (Redis) ─▶ exporters │
-                                                                              ▼
+                                         ├──▶ otel_writer ──▶ span and log records ──┐
+                                         │     (+ token &                            │
+                                         │      server cost)                         │
+  LC metrics thread ──▶ controller:<ep>:metrics ──▶ metric records (agent) ──────────┤
+                                                                                     │
+  metrics poller ─────▶ machine:<host>:metrics ───▶ metric records (machine) ────────┤
+                                                                                     ▼
+                              postgres_writer ──▶ the dashboard's Postgres
+                                                   otel_spans, otel_logs, otel_metrics,
+                                                   otel_metric_rollups
+
+                              otel_collector  ──▶ otelcol-otlp on 127.0.0.1:4318
+                               (only with            │ a request's spans and logs once,
+                                otel destinations)   │ when the request completes
+                                                     ▼
                                                    OTLP gRPC  <endpoint>
                                                    OTLP HTTP  <endpoint>/v1/{traces,metrics,logs}
-                                                                              │
-                                                  all destinations ok ─▶ sent = 1
-                                                  no destinations    ─▶ DELETE rows
-                                                  every 5 min        ─▶ delete old rows
 ```

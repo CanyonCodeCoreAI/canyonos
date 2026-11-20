@@ -51,9 +51,9 @@ def _otel_entry(
         "SpanId": None,
         "Attributes": {
             "logger.name": logger_name,
-            "agent.id": agent_id,
-            "agent.name": agent_name,
-            "endpoint": address,
+            "canyonos.agent.id": agent_id,
+            "canyonos.agent.name": agent_name,
+            "canyonos.endpoint": address,
             "exception.type": exception_type,
             "exception.message": exception_message,
             "exception.stacktrace": exception_stacktrace,
@@ -94,7 +94,9 @@ def build_log_entry(record, agent_id=None, agent_name=None, address=None):
         exc_stacktrace = "".join(traceback.format_exception(*record.exc_info))
     return _otel_entry(
         max((v for k, v in _SEVERITY_NUMBER.items() if record.levelno >= k), default=1),
-        record.levelname,
+        {"WARNING": "WARN", "CRITICAL": "FATAL"}.get(
+            record.levelname, record.levelname
+        ),
         record.getMessage(),
         agent_id=agent_id,
         agent_name=agent_name,
@@ -106,12 +108,18 @@ def build_log_entry(record, agent_id=None, agent_name=None, address=None):
     )
 
 
-def append_log_entry(redis_client, future_key, entry):
-    """Append entry to the future's `logs` hash field, preserving prior entries."""
-    existing = redis_client.hget(future_key, "logs")
+def logs_with_entry(existing, entry):
+    """A future's `logs` field with `entry` added, as JSON. Prior logs that can't be
+    read are dropped."""
     try:
         logs = json.loads(existing) if existing else []
     except (TypeError, ValueError):
         logs = []
     logs.append(entry)
-    redis_client.hset(future_key, "logs", json.dumps(logs))
+    return json.dumps(logs)
+
+
+def append_log_entry(redis_client, future_key, entry):
+    """Append entry to the future's `logs` hash field, preserving prior entries."""
+    existing = redis_client.hget(future_key, "logs")
+    redis_client.hset(future_key, "logs", logs_with_entry(existing, entry))

@@ -381,9 +381,9 @@ curl -s -X POST http://127.0.0.1:8080/<workflow_id> \
 curl -s -H "Authorization: Bearer <your api key>" http://127.0.0.1:8080/status/<request_id>
 ```
 
-### The logs show `database is locked` or `failed to export`
+### The logs show `The dashboard's database is not answering`
 
-**Cause:** the dashboard isn't running, so the workflow group can't send it monitoring data.
+**Cause:** the dashboard isn't running, so the workflow group can't store its monitoring data.
 Requests aren't affected.
 
 **Solution:** start the dashboard with `canyonos serve`, or ignore these lines.

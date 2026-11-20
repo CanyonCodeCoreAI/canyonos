@@ -80,7 +80,7 @@ external stores and concurrency controls; follow the
   Report incompatible constraints instead of changing application dependencies.
 - Local dashboard tracing needs no config. Report another chosen destination as an
   [`otel:` block](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/WORKFLOW_CONFIG.md#oteldestinations)
-  for `workflow_group.yaml`, keeping its `local` entry.
+  for `workflow_group.yaml`.
 - For model calls, follow [LLM gateway](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/LLM_GATEWAY.md).
 - For EC2, report the [EC2 configuration](https://raw.githubusercontent.com/CanyonCodeCoreAI/canyonos/main/docs/guides/EC2.md#configuration)
   for `workflow_group.yaml`, using developer-supplied identifiers. If unavailable,

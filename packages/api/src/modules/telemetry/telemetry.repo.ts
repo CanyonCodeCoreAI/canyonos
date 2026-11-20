@@ -70,6 +70,9 @@ export async function append_metrics(tx: Tx, rows: readonly MetricRow[]): Promis
 
 export async function insert_logs(rows: readonly LogRow[]): Promise<void> {
   for (let offset = 0; offset < rows.length; offset += APPEND_CHUNK_SIZE) {
-    await db.insert(otelLogs).values(rows.slice(offset, offset + APPEND_CHUNK_SIZE));
+    await db
+      .insert(otelLogs)
+      .values(rows.slice(offset, offset + APPEND_CHUNK_SIZE))
+      .onConflictDoNothing({ target: otelLogs.log_id });
   }
 }

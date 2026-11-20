@@ -16,23 +16,23 @@ Fields currently written into `future:{future_id}`, and where:
 | `service`                   | `future.py`, `local_controller.py` |
 | `method`                    | `future.py`, `local_controller.py` |
 | `args`                      | `future.py`, `local_controller.py` (json-encoded) |
-| `created_at`                | `future.py` only (origin submission time) |
+| `created_at`                | `future.py` only (origin submission time, Unix nanoseconds) |
 | `result`                    | `local_controller.py` (`_execute_locally`), `local_controller_frontend.py` (`WriteResult`) -- absent until the call succeeds, so `""` is a real empty result |
 | `failed`                    | `future.py`, `local_controller.py` |
 | `error`                     | `future.py` (`_submit_request`), `local_controller.py` (`_mark_future_failed`) -- the sole failure-message field, one readable line such as `IntentAgent.parse failed: ValueError: no valid holdings`; a failure passed on from a called agent keeps that agent's line; the LLM gateway deliberately never writes it |
-| `finished_at`               | `local_controller.py` (`_execute_locally` finally block) |
+| `finished_at`               | `local_controller.py` (`_execute_locally` finally block, `_mark_future_failed`), `future.py` (`_submit_request`) -- written together with the call's outcome, Unix nanoseconds |
 | `cpu_resource`              | `local_controller.py` |
 | `gpu_resource`              | `local_controller.py` |
 | `agent`                     | `local_controller.py` (ID of the replica that ran this step) |
 | `queue_time`                | `local_controller.py` (only when `submitted_at` is known) |
-| `model`                     | `llm_gateway/hooks.py` (on_response) |
+| `gen_ai.request.model`      | `llm_gateway/hooks.py` (on_response) |
 | `prompt_name`               | `llm_gateway/hooks.py` (on_response) |
 | `prompt_version`            | `llm_gateway/hooks.py` (on_response) |
-| `input_token_count`         | `llm_gateway/hooks.py` |
-| `output_token_count`        | `llm_gateway/hooks.py` |
+| `gen_ai.usage.input_tokens` | `llm_gateway/hooks.py` |
+| `gen_ai.usage.output_tokens` | `llm_gateway/hooks.py` |
 | `token_count`               | `llm_gateway/hooks.py` |
-| `errors`                    | `llm_gateway/hooks.py` (Bedrock call error flag) |
-| `input_cache_tokens`        | `llm_gateway/hooks.py` |
+| `error_count`               | `llm_gateway/hooks.py` (Bedrock call error flag) |
+| `gen_ai.usage.cache_read.input_tokens` | `llm_gateway/hooks.py` |
 | `input_cache_write_tokens`  | `llm_gateway/hooks.py` |
 | `logs`                      | `future.py`, `local_controller.py` (`_mark_future_failed`), `log_handler.py` (`LogHandler`) -- JSON-encoded array of OTel Log Data Model entries; see below |
 
@@ -40,13 +40,14 @@ Fields currently written into `future:{future_id}`, and where:
 
 `logs` holds a JSON-encoded array of OTel Log Data Model dicts (`Timestamp`, `SeverityNumber`,
 `SeverityText`, `Body`, `Attributes`, `Resource`), appended to (never overwritten) via
-`append_log_entry` in `controller/utils/log_entry.py`. Two writers feed it, split strictly by
-severity, and neither is optional for the range it covers:
+`append_log_entry` and `logs_with_entry` in `controller/utils/log_entry.py`. Two writers feed
+it, split strictly by severity, and neither is optional for the range it covers:
 
 - **WARNING and above** (failures): written by `_mark_future_failed` and
-  `Future._submit_request`'s gRPC-failure handler, via `build_failure_entry`, at the same call
-  site that sets the `error`/`failed` fields, wakes up any consumers waiting on the future, and
-  relays the failure to `origin` across replicas. A call whose argument failed or timed out
+  `Future._submit_request`'s gRPC-failure handler, via `build_failure_entry`, in the same
+  write that sets the `error`, `failed` and `finished_at` fields. That call site also wakes up
+  any consumers waiting on the future, and relays the failure to `origin` across replicas. A
+  call whose argument failed or timed out
   before its method started gets no entry, since the failure is not its agent's; its `error`
   still says why.
 - **DEBUG/INFO only** (ambient context): captured by `LogHandler`, a `logging.Handler` attached

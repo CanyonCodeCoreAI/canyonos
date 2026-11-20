@@ -118,6 +118,7 @@ export const otelMetricRollups = pgTable(
 
 // One row per OTLP log record. `trace_id`/`span_id` are the hex ids the producing future carried,
 // so a log joins `otel_spans` on span_id; both are null for an agent-level log outside any future.
+// `log_id` is set by the Global Controller, so a log it reads again is stored once.
 export const otelLogs = pgTable(
   'otel_logs',
   {
@@ -134,6 +135,10 @@ export const otelLogs = pgTable(
     trace_id: text('trace_id'),
     span_id: text('span_id'),
     attributes: jsonb('attributes').notNull().default({}),
+    log_id: text('log_id'),
   },
-  (table) => [index('idx_otel_logs_time').on(table.time_unix_nano)]
+  (table) => [
+    index('idx_otel_logs_time').on(table.time_unix_nano),
+    uniqueIndex('uq_otel_logs_log_id').on(table.log_id),
+  ]
 );

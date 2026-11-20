@@ -193,7 +193,7 @@ describe('otel dev seed', () => {
       name: 'Foreign',
       start_time_unix_nano: stale,
       end_time_unix_nano: stale + 1_000_000n,
-      attributes: { 'canyon.workflow.id': workflow_id },
+      attributes: { 'canyonos.workflow.id': workflow_id },
     };
     await db.insert(otelSpans).values(foreign);
     const [before] = await db.select().from(otelSpans).where(eq(otelSpans.span_id, 'foreign-span'));

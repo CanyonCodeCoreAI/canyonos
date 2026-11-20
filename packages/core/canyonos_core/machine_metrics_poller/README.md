@@ -1,31 +1,31 @@
 # Machine Metrics Poller
 
 This process is responsible for gathering machine-level information about the device it is running on.
-This process will write the data to the machine:{host}:metrics field in the Redis container on the machine, which will get polled by the Global Controller and pushed into the `metrics` table of the OTLP Exporter process.
+This process will write the data to the machine:{host}:metrics field in the Redis container on the machine, which will get polled by the Global Controller and written to the dashboard's Postgres.
 
 Every machine runs one. The Global Controller starts this machine's from its own image (`CANYONOS_CONTROLLER_IMAGE`); the reconciler starts each other machine's, right after its Redis, from the official release image (`CANYONOS_COLLECTOR_IMAGE`), since a dev image built here is in no registry those machines can pull from.
 
 Below is the data that this process collects:
 
-| Field | Metric | Unit |
-| --- | --- | --- |
-| `cpu_percent` | `canyonos.machine.cpu.utilization` | `%` |
-| `cpu_available_percent` | `canyonos.machine.cpu.available` | `%` |
-| `cpu_pressure` | `canyonos.machine.cpu.pressure` | `1` |
-| `memory_percent` | `canyonos.machine.memory.utilization` | `%` |
-| `memory_used_bytes` | `canyonos.machine.memory.used` | `By` |
-| `memory_available_bytes` | `canyonos.machine.memory.available` | `By` |
-| `memory_pressure` | `canyonos.machine.memory.pressure` | `1` |
-| `gpu_percent` | `canyonos.machine.gpu.utilization` | `%` |
-| `gpu_memory_used_bytes` | `canyonos.machine.gpu.memory.used` | `By` |
-| `gpu_memory_available_bytes` | `canyonos.machine.gpu.memory.available` | `By` |
-| `disk_percent` | `canyonos.machine.disk.utilization` | `%` |
-| `disk_free_bytes` | `canyonos.machine.disk.free` | `By` |
-| `disk_read_bytes_per_sec` | `canyonos.machine.disk.read` | `By/s` |
-| `disk_write_bytes_per_sec` | `canyonos.machine.disk.write` | `By/s` |
-| `network_rx_bytes_per_sec` | `canyonos.machine.network.rx` | `By/s` |
-| `network_tx_bytes_per_sec` | `canyonos.machine.network.tx` | `By/s` |
-| `uptime_seconds` | `canyonos.machine.uptime` | `s` |
-| `machine_capacity.cpu_count` | `canyonos.machine.cpu.count` | `{cpu}` |
-| `machine_capacity.memory_total_bytes` | `canyonos.machine.memory.total` | `By` |
-| `machine_capacity.disk_total_bytes` | `canyonos.machine.disk.total` | `By` |
+| Metric | Unit |
+| --- | --- |
+| `canyonos.machine.cpu.utilization` | `%` |
+| `canyonos.machine.cpu.available` | `%` |
+| `canyonos.machine.cpu.pressure` | `1` |
+| `canyonos.machine.memory.utilization` | `%` |
+| `canyonos.machine.memory.used` | `By` |
+| `canyonos.machine.memory.available` | `By` |
+| `canyonos.machine.memory.pressure` | `1` |
+| `canyonos.machine.gpu.utilization` | `%` |
+| `canyonos.machine.gpu.memory.used` | `By` |
+| `canyonos.machine.gpu.memory.available` | `By` |
+| `canyonos.machine.disk.utilization` | `%` |
+| `canyonos.machine.disk.free` | `By` |
+| `canyonos.machine.disk.read` | `By/s` |
+| `canyonos.machine.disk.write` | `By/s` |
+| `canyonos.machine.network.rx` | `By/s` |
+| `canyonos.machine.network.tx` | `By/s` |
+| `canyonos.machine.uptime` | `s` |
+| `canyonos.machine.cpu.count` | `{cpu}` |
+| `canyonos.machine.memory.total` | `By` |
+| `canyonos.machine.disk.total` | `By` |

@@ -5,8 +5,8 @@
 made, on which replicas, with their tokens and cost, and the
 workflow's figures agree with each other over this run. The dashboard page loads from
 its own port, and its `/api` proxy gives the same trace as the API. Telemetry
-reaches Postgres through the Global Controller and the OTLP exporter, each polling
-every few seconds, so data cases poll. Every ranged read covers this run only. The
+reaches Postgres through the Global Controller, which polls every few seconds, so
+data cases poll. Every ranged read covers this run only. The
 API the CLI started holds only the hash of the session's API key and answers only
 that key, through the dashboard's proxy too."""
 

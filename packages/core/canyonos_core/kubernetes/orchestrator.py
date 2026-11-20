@@ -44,7 +44,6 @@ class KubernetesOrchestrator:
             )
         port = int(os.environ.get("CANYONOS_REDIS_PORT") or 6379)
         self.gc.redis = RedisClient(host=host, port=port)
-        self.gc._redis_addr = (host, port)
 
     def register_background_processes(self, supervisor):
         """Nothing: there is no reconciler; Kubernetes keeps each count."""
@@ -92,7 +91,7 @@ class KubernetesOrchestrator:
             return
         self._metrics_unavailable = False
         if rows:
-            otel_writer.metric_write_rows(rows)
+            otel_writer.store_metrics(rows)
 
     def machine_redis_for_replica(self, replica):
         """Every replica reports to the one project Redis."""

@@ -6,7 +6,7 @@ CanyonOS has two controllers, at two scales.
   in it, each agent named `<workflow>.<agent>`. It publishes `workflow_group.yaml`, each
   workflow's config, the policies and each agent's desired replica count to Redis, polls the
   replicas, cleans up finished requests, and keeps the Reconciler (Docker and EC2) and the
-  OTLP exporter running.
+  OTel Collector running.
 - The **Local Controller** runs inside every agent replica and owns that replica. It
   serves the agent over gRPC, routes the calls the agent makes, and reports the replica's
   health and metrics. The [endpoint](ENDPOINT.md) runs one too, with no agent.
@@ -28,7 +28,7 @@ CanyonOS API (canyonos-dashboard-api)
 │  └─ python -m canyonos_core.cli deploy         │
 │      └─ GlobalController                       │
 │          ├─ Reconciler (Docker and EC2)        │
-│          ├─ otel_exporter                      │
+│          ├─ otel_collector                     │
 │          └─ RedisClient ─────────────────┐     │
 └──────────────────────────────────────────┼─────┘
                                            │
@@ -150,7 +150,8 @@ Startup on Docker and EC2:
 1. Validate the config and start building the images in the background.
 2. Start one Redis and one metrics collector per machine. Publish the config, policies and
    desired replica counts.
-3. Start the Reconciler and the OTLP exporter. Replicas launch once the images are built.
+3. Start the Reconciler and, when `otel.destinations` names a receiver, the OTel Collector.
+   Replicas launch once the images are built.
 4. Wait up to 360 seconds for every agent's replicas to report `healthy`. A launch error
    or a failed replica fails the deploy at once.
 
@@ -315,8 +316,8 @@ the path writes into. Its fields are in `controller/FUTURE_SCHEMA.md`.
 - The caller creates it. The executing Local Controller writes the `result` or the failure.
   The [LLM Gateway](LLM_GATEWAY.md#telemetry) adds its telemetry.
 - When a request's root call finishes, its ID goes into `request:completed`.
-- The Global Controller's cleanup thread collects those, queues their telemetry for the
-  OTLP exporter, then tells every replica to clean up.
+- The Global Controller's cleanup thread collects those, stores their telemetry in the
+  dashboard's Postgres and hands it to the OTel Collector, then tells every replica to clean up.
 - Each Local Controller keeps the root result for a day and sets a short expiry on the
   request's other keys.
 
