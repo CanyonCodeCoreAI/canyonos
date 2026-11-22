@@ -79,6 +79,7 @@ _AGENT_FLAT_SOURCES = {
     "canyonos_health.py": ("controller", "health.py"),
     "local_controller.py": ("controller", "local_controller.py"),
     "local_controller_frontend.py": ("controller", "local_controller_frontend.py"),
+    "memory.py": ("controller", "memory.py"),
     "redis_client.py": ("controller", "utils", "redis_client.py"),
     "canyonos_internal_tls.py": ("controller", "utils", "internal_tls.py"),
     "grpc_options.py": ("controller", "utils", "grpc_options.py"),
