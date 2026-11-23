@@ -31,6 +31,7 @@ from canyonos_core.schema import (
     render_violation,
     workflow_names,
 )
+from canyonos_core.schema.kubernetes_block import MISSING_SECTION_HINT
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ def kubernetes_plan(workspace, name):
                 os.path.join(workspace, DEPLOYMENT_CONFIG),
                 0,
                 "kubernetes",
-                "is missing -- run `canyonos target kubernetes` to add one",
+                f"is missing -- {MISSING_SECTION_HINT}",
             ),
         )
     if violations or spec is None:
@@ -303,9 +304,10 @@ API_FOLDER = ".canyonos"
 
 
 def _without_env(info):
-    """Leave every `.env` file out of the bundle: its values reach the build and the
-    agents as Secrets instead."""
-    return None if os.path.basename(info.name).startswith(".env") else info
+    """Leave every `.env` file out of the bundle, in any case: its values reach the
+    build and the agents as Secrets instead."""
+    name = os.path.basename(info.name).casefold()
+    return None if name.startswith(".env") else info
 
 
 def bundle_workspace(workspace, out):

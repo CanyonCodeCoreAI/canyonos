@@ -41,6 +41,14 @@ from canyonos.constants import (
 from canyonos.init import load_state
 
 ENV_NAME = ".env"
+# Lists the keys a workflow needs, without values; the upload's check warns about the
+# ones its `.env` leaves unset.
+ENV_EXAMPLE_NAME = ".env.example"
+# Left out of every workflow upload, at any depth: git history, virtualenvs, installed
+# packages and bytecode, which only this machine uses. Every `.env*` file is left out
+# too (`_uploaded`), so no API key leaves this machine but in the `.env` the upload adds
+# on purpose; only the `.env.example` at the top of the workflow folder stays in.
+UPLOAD_EXCLUDES = (".git", ".venv", "node_modules", "__pycache__")
 # The providers that put agents on machines other than this one.
 _REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
 
@@ -48,13 +56,14 @@ _REMOTE_PROVIDERS = ("ec2-pool", "ec2-assign")
 def workflow_archive(name, folder):
     """Return a temporary file, deleted once closed, holding a gzip tar of workflow
     `name`: the code in `folder`, the `config/` the workflow group's record keeps for it
-    in place of the folder's own, and the `.env` in its folder as `.env`. A `.env` that
-    is a link is stored as the file it points at."""
+    in place of the folder's own, and the `.env` in its folder as `.env`, leaving out
+    what UPLOAD_EXCLUDES names and every other `.env*` file. A `.env` that is a link is
+    stored as the file it points at."""
     root = os.path.abspath(workflow_folder(folder))
     config = records.workflow_config_dir(name)
     buffer = tempfile.TemporaryFile()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        _add_tree(archive, root, "", skip=("config", ENV_NAME))
+        _add_tree(archive, root, "", skip=("config",), keep=(ENV_EXAMPLE_NAME,))
         archive.add(config, "config", recursive=False)
         _add_tree(archive, config, "config")
         env_path = workflow_env_path(folder)
@@ -66,13 +75,28 @@ def workflow_archive(name, folder):
     return buffer
 
 
-def _add_tree(archive, base, prefix, skip=()):
-    """Add everything under `base` to `archive` under `prefix`, but the entries of
-    `base` itself that `skip` names."""
+def _uploaded(name):
+    """True when a file or folder called `name` goes into a workflow upload: it is not
+    one of UPLOAD_EXCLUDES and not a `.env*` file, in any case, since a case-insensitive
+    filesystem reads `.ENV` as `.env`."""
+    folded = name.casefold()
+    return folded not in UPLOAD_EXCLUDES and not folded.startswith(ENV_NAME)
+
+
+def _add_tree(archive, base, prefix, skip=(), keep=()):
+    """Add everything under `base` to `archive` under `prefix`, but what `_uploaded`
+    leaves out at any depth and the entries of `base` itself that `skip` names; the
+    entries of `base` that `keep` names go in all the same."""
+
+    def added(entry, at_top):
+        if at_top and entry in skip:
+            return False
+        return _uploaded(entry) or (at_top and entry in keep)
+
     for directory, dirnames, filenames in os.walk(base, followlinks=False):
-        if directory == base:
-            dirnames[:] = [entry for entry in dirnames if entry not in skip]
-            filenames = [entry for entry in filenames if entry not in skip]
+        at_top = directory == base
+        dirnames[:] = [entry for entry in dirnames if added(entry, at_top)]
+        filenames = [entry for entry in filenames if added(entry, at_top)]
         for entry in dirnames + filenames:
             path = os.path.join(directory, entry)
             relative = os.path.join(prefix, os.path.relpath(path, base))

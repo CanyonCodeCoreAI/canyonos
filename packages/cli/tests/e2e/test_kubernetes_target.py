@@ -7,8 +7,8 @@ PATH signs in with a token, records the port-forward it is asked for and serves 
 "forwarded" API itself on the local port, answering what the case sets and keeping the
 last archive uploaded for each workflow; a stand-in `docker` reports nothing, so no
 cluster and no Docker are needed. That makes a deploy to the cluster the one deploy
-that runs here in full, so it is where the uploaded config of each workflow is checked:
-the one its workflow group's record keeps."""
+that runs here in full, so it is where the upload of each workflow is checked: the
+config its workflow group's record keeps, and the local files it leaves out."""
 
 from __future__ import annotations
 
@@ -327,14 +327,20 @@ def _workflow(folder: Path) -> None:
     (folder / ".env").write_text(WORKFLOW_ENV)
 
 
+def _upload_path(records: Path, config: Path) -> Path:
+    """Where the stand-in keeps the archive last uploaded for the workflow whose record
+    keeps `config`. Uploads go by workflow_id, which the workflow group's `workflows:`
+    keeps by the workflow's name."""
+    group = yaml.safe_load((config.parent.parent / "workflow_group.yaml").read_text())
+    workflow_id = group["workflows"][config.parent.name]["workflow_id"]
+    return records / f"{workflow_id}.tar.gz"
+
+
 def _uploaded(records: Path, config: Path) -> dict[str, str]:
     """Each file of the archive last uploaded for the workflow whose record keeps
     `config`, by its path in the archive. The archive is removed, so the next read
-    shows a later upload or fails. Uploads go by workflow_id, which the workflow
-    group's `workflows:` keeps by the workflow's name."""
-    group = yaml.safe_load((config.parent.parent / "workflow_group.yaml").read_text())
-    workflow_id = group["workflows"][config.parent.name]["workflow_id"]
-    path = records / f"{workflow_id}.tar.gz"
+    shows a later upload or fails."""
+    path = _upload_path(records, config)
     with tarfile.open(path) as archive:
         files = {
             member.name: archive.extractfile(member).read().decode()
@@ -416,6 +422,69 @@ def test_a_deploy_uploads_the_config_the_workflow_group_s_record_keeps(
         _uploaded(records, kept)["config/workflow_config.yaml"]
         == (kept / "workflow_config.yaml").read_text()
     )
+
+
+def test_a_deploy_leaves_local_files_out_of_the_upload(
+    cli_case: CliCase, close_forwards
+):
+    """A deploy uploads neither git history, a virtualenv, installed packages nor
+    bytecode, at any depth, nor any `.env*` file but the workflow's own `.env`, and the
+    `.env.example` beside it, in the folder or in the config its record keeps, whatever
+    the case of their names; the workflow's code, its `.env` and the record's config
+    still arrive."""
+    environment, records = _kubernetes_group(
+        cli_case, {"GET": [200, APPLIED], "PUT": [200, UPLOADED]}
+    )
+    alpha = cli_case.cwd / "alpha"
+    _workflow(alpha)
+    local_files = {
+        ".git/HEAD": "ref: refs/heads/main\n",
+        ".venv/pyvenv.cfg": "home = /usr/bin\n",
+        "node_modules/left-pad/index.js": "module.exports = 1;\n",
+        "agents/__pycache__/echo.cpython-312.pyc": "bytecode\n",
+        "sub/lib/__pycache__/util.cpython-312.pyc": "bytecode\n",
+        ".env.local": "API_KEY=from-env-local\n",
+        "sub/.env": "API_KEY=from-sub-env\n",
+        ".ENV.prod": "API_KEY=from-env-prod\n",
+        "sub/__PyCache__/mod.cpython-312.pyc": "bytecode\n",
+        # Copied into the record by the first deploy, as the folder's config/ is.
+        "config/__pycache__/hook.cpython-312.pyc": "bytecode\n",
+        "config/.env.local": "API_KEY=from-config-env\n",
+    }
+    for relative, text in local_files.items():
+        (alpha / relative).parent.mkdir(parents=True, exist_ok=True)
+        (alpha / relative).write_text(text)
+    (alpha / "sub" / "lib" / "util.py").write_text(CODE)
+    (alpha / ".env.example").write_text("ECHO_GREETING=\n")
+
+    result = cli_case.run_cli(
+        ["deploy", "alpha", "--yes", "--detach"], env=environment, timeout=60
+    )
+
+    assert result.returncode == 0, _said(result)
+    config = workflow_config_dir(cli_case, alpha)
+    assert (config / "__pycache__").is_dir(), list(config.iterdir())
+    with tarfile.open(_upload_path(records, config)) as archive:
+        paths = archive.getnames()
+    left_out = (".git", ".venv", "node_modules", "__pycache__")
+    assert not [
+        path
+        for path in paths
+        if any(part.casefold() in left_out for part in path.split("/"))
+        or (
+            path.rsplit("/", 1)[-1].casefold().startswith(".env")
+            and path not in (".env", ".env.example")
+        )
+    ], paths
+    uploaded = _uploaded(records, config)
+    assert uploaded == {
+        "agents/echo.py": CODE,
+        "sub/lib/util.py": CODE,
+        "config/workflow_config.yaml": (config / "workflow_config.yaml").read_text(),
+        "config/test_query.txt": "from the folder\n",
+        ".env": WORKFLOW_ENV,
+        ".env.example": "ECHO_GREETING=\n",
+    }, uploaded
 
 
 def test_a_deploy_that_is_up_waits_for_its_endpoint(cli_case: CliCase, close_forwards):

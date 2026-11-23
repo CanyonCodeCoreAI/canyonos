@@ -38,6 +38,13 @@ KEYS = frozenset(
         "databases",
     }
 )
+# The fix for a `target: kubernetes` workflow group without the section, where the
+# deploy finds it missing: where the section goes and the settings it needs.
+MISSING_SECTION_HINT = (
+    "add one with `namespace` and `registry` to the workflow group's "
+    "`workflow_group.yaml`, in `~/.canyonos/workflows/<workflow group>/`; see "
+    "docs/guides/KUBERNETES.md"
+)
 DATABASE_KEYS = frozenset({"run_as_user", "fs_group", "storage", "storage_class"})
 REDIS_KEYS = frozenset(
     {"storage", "storage_class", "host", "port", "tls", "password_secret"}

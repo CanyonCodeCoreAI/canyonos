@@ -49,7 +49,11 @@ from canyonos_core.schema._checks import (
     _unset_reference,
 )
 from canyonos_core.schema.errors import SchemaError, SchemaViolation
-from canyonos_core.schema.kubernetes_block import KubernetesSpec, parse_kubernetes
+from canyonos_core.schema.kubernetes_block import (
+    MISSING_SECTION_HINT,
+    KubernetesSpec,
+    parse_kubernetes,
+)
 from canyonos_core.schema.functions import STUB_GLOBAL_NAMES, _functions, _identifier
 from canyonos_core.schema.otel_destinations import (
     DESTINATION_KEYS,
@@ -393,8 +397,8 @@ def _target(collector, node):
             node,
             "target",
             "target",
-            "is kubernetes, but the kubernetes: section is missing or empty -- run "
-            "`canyonos target kubernetes` to add one",
+            "is kubernetes, but the kubernetes: section is missing or empty -- "
+            + MISSING_SECTION_HINT,
         )
     return target
 

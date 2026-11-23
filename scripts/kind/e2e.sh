@@ -11,7 +11,7 @@
 #   - `canyonos deploy --api-key` hands the CanyonBuild and the CanyonProject the key's
 #     sha256 and neither holds the key itself; `deploy --no-api-key` opens the endpoint,
 #     and CANYONOS_API_KEY sets the key for one deploy;
-#   - `deploy` refuses an empty kubernetes: block, and a config that is not valid YAML
+#   - `deploy` refuses an empty kubernetes: block, saying what to add, and a config that is not valid YAML
 #     is refused rather than taken for a Docker deployment;
 #   - the endpoint needs the API key: none is 401 auth.missing_key, another one 401
 #     auth.invalid_key, a 503 auth.not_ready while the Global Controller has not
@@ -162,6 +162,8 @@ EOF
   said="$(canyonos_in "${ADMIN_TOKEN}" /tmp/Empty_Block deploy helloworld 2>&1)" && fail "deploy passed an empty kubernetes: block"
   echo "${said}" | grep -q "kubernetes: section is missing or empty" \
     || fail "deploy did not name the empty kubernetes: block: ${said}"
+  echo "${said}" | grep -qF "add one with \`namespace\` and \`registry\` to the workflow group's \`workflow_group.yaml\`" \
+    || fail "deploy did not say what to add to the kubernetes: block: ${said}"
 
   log "a config that is not valid YAML is refused, not taken for a Docker project"
   cp -r /w/examples/helloworld /tmp/Bad_Yaml
