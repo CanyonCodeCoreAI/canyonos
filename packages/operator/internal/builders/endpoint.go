@@ -253,5 +253,9 @@ func endpointEnv(p *canyonosv1alpha1.CanyonProject) []corev1.EnvVar {
 		// As for an agent: the drain counts from the SIGTERM that follows the preStop pause.
 		{Name: "CANYONOS_SHUTDOWN_GRACE_SECONDS", Value: strconv.Itoa(endpointGrace - endpointPreStop)},
 		{Name: envHome, Value: tmpDir},
+		// Empty: the endpoint has no dashboard database to look a finished request up
+		// in. Docker's default is the dashboard's container name, which doesn't resolve
+		// here, and the dashboard's Postgres admits only its own API anyway.
+		{Name: "CANYONOS_DASHBOARD_DATABASE_URL", Value: ""},
 	}, append(replicaIDEnv(EndpointAgentName), RedisEnv(p)...)...)
 }

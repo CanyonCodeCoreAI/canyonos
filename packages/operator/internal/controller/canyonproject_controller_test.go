@@ -241,6 +241,9 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		statefulSet := &appsv1.StatefulSet{}
 		get(statefulSet, builders.EndpointWorkload)
 		Expect(statefulSet.Spec.Template.Spec.Containers[0].Image).To(Equal(testControllerImage))
+		// No dashboard database to look a request up in: set, and empty.
+		Expect(statefulSet.Spec.Template.Spec.Containers[0].Env).To(ContainElement(
+			corev1.EnvVar{Name: "CANYONOS_DASHBOARD_DATABASE_URL"}))
 		for _, obj := range []client.Object{headless, callers, statefulSet} {
 			Expect(obj.GetOwnerReferences()).To(HaveLen(1))
 			Expect(obj.GetOwnerReferences()[0].Kind).To(Equal("CanyonProject"))

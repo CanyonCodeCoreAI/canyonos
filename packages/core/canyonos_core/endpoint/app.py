@@ -82,7 +82,11 @@ def _refusal(code: str, message: str, status: int):
 
 def _record_from_dashboard(request_id):
     """Look up a finished request's root span in the dashboard's Postgres, shaped like
-    its future record; empty when it isn't there or the database can't be reached."""
+    its future record; empty when it isn't there or the database can't be reached. An
+    empty DASHBOARD_DATABASE_URL means there is no database to look in (the operator
+    sets it so on Kubernetes), so this answers at once instead of waiting on DNS."""
+    if not DASHBOARD_DATABASE_URL:
+        return {}
     try:
         with psycopg.connect(DASHBOARD_DATABASE_URL, connect_timeout=2) as conn:
             row = conn.execute(

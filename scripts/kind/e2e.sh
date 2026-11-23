@@ -27,7 +27,8 @@
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
 #   - requests through the endpoint complete, also at /<workflow_id>, the URL
-#     `status --json` gives, as on Docker;
+#     `status --json` gives, as on Docker; an unknown request 404s at once, with no
+#     lookup in a dashboard database the namespace cannot reach;
 #   - in a workflow group of two workflows, a code change in one rolls only its agents
 #     out, while the other keeps its pods and answers every request, and the
 #     CanyonProject and Redis stay; the rollout runs after the deploy hands it over, so
@@ -224,6 +225,12 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
     http://127.0.0.1:8080/status/e2e)"
   [ "${code}" = 401 ] && grep -q auth.invalid_key /tmp/refused.json \
     || fail "another key answered ${code}: $(cat /tmp/refused.json)"
+
+  log "The endpoint answers an unknown request at once: no dashboard database to look it up in"
+  took="$(curl -s -m 10 -o /dev/null -w '%{http_code} %{time_total}' -H "Authorization: Bearer ${api_key}" \
+    http://127.0.0.1:8080/status/never-sent)"
+  [ "${took%% *}" = 404 ] && awk -v s="${took##* }" 'BEGIN { exit !(s < 1) }' \
+    || fail "an unknown request answered ${took} (status, seconds); it should be a 404 in under a second"
 
   canyonos status || fail "status"
   canyonos status --json | python -c 'import sys, json; json.load(sys.stdin)' \
@@ -551,13 +558,19 @@ EOF
       /w/.venv/bin/canyonos deploy "$@" --serve false --yes </dev/null)
   }
   multi ../alpha ../beta || fail "the deploy of two workflows"
-  named() {  # folder name: the workflow the deploy named after that folder
-    /w/.venv/bin/python -c 'import sys, yaml
-print(*[n for n in yaml.safe_load(open("/multi/workflow_group.yaml"))["workflows"] if n.startswith(sys.argv[1] + "-")])' "$1"
+  recorded() {  # workflow folder: its workflow group's record and the workflow's name there
+    /w/.venv/bin/python -c '
+import glob, os, sys, yaml
+for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group.yaml")):
+    workflows = (yaml.safe_load(open(path)) or {}).get("workflows") or {}
+    for name, entry in workflows.items():
+        if os.path.abspath(entry["path"]) == sys.argv[1]:
+            print(os.path.basename(os.path.dirname(path)), name)' "$1"
   }
-  alpha="$(named alpha)"
-  beta="$(named beta)"
-  [ -n "${alpha}" ] && [ -n "${beta}" ] || fail "the deploy named no workflows: $(cat /multi/workflow_group.yaml)"
+  read -r group alpha <<< "$(recorded /alpha)"
+  read -r _ beta <<< "$(recorded /beta)"
+  [ -n "${group}" ] && [ -n "${alpha}" ] && [ -n "${beta}" ] \
+    || fail "the deploy recorded no workflows: $(cat ~/.canyonos/workflows/*/workflow_group.yaml)"
   pods_of() {  # workflow: its pods, as name=uid
     as_deployer kubectl -n "${NS}" get pods \
       -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.uid}{"\n"}{end}' | grep "^$1-" | sort
@@ -597,8 +610,8 @@ print(*[n for n in yaml.safe_load(open("/multi/workflow_group.yaml"))["workflows
   echo "${beta} answered all ${ok} requests while ${alpha} rolled out"
 
   log "A code change rolls out after the deploy hands it over: --detach returns while it rolls"
-  multi_phase() {
-    canyonos_in "${DEPLOYER}" /multi status --json 2>/dev/null \
+  multi_phase() {  # run from one of its workflow folders, as commands find a workflow group
+    canyonos_in "${DEPLOYER}" /alpha status --json 2>/dev/null \
       | /w/.venv/bin/python -c 'import sys, json; print(json.load(sys.stdin).get("phase"))' || true
   }
   echo "# another code change" >> /beta/agents/hello_agent.py
@@ -610,11 +623,12 @@ print(*[n for n in yaml.safe_load(open("/multi/workflow_group.yaml"))["workflows
     [ "${phase}" = up ] || [ "${phase}" = failed ] && break
     sleep 2
   done
-  [ "${phase}" = up ] || fail "the detached rollout ended ${phase}: $(canyonos_in "${DEPLOYER}" /multi status 2>&1)"
+  [ "${phase}" = up ] || fail "the detached rollout ended ${phase}: $(canyonos_in "${DEPLOYER}" /alpha status 2>&1)"
 
   log "Deploying one of the two workflows takes the other out, and nothing else"
   alpha_before="$(pods_of "${alpha}")"
-  multi ../alpha || fail "the deploy of ${alpha} alone"
+  # Named: without a name, a deploy of other folders than a record's makes another one.
+  multi ../alpha --workflow-group "${group}" || fail "the deploy of ${alpha} alone"
   [ "$(shared)" = "${shared_before}" ] || fail "taking ${beta} out replaced the CanyonProject or Redis"
   [ "$(pods_of "${alpha}")" = "${alpha_before}" ] || fail "taking ${beta} out replaced ${alpha}'s pods"
   for _ in $(seq 120); do
@@ -626,7 +640,7 @@ print(*[n for n in yaml.safe_load(open("/multi/workflow_group.yaml"))["workflows
   as_deployer kubectl -n "${NS}" get secrets -l canyonos.canyoncode.ai/project=multi -o name | grep -q "${beta}" \
     && fail "${beta}'s .env Secret is left behind"
   kill "${multi_forward}" 2>/dev/null || true
-  canyonos_in "${DEPLOYER}" /multi stop >/dev/null || fail "stop of the workflow group of two workflows"
+  canyonos_in "${DEPLOYER}" /alpha stop >/dev/null || fail "stop of the workflow group of two workflows"
 
   log "deploy_mode: toy runs the project as one agent StatefulSet, which answers"
   cp -r /w/examples/helloworld /toy
