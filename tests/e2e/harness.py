@@ -818,12 +818,12 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
 
 def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
     """The headers the CLI sends the CanyonOS API's `/v1` routes, which run the
-    workflow group's Global Controller: this machine's control key."""
+    workflow group's Global Controller: this machine's API key."""
     return cli_value(
         recorder,
         workspace,
-        "control_header()",
-        "from canyonos.auth import control_header",
+        "auth_header()",
+        "from canyonos.auth import auth_header",
     )
 
 
@@ -897,14 +897,22 @@ def workflow_group_id(workspace: Path) -> str:
 
 
 def deployed_endpoint(
-    recorder: Recorder, workspace: Path, *, keyed: bool = True
+    recorder: Recorder,
+    workspace: Path,
+    *,
+    keyed: bool = True,
+    status_key: str | None = None,
 ) -> Endpoint:
     """The endpoint the running workflow group in the folder `workspace` published, as
-    the CanyonOS API's status of it gives it, asked with this machine's control key;
-    called with the session's API key unless `keyed` is False. Fail when the deploy
-    has no endpoint yet."""
+    the CanyonOS API's status of it gives it, asked with `status_key`, by default the
+    key the CLI sends; called with the session's API key unless `keyed` is False. Fail
+    when the deploy has no endpoint yet."""
     path = f"/v1/workflow-groups/{workflow_group_id(workspace)}"
-    headers = controller_headers(recorder, workspace)
+    headers = (
+        bearer(status_key)
+        if status_key is not None
+        else controller_headers(recorder, workspace)
+    )
     status = http(recorder, "GET", f"{api_url(recorder)}{path}", headers=headers).json()
     endpoint = status.get("endpoint")
     assert endpoint is not None, f"the running deploy has no endpoint yet: {status}"

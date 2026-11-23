@@ -3,7 +3,7 @@
 
 import postgres from 'postgres';
 
-import { hashApiKey, TEST_API_KEY, TEST_CONTROL_KEY } from './api-key-test.utils';
+import { hashApiKey, TEST_API_KEY } from './api-key-test.utils';
 
 const isSafeIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 
@@ -51,7 +51,6 @@ function setTestDefaults(): void {
   env.CANYONOS_REDIS_HOST ??= '127.0.0.1';
   env.CANYONOS_REDIS_PORT ??= '6379';
   env.CANYONOS_API_KEY_HASH ??= hashApiKey(TEST_API_KEY);
-  env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
 }
 
 setTestDefaults();

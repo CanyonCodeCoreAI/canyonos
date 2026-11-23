@@ -16,7 +16,6 @@ from canyonos.api import (
     workflow_group_status,
 )
 from canyonos.auth import (
-    control_key_hash,
     hash_api_key,
     machine_api_key,
     resolve_api_key,
@@ -32,7 +31,6 @@ from .dashboard_stack import (
     ServeResult,
     _dashboard_lock,
     dashboard_api_key_hash,
-    dashboard_control_key_hash,
     run_dashboard,
     running_api_image,
     running_api_port,
@@ -163,10 +161,9 @@ def _image_id(image: str) -> str | None:
 
 def _api_is_current(api_key_hash: str) -> bool:
     """True when the running CanyonOS API checks the API key whose hash is
-    `api_key_hash` and this machine's control key, and runs the image this CLI uses."""
+    `api_key_hash` and runs the image this CLI uses."""
     return (
         dashboard_api_key_hash() == api_key_hash
-        and dashboard_control_key_hash() == control_key_hash()
         and running_api_image() == _image_id(env.api_image)
     )
 
@@ -189,8 +186,8 @@ def _start_api(api_key_hash: str, renewed: tuple[str, ...]) -> None:
 def ensure_api(api_key_hash: str | None = None) -> bool:
     """Bring up the database and the CanyonOS API for a command that runs or stops a
     deploy on Docker, with the API checking the API key whose hash is `api_key_hash`
-    (by default this machine's key): one running on that key, this machine's control
-    key and the image this CLI uses is kept, else it starts in a new container. Then
+    (by default this machine's key): one running on that key and the image this CLI
+    uses is kept, else it starts in a new container. Then
     check it answers `/v1`. Returns whether the API was down; raises RuntimeError when
     it can't start or answers no `/v1`."""
     if api_key_hash is None:

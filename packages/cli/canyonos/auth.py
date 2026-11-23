@@ -2,18 +2,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """This machine's API key: one string the user picks with `--api-key`, kept in
-`~/.canyonos/api_key`, that opens every endpoint deployed here and the dashboard API.
-The containers get only its SHA-256 hash. Without a key nothing is checked.
-
-Also this machine's control key, which the CLI makes itself and keeps in
-`~/.canyonos/control_key`: the CanyonOS API's `/v1/workflow-groups` routes, which run and stop each
-workflow group's Global Controller, answer only a call that sends it, whatever the
-API key. The API gets only its hash."""
+`~/.canyonos/api_key`, that opens every endpoint deployed here and the CanyonOS API,
+its `/v1/workflow-groups` routes included. The containers get only its SHA-256 hash.
+Without a key nothing is checked."""
 
 import hashlib
 import os
 import secrets
+from enum import Enum, auto
 from pathlib import Path
+from typing import Literal
 
 from canyonos import ui
 from canyonos.os_support import make_private_dir, write_private_file
@@ -22,8 +20,6 @@ from canyonos.os_support import make_private_dir, write_private_file
 # canyonos_core, and both sides must agree on it.
 API_KEY_HASH_ENV = "CANYONOS_API_KEY_HASH"
 API_KEY_ENV = "CANYONOS_API_KEY"
-# What the dashboard's `.env` hands the API the control key's hash in.
-CONTROL_KEY_HASH_ENV = "CANYONOS_CONTROL_KEY_HASH"
 
 # The header every printed `curl` sends; the key itself is never printed.
 BEARER_PLACEHOLDER = '-H "Authorization: Bearer <your api key>"'
@@ -33,6 +29,16 @@ NO_KEY_WARNING = (
     "them. Set one with --api-key <key>."
 )
 KEY_SET = "Your deploys now use an API key for secure connections."
+
+
+class _Unresolved(Enum):
+    KEY = auto()
+
+
+# The key this command resolved (`resolve_api_key`), None for none, so every call it
+# makes to the CanyonOS API it restarted sends that key, even with another in
+# CANYONOS_API_KEY; _Unresolved.KEY until it resolves one.
+_command_key: str | None | Literal[_Unresolved.KEY] = _Unresolved.KEY
 
 
 def api_key_path() -> Path:
@@ -53,8 +59,11 @@ def _stored_api_key() -> str | None:
 
 
 def machine_api_key() -> str | None:
-    """The API key commands here send and deploys set: `CANYONOS_API_KEY` when it is
-    set, else the stored key; None when there is neither."""
+    """The API key commands here send and deploys set: the one this command resolved,
+    else `CANYONOS_API_KEY` when it is set, else the stored key; None when there is
+    none."""
+    if _command_key is not _Unresolved.KEY:
+        return _command_key
     return os.environ.get(API_KEY_ENV, "").strip() or _stored_api_key()
 
 
@@ -97,11 +106,27 @@ def _remove() -> None:
 
 def resolve_api_key(api_key: str | None, no_api_key: bool) -> str | None:
     """Apply `--api-key` (save it, replacing any stored key) or `--no-api-key` (remove
-    the stored key) and return the key this deploy or serve sets, warning when there is
-    none; raise RuntimeError for an empty `--api-key`."""
+    the stored key) and return the key this deploy or serve sets, which holds for the
+    rest of the command, warning when there is none; raise RuntimeError for an empty
+    `--api-key`, or before changing anything when CANYONOS_API_KEY holds another key,
+    which later commands would send instead."""
+    global _command_key
     if api_key is not None and not api_key.strip():
         raise RuntimeError(
             "--api-key needs a key. To run without one, pass --no-api-key instead"
+        )
+    env_key = os.environ.get(API_KEY_ENV, "").strip()
+    if env_key and no_api_key:
+        raise RuntimeError(
+            f"{API_KEY_ENV} holds a key, which later commands would send and "
+            "`canyonos serve` would put back on the CanyonOS API. Unset "
+            f"{API_KEY_ENV}, then run this again"
+        )
+    if env_key and api_key is not None and env_key != api_key.strip():
+        raise RuntimeError(
+            f"{API_KEY_ENV} holds another key, which later commands would send "
+            f"instead of this one. Unset {API_KEY_ENV} or set it to the new key, "
+            "then run this again"
         )
     if no_api_key:
         _remove()
@@ -111,6 +136,7 @@ def resolve_api_key(api_key: str | None, no_api_key: bool) -> str | None:
         _save(key)
     else:
         key = machine_api_key()
+    _command_key = key
     if key is None:
         ui.warn(NO_KEY_WARNING)
     return key
@@ -145,52 +171,3 @@ def gc_env(key: str | None) -> list[str]:
     """The `docker run` options that hand the Global Controller the hash of `key`; an
     empty hash when there is no key, so nothing is checked."""
     return ["-e", f"{API_KEY_HASH_ENV}={hash_api_key(key)}"]
-
-
-def control_key_path() -> Path:
-    """Where this machine keeps its control key: `~/.canyonos/control_key`."""
-    return Path.home() / ".canyonos" / "control_key"
-
-
-def _new_control_key(path: Path) -> None:
-    """Write a new random control key to `path` unless one is there already: written
-    beside it and linked into place, so two commands making one at the same moment
-    end up with the same key."""
-    make_private_dir(path.parent)
-    draft = path.with_name(f".{path.name}.{os.getpid()}")
-    try:
-        write_private_file(draft, secrets.token_hex(32) + "\n")
-        try:
-            os.link(draft, path)
-        except FileExistsError:
-            pass
-    finally:
-        draft.unlink(missing_ok=True)
-
-
-def control_key() -> str:
-    """This machine's control key, made the first time it is needed; raise RuntimeError
-    when `~/.canyonos/control_key` can't be read or written."""
-    path = control_key_path()
-    try:
-        if not path.is_file():
-            _new_control_key(path)
-        key = path.read_text(encoding="utf-8").strip()
-    except OSError as error:
-        raise RuntimeError(
-            f"Could not read or write {path}: {error.strerror or error}"
-        ) from error
-    if not key:
-        raise RuntimeError(f"{path} is empty: delete it and run the command again.")
-    return key
-
-
-def control_key_hash() -> str:
-    """The SHA-256 of this machine's control key in lowercase hex, as the CanyonOS API
-    holds it."""
-    return hash_api_key(control_key())
-
-
-def control_header() -> dict[str, str]:
-    """The header that sends this machine's control key to the CanyonOS API."""
-    return {"Authorization": f"Bearer {control_key()}"}

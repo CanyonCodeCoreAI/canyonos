@@ -5,9 +5,9 @@
 that runs or reads a deploy goes through it, so each must find it again when it is
 gone. A deploy registers with the dashboard before its upload, and `canyonos status`,
 `logs` and `sync` start a stopped API again; `canyonos stop` and `sync` bring back a
-removed one, which then serves them from what it stored; a rebuilt API image, or a
-control key the running API was not started with, has the next command that runs a
-deploy replace the API, while `status` names the control key file and the fix; and an
+removed one, which then serves them from what it stored; a rebuilt API image, or an
+API key the running API was not started with, has the next command that runs a
+deploy replace the API, while `status` names the API key file and the fix; and an
 API image that is nowhere stops a deploy before it starts anything, naming the image
 and the variable that picks it.
 
@@ -235,16 +235,16 @@ def test_a_rebuilt_api_image_replaces_the_running_api(deployed_workflow):
 
 
 @needs_a_runtime
-def test_status_names_the_control_key_until_stop_restarts_the_api(deployed_workflow):
-    """A control key in `~/.canyonos/control_key` that the running API was not started
-    with: `canyonos status`, which never replaces a running API, fails and says to
-    restart it with that file's key; `canyonos stop` restarts it itself and stops the
+def test_status_names_the_api_key_until_stop_restarts_the_api(deployed_workflow):
+    """An API key in `~/.canyonos/api_key` that the running API was not started with:
+    `canyonos status`, which never replaces a running API, fails and says to restart
+    it with that file's key; `canyonos stop` restarts it itself and stops the
     deploy."""
     case, folder = deployed_workflow
-    deploy_starter(case, folder)
-    control_key = case.home / ".canyonos" / "control_key"
-    assert control_key.is_file(), "the deploy made no control key"
-    control_key.write_text(secrets.token_urlsafe(32) + "\n")
+    deploy_starter(case, folder, "--api-key", secrets.token_urlsafe(32))
+    api_key = case.home / ".canyonos" / "api_key"
+    assert api_key.is_file(), "the deploy saved no API key"
+    api_key.write_text(secrets.token_urlsafe(32) + "\n")
 
     refused = case.run_cli(
         ["status"], timeout=DEPLOY_TIMEOUT, env=runtime_environment(), cwd=folder
@@ -252,8 +252,8 @@ def test_status_names_the_control_key_until_stop_restarts_the_api(deployed_workf
 
     said = _said(refused)
     assert refused.returncode == 1, said
-    assert "this machine's control key" in said, said
-    assert str(control_key) in said and "`canyonos serve`" in said, said
+    assert "this machine's API key" in said, said
+    assert str(api_key) in said and "`canyonos serve`" in said, said
     assert "Traceback" not in said, said
     run_ok(
         case, ["stop"], timeout=DEPLOY_TIMEOUT, env=runtime_environment(), cwd=folder

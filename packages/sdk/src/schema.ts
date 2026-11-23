@@ -1047,7 +1047,6 @@ export interface components {
     WorkflowGroupError: {
       /** @enum {string} */
       error:
-        | 'auth.control_key_unset'
         | 'auth.missing_key'
         | 'auth.invalid_key'
         | 'auth.unauthenticated'

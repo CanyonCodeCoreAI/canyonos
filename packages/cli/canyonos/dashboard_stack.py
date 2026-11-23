@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from canyonos import deployment, env, ports
-from canyonos.auth import API_KEY_HASH_ENV, CONTROL_KEY_HASH_ENV, control_key_hash
+from canyonos.auth import API_KEY_HASH_ENV
 from canyonos.constants import (
     DEFAULT_DASHBOARD_API_PORT,
     DEFAULT_DASHBOARD_PORT,
@@ -467,12 +467,6 @@ def dashboard_api_key_hash() -> str | None:
     return _read_existing_secret(env_path, API_KEY_HASH_ENV) or ""
 
 
-def dashboard_control_key_hash() -> str | None:
-    """The hash of the control key the CanyonOS API was last started with, or None when
-    it was never started with one here."""
-    return _read_existing_secret(_state_dir() / ".env", CONTROL_KEY_HASH_ENV)
-
-
 def _stack_secrets(env_path: Path) -> dict[str, str]:
     """Each of the stack's secrets: the one its `.env` already holds, or a new random one."""
     return {
@@ -499,8 +493,6 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
                 for service, port in stack.host_ports.items()
             },
             API_KEY_HASH_ENV: stack.api_key_hash,
-            # The CanyonOS API's `/v1/workflow-groups` routes answer only the control key.
-            CONTROL_KEY_HASH_ENV: control_key_hash(),
             # The API runs each workflow group's Global Controller through the same
             # engine the CLI created that container on.
             "CANYONOS_DOCKER_SOCKET": mounted_docker_socket(),
@@ -757,9 +749,7 @@ def _verify(host_ports: dict[str, int], services: tuple[str, ...]) -> None:
 
 def _secret_values(managed_env: dict[str, str]) -> list[str]:
     return [
-        managed_env[key]
-        for key in (*SECRET_KEYS, API_KEY_HASH_ENV, CONTROL_KEY_HASH_ENV)
-        if managed_env[key]
+        managed_env[key] for key in (*SECRET_KEYS, API_KEY_HASH_ENV) if managed_env[key]
     ]
 
 
@@ -847,8 +837,8 @@ def run_dashboard(
     """Start `services` of the local stack, with what they depend on, for `canyonos
     serve` and `canyonos deploy`, reporting each step; on failure, save the logs and
     remove what this run started. Its API checks the API key whose hash is
-    `api_key_hash`, or nothing when it is "", and its `/v1/workflow-groups` routes this machine's
-    control key. The `renewed` services start in new containers even when they run,
+    `api_key_hash`, its `/v1/workflow-groups` routes included, or nothing when it is "".
+    The `renewed` services start in new containers even when they run,
     as the api does for `canyonos serve` and for a deploy that changes a key or the
     API's image. The result's URL is the dashboard's when `services` hold the web app.
 

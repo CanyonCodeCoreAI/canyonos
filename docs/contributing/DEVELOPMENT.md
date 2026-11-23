@@ -139,15 +139,7 @@ running. Set the workflow group's
 **Register the workflow group.** At start, the API registers only the
 workflows on the default Redis, which has no password. The deploy registered its
 workflow group with the dashboard image's API, whose database is not this one. To
-register it here too, start the API with this machine's control key, which every `/v1/workflow-groups`
-route needs:
-
-```bash
-export CANYONOS_CONTROL_KEY_HASH=$(printf %s "$(cat ~/.canyonos/control_key)" | shasum -a 256 | cut -d' ' -f1)
-bun run dashboard:dev
-```
-
-Then, from the workflow group's record, `~/.canyonos/workflows/<workflow group>/`, send
+register it here too, from the workflow group's record, `~/.canyonos/workflows/<workflow group>/`, send
 it the registration the deploy sent: each workflow by its `workflow_id`, the workflow
 group's Redis and its password, and a client certificate its CA signs when that Redis
 takes only TLS:
@@ -155,9 +147,11 @@ takes only TLS:
 ```bash
 python -c 'import json; from canyonos.dashboard_registration import _registration; from canyonos.init import load_state; print(json.dumps(_registration(load_state())))' > registration.json
 curl -X PUT "http://localhost:3000/v1/workflow-groups/$(sed -n 's/^workflow_group_id: //p' workflow_group.yaml)/dashboard" \
-  -H "Authorization: Bearer $(cat ~/.canyonos/control_key)" \
   -H 'Content-Type: application/json' -d @registration.json
 ```
+
+Started with `CANYONOS_API_KEY_HASH`, the API needs the key that hash was made from on
+that call: `-H "Authorization: Bearer <your api key>"`.
 
 The API stores the password encrypted, with a fixed development key unless
 `REDIS_PASSWORD_ENCRYPTION_KEY` is set.

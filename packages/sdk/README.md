@@ -3,7 +3,8 @@
 A typed TypeScript client for the CanyonOS REST API (`/v1`).
 
 On Docker the API is the dashboard's, on `http://127.0.0.1:3000` unless that port was
-taken, and every request sends the control key in `~/.canyonos/control_key`.
+taken, and every request sends this machine's API key, in `~/.canyonos/api_key`, when it
+has one.
 
 ```sh
 npm install @canyoncode/canyonos-sdk
@@ -12,7 +13,7 @@ npm install @canyoncode/canyonos-sdk
 ```ts
 import { createClient } from '@canyoncode/canyonos-sdk';
 
-const api = createClient('http://127.0.0.1:3000', { Authorization: 'Bearer <control key>' });
+const api = createClient('http://127.0.0.1:3000', { Authorization: 'Bearer <api key>' });
 const { data, error } = await api.GET('/v1/workflow-groups/{workflow_group_id}', {
   params: { path: { workflow_group_id: '<workflow_group_id>' } },
 });

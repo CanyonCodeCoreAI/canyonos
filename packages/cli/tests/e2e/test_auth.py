@@ -150,6 +150,63 @@ def test_the_api_key_variable_is_the_key_and_is_never_written(
 
 
 @pytest.mark.parametrize("command", COMMANDS)
+def test_a_new_api_key_under_another_api_key_variable_is_refused(
+    cli_case: CliCase, command: str
+):
+    _run(cli_case, command, "--api-key", API_KEY)
+
+    result = _run(
+        cli_case,
+        command,
+        "--api-key",
+        NEXT_API_KEY,
+        env={"CANYONOS_API_KEY": API_KEY},
+    )
+
+    output = _said(result)
+    assert result.returncode != 0, output
+    assert "Unset CANYONOS_API_KEY or set it to the new key" in output, output
+    assert KEY_SET not in output, output
+    assert _stored(cli_case) == API_KEY
+    assert "Traceback" not in result.stderr, result.stderr
+    _assert_never_shows_a_key(result)
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_no_api_key_under_an_api_key_variable_is_refused(
+    cli_case: CliCase, command: str
+):
+    _run(cli_case, command, "--api-key", API_KEY)
+
+    result = _run(
+        cli_case, command, "--no-api-key", env={"CANYONOS_API_KEY": NEXT_API_KEY}
+    )
+
+    output = _said(result)
+    assert result.returncode != 0, output
+    assert "Unset CANYONOS_API_KEY" in output, output
+    assert REMOVED not in output, output
+    assert _stored(cli_case) == API_KEY
+    assert "Traceback" not in result.stderr, result.stderr
+    _assert_never_shows_a_key(result)
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_api_key_under_the_same_api_key_variable_saves_it(
+    cli_case: CliCase, command: str
+):
+    result = _run(
+        cli_case, command, "--api-key", API_KEY, env={"CANYONOS_API_KEY": API_KEY}
+    )
+
+    output = _said(result)
+    assert output.count(KEY_SET) == 1, output
+    assert "CANYONOS_API_KEY" not in output, output
+    assert _stored(cli_case) == API_KEY
+    _assert_never_shows_a_key(result)
+
+
+@pytest.mark.parametrize("command", COMMANDS)
 def test_an_empty_api_key_is_refused_and_names_no_api_key(
     cli_case: CliCase, command: str
 ):

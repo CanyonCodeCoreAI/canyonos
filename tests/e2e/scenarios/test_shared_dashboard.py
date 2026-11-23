@@ -129,14 +129,16 @@ class Fleet:
     api_after_serve: str = ""
 
 
-def _deploy(recorder, directory: Path, name: str, *args: str):
-    """`canyonos deploy` of the workflow in `directory` with `args`; fail unless it
-    registered with the dashboard, and return the call."""
+def _deploy(recorder, directory: Path, name: str, *args: str, keyed: bool = True):
+    """`canyonos deploy` of the workflow in `directory` with `args`, with the session's
+    API key unless `keyed` is False; fail unless it registered with the dashboard, and
+    return the call."""
     call = canyonos(
         recorder,
         ["deploy", str(workflow_dir(directory)), *args],
         cwd=directory,
         timeout=DEPLOY_TIMEOUT,
+        keyed=keyed,
     )
     registered = (
         f"Registered {workflow_name(workflow_dir(directory))} with the dashboard"
@@ -600,18 +602,21 @@ def test_a_stopped_database_is_named_until_it_runs_again(recorder, fleet):
 
 
 def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, fleet):
-    """`canyonos deploy --api-key` with a new key: the dashboard API and the workflow
+    """`canyonos deploy --api-key` with a new key, run as a rotation is, without
+    CANYONOS_API_KEY, which would hold the old key: the dashboard API and the workflow
     group it deployed take only the new key, the other workflow group keeps the old one
     until it is deployed again, the dashboard lists both under the new key, and the
-    other one's status still reads, since the control key did not change. Then
-    `canyonos serve` with the session's key puts the dashboard back on it."""
+    other one's status, read with the old key, is refused. Then `canyonos serve` with
+    the session's key puts the dashboard back on it, and that status reads again."""
     new_key = f"e2e-rotated-{secrets.token_urlsafe(16)}"
     old_key = recorder.api_key
     rotated, kept = fleet.dirs["helloworld"], fleet.dirs["portfolio"]
     with _api_key_file_kept():
-        _deploy(recorder, rotated, "helloworld", "--api-key", new_key)
+        _deploy(recorder, rotated, "helloworld", "--api-key", new_key, keyed=False)
 
-    endpoint = replace(deployed_endpoint(recorder, rotated), api_key=new_key)
+    endpoint = replace(
+        deployed_endpoint(recorder, rotated, status_key=new_key), api_key=new_key
+    )
     _, result = result_of(recorder, endpoint, "rotated", timeout=60)
     assert result == {"greeting": "Hello, rotated! I'm the HelloAgent!"}, result
     query = {endpoint.argument: "old key"}
@@ -620,7 +625,8 @@ def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, flee
     assert _refused_with(old, "auth.invalid_key"), old.output
     # A request id nothing made: past the key check it is only not found, so the
     # other workflow's agents are never called.
-    other = f"{deployed_endpoint(recorder, kept).url}/status/{uuid.uuid4()}"
+    kept_endpoint = deployed_endpoint(recorder, kept, status_key=new_key)
+    other = f"{kept_endpoint.url}/status/{uuid.uuid4()}"
     still = http(recorder, "GET", other, headers=bearer(old_key), check=False)
     assert still.code == 404, still.output
     refused = http(recorder, "GET", other, headers=bearer(new_key), check=False)
@@ -631,11 +637,16 @@ def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, flee
     assert set(fleet.ids.values()) <= {workflow["id"] for workflow in listed}, listed
     stale = http(recorder, "GET", workflows, headers=bearer(old_key), check=False)
     assert _refused_with(stale, "auth.invalid_key"), stale.output
-    status = _status(recorder, kept)
-    assert status.code == 0 and status.json()["running"] is True, status.output
+    refused_status = _status(recorder, kept)
+    assert refused_status.code != 0, refused_status.output
+    assert (
+        "Run `canyonos serve` to restart the CanyonOS API" in refused_status.output
+    ), refused_status.output
 
     canyonos(recorder, ["serve"], cwd=kept, timeout=600)
     assert fleet.api.get("/v1/workflows").code == 200
+    status = _status(recorder, kept)
+    assert status.code == 0 and status.json()["running"] is True, status.output
 
 
 def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):

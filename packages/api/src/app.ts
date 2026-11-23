@@ -13,7 +13,6 @@ import { set_database_state, wait_for_database } from '@api/db/database';
 import { seedDevData } from '@api/db/seed';
 import { apiKeyGuard } from '@api/modules/auth/auth.plugin';
 import { authRoutes } from '@api/modules/auth/auth.routes';
-import { noCorsOnControlPaths } from '@api/modules/auth/control-key';
 import { healthRoutes } from '@api/modules/health/health.routes';
 import {
   bootstrap_registry,
@@ -23,7 +22,10 @@ import {
 import { resourcesRoutes } from '@api/modules/resources/resources.routes';
 import { start_metrics_retention } from '@api/modules/telemetry/telemetry.retention';
 import { resume_apply_loops } from '@api/modules/workflow-groups/workflow-groups.apply';
-import { workflowGroupsGuard } from '@api/modules/workflow-groups/workflow-groups.caller';
+import {
+  noCorsOnWorkflowGroups,
+  workflowGroupsGuard,
+} from '@api/modules/workflow-groups/workflow-groups.caller';
 import {
   MAX_UPLOAD_BYTES,
   workflowGroupsRoutes,
@@ -106,7 +108,7 @@ export const app = new Elysia({ name: 'canyonos.api' })
   // Before the CORS plugin, so a /v1/workflow-groups request it refuses gets no CORS answer.
   .use(workflowGroupsGuard)
   .use(cors())
-  .use(noCorsOnControlPaths)
+  .use(noCorsOnWorkflowGroups)
   // After the CORS plugin, which answers a preflight before it, and whose headers a browser
   // needs to read the 401.
   .use(apiKeyGuard)
@@ -124,7 +126,7 @@ export const app = new Elysia({ name: 'canyonos.api' })
           // The version every CanyonOS package shares, which `bun run version:set` writes.
           version: packageJson.version,
           description:
-            'With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash each of them is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
+            'With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route takes the API key too, and is open without it. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.',
         },
         tags: [
           { name: 'Auth' },
@@ -143,7 +145,6 @@ export const app = new Elysia({ name: 'canyonos.api' })
           },
           securitySchemes: {
             bearerAuth: { type: 'http', scheme: 'bearer' },
-            controlKey: { type: 'http', scheme: 'bearer' },
             kubernetesToken: { type: 'http', scheme: 'bearer' },
           },
         },

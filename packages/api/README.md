@@ -16,9 +16,10 @@ at `/docs`, and the OpenAPI spec at `/docs/json`; `bun run sdk:generate` writes 
 
 On Kubernetes (`CANYONOS_TARGET=kubernetes`, as the operator's chart runs it) the same routes
 run each workflow group on the cluster instead: a CanyonBuild, then its CanyonProject, through
-the Kubernetes API with the pod's service account. There every `/v1/workflow-groups` route takes the caller's
-Kubernetes token instead of the control key and checks it with a TokenReview and a
-SubjectAccessReview. Core's commands run in the pod's `core` container, which takes them from a
+the Kubernetes API with the pod's service account. There the `/v1/workflow-groups` routes take
+the caller's Kubernetes token instead of the API key and check it with a TokenReview and a
+SubjectAccessReview; a workflow's dashboard routes still take the API key, and a workflow
+group's telemetry routes take no key. Core's commands run in the pod's `core` container, which takes them from a
 queue in the `/workspace` folder both containers share. See
 [Kubernetes](../../docs/guides/KUBERNETES.md#the-canyonos-api).
 
@@ -28,9 +29,8 @@ answers 401 without it, before it reads anything else the request sends. So do a
 `requests`, `metrics`, `monitoring`, `prompts`, `scaling`, `governance`, `history` and
 `sample-data` routes, under
 `/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/`. Unset or empty, those
-routes are open; any other value refuses the start. Every other `/v1/workflow-groups` route
-needs the control key in `~/.canyonos/control_key` instead, whose sha256 is
-`CANYONOS_CONTROL_KEY_HASH`; without that hash, each of them is refused. The exception is
+routes are open; any other value refuses the start. On Docker every other `/v1/workflow-groups`
+route takes the same key, and is open without it. The exception is
 `POST /v1/workflow-groups/<workflow_group_id>/traces`, `/metrics` and `/logs`, where the
 Global Controller sends the group's telemetry: they take no key. `GET /v1/auth/status` reports whether a key is needed, and
 `GET /v1/auth/check` answers 200 to a request that carries it. See

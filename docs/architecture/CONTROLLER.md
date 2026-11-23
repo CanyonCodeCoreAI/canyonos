@@ -130,19 +130,17 @@ JSON object:
 | `write-group-files`, `put-workflow`, `remove-workflows` | A one-off container of the controller's image that mounts only the workspace volume, with no network | Write `workflow_group.yaml` and its `.env`, unpack a workflow once `canyonos validate` passes it and read its agent graph (`graph.py`), remove workflows (`workspace_jobs.py`) |
 | `check`, `health`, `agent-logs`                         | `docker exec` in the running container                                                               | The config check before a reload, the health checks, a replica's logs (`controller_status.py`)                                           |
 
-Every `/v1/workflow-groups` request needs this machine's control key as
-`Authorization: Bearer <key>`. The CLI makes it once, in `~/.canyonos/control_key`,
-readable only by you, and hands its SHA-256 to the API in `CANYONOS_CONTROL_KEY_HASH`.
-Without that hash the API refuses every `/v1/workflow-groups` request, and a missing or wrong key gets
-`401`. The [API key](../guides/AUTHORIZATION.md) does not open these routes, they send
-no CORS headers, and the dashboard's web port answers them `404`, so only a holder of the
-control key can drive Docker through them. An upload over 512 MiB gets `413`.
+Every `/v1/workflow-groups` request takes this machine's [API key](../guides/AUTHORIZATION.md)
+as `Authorization: Bearer <key>`, the one whose SHA-256 the API holds in
+`CANYONOS_API_KEY_HASH`: a missing or wrong key gets `401`. With no key set they are
+open, as every other route is. They send no CORS headers, and the dashboard's web port
+answers them `404`. An upload over 512 MiB gets `413`.
 
 The exception is what the dashboard reads and sets of one workflow: its `requests`,
 `metrics`, `monitoring`, `prompts`, `scaling`, `governance`, `history` and `sample-data`
 routes, under
 `/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/`. These take the API
-key, send CORS headers and pass the dashboard's web port. The three routes the Global
+key on Kubernetes too, send CORS headers and pass the dashboard's web port. The three routes the Global
 Controller sends the group's telemetry to, `POST
 /v1/workflow-groups/<workflow_group_id>/traces`, `/metrics` and `/logs`, take no key and
 answer on the API's own port only.
@@ -150,7 +148,7 @@ answer on the API's own port only.
 On Kubernetes, the CLI reaches the same routes through a `kubectl port-forward` to the
 same API, which the operator's chart runs as `canyonos-dashboard-api` with
 `CANYONOS_TARGET=kubernetes`. There it checks the caller's kubeconfig token with
-Kubernetes instead of the control key, creates a CanyonBuild instead of a container, and
+Kubernetes instead of the API key, creates a CanyonBuild instead of a container, and
 runs the commands it needs from Core in its pod's `core` container, from the core image,
 which takes them from a queue in the folder both share. See
 [Operator](OPERATOR.md#dashboard-deletion-and-install).

@@ -14,7 +14,8 @@ import { early_refusal, unauthorized } from '@core/errors';
 export const API_KEY_PATHS = ['/v1/workflows', '/v1/resources', '/v1/auth/check'] as const;
 
 // What the dashboard reads and sets of one workflow, under its workflow group: these need the
-// API key and not the control key.
+// API key on Kubernetes too, where the other /v1/workflow-groups routes take the caller's
+// Kubernetes login.
 export const DASHBOARD_PATH =
   /^\/v1\/workflow-groups\/[^/]+\/workflows\/[^/]+\/(requests|metrics|monitoring|prompts|scaling|governance|history|sample-data)(\/|$)/;
 
@@ -55,13 +56,11 @@ function refuse(set: Guarded['set'], code: string, message: string) {
 }
 
 /**
- * Lets a request through when it does not need the API key, when the API runs with no
- * `CANYONOS_API_KEY_HASH`, or when it sends `Authorization: Bearer <key>` whose sha256 is that
- * hash; 401 otherwise. Runs as the request arrives, before its body, params or query are read
- * or checked, so a request without the key learns nothing about what it sent.
+ * Lets `request` through when the API runs with no `CANYONOS_API_KEY_HASH`, or when it sends
+ * `Authorization: Bearer <key>` whose sha256 is that hash; 401 otherwise.
  */
-export function requireApiKey({ request, set }: Guarded) {
-  if (!expectedHash || !needs_api_key(request)) return;
+export function check_api_key({ request, set }: Guarded) {
+  if (!expectedHash) return;
   const key = request.headers.get('authorization')?.trim().match(BEARER)?.[1]?.trim();
   if (!key) {
     return refuse(set, 'auth.missing_key', 'Send the API key as `Authorization: Bearer <key>`');
@@ -73,6 +72,16 @@ export function requireApiKey({ request, set }: Guarded) {
       'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`'
     );
   }
+}
+
+/**
+ * Lets a request through when it does not need the API key, else checks it (`check_api_key`).
+ * Runs as the request arrives, before its body, params or query are read or checked, so a
+ * request without the key learns nothing about what it sent.
+ */
+export function requireApiKey(guarded: Guarded) {
+  if (!needs_api_key(guarded.request)) return;
+  return check_api_key(guarded);
 }
 
 /** Checks the API key of every request that needs it. Mount it after the CORS plugin, so

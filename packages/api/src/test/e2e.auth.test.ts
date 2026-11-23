@@ -8,13 +8,13 @@ import { with_redis } from '@api/modules/registry/registry.redis';
 import type { ScalingPolicy } from '@api/modules/scaling/scaling.types';
 import { config } from '@core/env';
 
-import { hashApiKey, TEST_CONTROL_KEY } from './api-key-test.utils';
+import { hashApiKey } from './api-key-test.utils';
 import { api, group_workflow, setupE2ETests } from './e2e.setup';
 import { refused_start, spawn_api } from './process-test.utils';
 import { seed_active_agents, seed_running_workflow, TEST_WORKFLOW } from './redis-test.utils';
 import { OPEN_ROUTES, sweep_answer, sweep_routes } from './route-sweep.utils';
 import { post_otlp } from './telemetry-test.utils';
-import { createApi } from './test.utils';
+import { createApi, raw_request } from './test.utils';
 import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 import type { SpawnedApi } from './process-test.utils';
 import type { RouteKind, SweepAnswer, SweptRoute } from './route-sweep.utils';
@@ -121,14 +121,14 @@ describe('the dashboard API checks the API key', () => {
     }
   });
 
-  test('a key that is not the API key, the control key too, is 401 auth.invalid_key', async () => {
+  test('a key that is not the API key is 401 auth.invalid_key', async () => {
     const res = await api.v1.workflows.get({ $headers: bearer(WRONG_KEY) });
-    const control = await group_workflow(UNKNOWN_WORKFLOW_ID).scaling.get({
-      $headers: bearer(TEST_CONTROL_KEY),
+    const dashboard = await group_workflow(UNKNOWN_WORKFLOW_ID).scaling.get({
+      $headers: bearer(WRONG_KEY),
     });
 
     expect(refusal(res)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
-    expect(refusal(control)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
+    expect(refusal(dashboard)).toMatchObject({ status: 401, error: 'auth.invalid_key' });
   });
 
   test('a refusal says to send a bearer, and a pass does not', async () => {
@@ -378,7 +378,7 @@ const refused_with = (routes: readonly SweptRoute[], error: string) =>
   routes.map(({ route }) => ({ route, status: 401, error }));
 
 describe('every route', () => {
-  test('is open by name, or takes the API key or the control key', () => {
+  test('is open by name, or takes the API key', () => {
     const routes = sweep_routes();
 
     expect(OPEN_ROUTES.filter((route) => !routes.some((swept) => swept.route === route))).toEqual(
@@ -392,9 +392,11 @@ describe('every route', () => {
         'GET /v1/workflows/:workflow_id',
         'DELETE /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/history',
         'POST /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/sample-data',
+        'GET /v1/workflow-groups',
+        'PUT /v1/workflow-groups/:workflow_group_id',
+        'DELETE /v1/workflow-groups/:workflow_group_id',
       ])
     );
-    expect(routes_of('control_key').length).toBeGreaterThan(10);
   });
 
   // Params, a query and a body that all fail validation: the key is checked first, so 401.
@@ -406,23 +408,7 @@ describe('every route', () => {
     expect(await sweep(url, routes, bearer(WRONG_KEY))).toEqual(
       refused_with(routes, 'auth.invalid_key')
     );
-    expect(await sweep(url, routes, bearer(TEST_CONTROL_KEY))).toEqual(
-      refused_with(routes, 'auth.invalid_key')
-    );
     for (const answer of await sweep(url, routes, bearer(TEST_API_KEY))) {
-      expect(answer).not.toMatchObject({ status: 401 });
-    }
-  });
-
-  test('that takes the control key refuses no key or the API key before it reads the request, and the control key gets past', async () => {
-    const routes = routes_of('control_key');
-    const url = config.app.apiUrl;
-
-    expect(await sweep(url, routes, {})).toEqual(refused_with(routes, 'auth.missing_key'));
-    expect(await sweep(url, routes, bearer(TEST_API_KEY))).toEqual(
-      refused_with(routes, 'auth.invalid_key')
-    );
-    for (const answer of await sweep(url, routes, bearer(TEST_CONTROL_KEY))) {
       expect(answer).not.toMatchObject({ status: 401 });
     }
   });
@@ -433,37 +419,6 @@ describe('every route', () => {
     }
   });
 });
-
-/** The status line and body of `<method> <target>` with `headers`, sent as is over a socket to
- * the running API, which no URL parser resolves first. */
-async function raw_request(
-  method: string,
-  target: string,
-  headers: Record<string, string> = {}
-): Promise<{ status: number; body: string }> {
-  const { promise, resolve } = Promise.withResolvers<string>();
-  let received = '';
-  await Bun.connect({
-    hostname: '127.0.0.1',
-    port: config.app.port,
-    socket: {
-      open(socket) {
-        const lines = Object.entries(headers).map(([name, value]) => `${name}: ${value}\r\n`);
-        socket.write(
-          `${method} ${target} HTTP/1.1\r\nHost: localhost\r\n${lines.join('')}Connection: close\r\n\r\n`
-        );
-      },
-      data(_, data) {
-        received += data.toString();
-      },
-      close: () => resolve(received),
-      error: () => resolve(received),
-    },
-  });
-  const answer = await promise;
-  const [head = '', body = ''] = answer.split('\r\n\r\n');
-  return { status: Number(head.split(' ')[1]), body };
-}
 
 describe('a path with a dot segment', () => {
   // Bun resolves these in request.url, but its router matches the raw path: each reaches a
@@ -509,12 +464,16 @@ describe('a dashboard path with a backslash', () => {
     ['DELETE', `${group}/workflows/${UNKNOWN_WORKFLOW_ID}\\requests`],
   ] as const;
 
+  // Both guards answer auth.missing_key; only the dashboard's, after the CORS plugin, adds CORS.
   for (const [method, target] of targets) {
-    test(`${method} ${target} still takes the control key, not the API key`, async () => {
-      const { status, body } = await raw_request(method, target, bearer(TEST_API_KEY));
+    test(`${method} ${target} still takes the API key, with no CORS answer`, async () => {
+      const { status, headers, body } = await raw_request(method, target, {
+        origin: 'http://elsewhere.example',
+      });
 
       expect(status).toBe(401);
-      expect(JSON.parse(body)).toMatchObject({ error: 'auth.invalid_key' });
+      expect(JSON.parse(body)).toMatchObject({ error: 'auth.missing_key' });
+      expect(headers.get('access-control-allow-origin')).toBeNull();
     });
   }
 });
@@ -604,23 +563,28 @@ describe('an API started with an empty CANYONOS_API_KEY_HASH', () => {
     expect(await listed_ids(client)).toContain(workflow_id);
   });
 
+  test('a browser on another origin gets no CORS answer from /v1/workflow-groups', async () => {
+    const preflight = await fetch(`${open.url}/v1/workflow-groups/${UNKNOWN_WORKFLOW_ID}`, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://elsewhere.example', 'access-control-request-method': 'PUT' },
+    });
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
   test('a workflow id that does not exist is 404 workflows.not_found', async () => {
     const res = await client.v1.workflows[UNKNOWN_WORKFLOW_ID]!.get();
 
     expect(refusal(res)).toMatchObject({ status: 404, error: 'workflows.not_found' });
   });
 
-  test('no route that takes the API key, or none, is 401 with no key or a stale bearer; a route that takes the control key still does', async () => {
+  test('no route is 401 with no key or a stale bearer', async () => {
     const routes = [...routes_of('api_key'), ...routes_of('open')];
     for (const headers of [{}, STALE_BEARER]) {
       for (const answer of await sweep(open.url, routes, headers)) {
         expect(answer).not.toMatchObject({ status: 401 });
       }
     }
-
-    const control = routes_of('control_key');
-    expect(await sweep(open.url, control, STALE_BEARER)).toEqual(
-      refused_with(control, 'auth.invalid_key')
-    );
   });
 });

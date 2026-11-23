@@ -6,10 +6,9 @@ the dashboard. CanyonOS checks one API key per machine, as vLLM does:
 - The key is any string you choose. A request passes when it carries
   `Authorization: Bearer <your api key>` with that exact string.
 - One key opens everything on the machine: every workflow group's endpoint and the
-  dashboard API. There are no scopes and no users.
-- The CLI's own `/v1/workflow-groups` routes on the dashboard API take a control key
-  instead, which the CLI makes in `~/.canyonos/control_key`; see
-  [Global Controller](../architecture/CONTROLLER.md#global-controller).
+  dashboard API, the `/v1/workflow-groups` routes the CLI deploys and stops through
+  included (see [Global Controller](../architecture/CONTROLLER.md#global-controller)).
+  There are no scopes and no users.
 - With no key set, nothing is checked and everyone who reaches the endpoint or the
   dashboard can use it. `deploy` and `serve` warn about it.
 - One key per workflow group is planned, not there yet.
@@ -40,7 +39,9 @@ canyonos serve --api-key <your api key>
   where it keeps it.
 - Later deploys and serves reuse the saved key, so pass it once.
 - `CANYONOS_API_KEY`, when set, is the key for that one command. It overrides the file
-  and is never written to it.
+  and is never written to it. While it is set, `--no-api-key` and an `--api-key` with
+  another key are refused, since later commands would send it: unset it, or set it to
+  the new key.
 - `--api-key ""` is refused: remove a key with `--no-api-key`.
 
 ## Replace or remove it
@@ -117,4 +118,6 @@ hex, and compares in constant time.
 - A `401` carries `WWW-Authenticate: Bearer`.
 - The dashboard API checks the key before it reads anything else the request sends, so a
   request without the key gets `401` whatever it holds.
-- A CORS preflight (`OPTIONS`) always passes.
+- A CORS preflight (`OPTIONS`) passes, except on the `/v1/workflow-groups` routes the CLI
+  deploys and stops through, which serve no browser: there a preflight gets no CORS
+  grant, `401` when the API has a key and `204` without CORS headers when it has none.

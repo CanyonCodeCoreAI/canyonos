@@ -6,7 +6,7 @@ The CanyonOS API's `/v1/workflow-groups` routes, so the commands that deploy, st
 read a workflow group don't each restate the same routes, payloads and failure modes.
 
 On Docker the API is the local stack's (`dashboard_stack`), on 127.0.0.1 at its host
-port, and every call sends this machine's control key; the API runs each workflow
+port, and every call sends this machine's API key, if any; the API runs each workflow
 group's Global Controller container through Docker. On Kubernetes it is the cluster's,
 the one the operator's chart installs, reached through a port-forward with the user's
 kubectl login (`kubernetes_target.kubernetes_state`); it runs each workflow group as a
@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 
 from canyonos import deployment, env
-from canyonos.auth import control_header, control_key_path
+from canyonos.auth import api_key_path, auth_header
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -46,19 +46,17 @@ ERROR_PREFIX = "workflow_groups."
 UNKNOWN_WORKFLOW_GROUP = "unknown_workflow_group"
 # What an older chart's API answers on Kubernetes: no route there (a release before
 # the /v1 routes), or the /v1 routes of an API that drives only Docker, without Docker
-# or the control key.
+# or the control key those releases asked for.
 OLDER_CHART_ERRORS = {
     404: (None, "not_found"),
     503: ("docker.disabled",),
     401: ("auth.control_key_unset",),
 }
 
-# What the API answers a /v1/workflow-groups call whose control key it was not started with, or when
-# it was started with none.
-CONTROL_KEY_REFUSALS = (
+# What the API answers a /v1/workflow-groups call without the API key it was started with.
+API_KEY_REFUSALS = (
     "auth.missing_key",
     "auth.invalid_key",
-    "auth.control_key_unset",
 )
 DATABASE_UNAVAILABLE = "database.unavailable"
 
@@ -118,11 +116,11 @@ def _on_kubernetes(state):
 
 def _connection(state):
     """The base URL and headers a call about `state`'s workflow group goes to: the
-    cluster's API on Kubernetes, else this machine's with the control key; this
+    cluster's API on Kubernetes, else this machine's with its API key; this
     machine's when `state` is None."""
     if _on_kubernetes(state):
         return state["api_url"], state["api_headers"]
-    return docker_api_url(), control_header()
+    return docker_api_url(), auth_header()
 
 
 def error_detail(body, status):
@@ -171,11 +169,11 @@ def _next_step(state, code):
     its message; "" when there is nothing to add."""
     if _on_kubernetes(state):
         return ""
-    if code in CONTROL_KEY_REFUSALS:
+    if code in API_KEY_REFUSALS:
         # deploy, sync and stop restart such an API themselves (`serve.ensure_api`).
         return (
             " Run `canyonos serve` to restart the CanyonOS API with this machine's "
-            f"control key, in {control_key_path()}."
+            f"API key, in {api_key_path()}."
         )
     if code == DATABASE_UNAVAILABLE:
         return _database_hint(state)

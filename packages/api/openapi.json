@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "CanyonOS API",
-    "description": "With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route needs the control key the CLI made, whose hash is CANYONOS_CONTROL_KEY_HASH, as `Authorization: Bearer <key>`; without that hash each of them is refused. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.",
+    "description": "With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route takes the API key too, and is open without it. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.",
     "version": "0.2.3-dev4"
   },
   "tags": [
@@ -715,7 +715,6 @@
           "error": {
             "type": "string",
             "enum": [
-              "auth.control_key_unset",
               "auth.missing_key",
               "auth.invalid_key",
               "auth.unauthenticated",
@@ -840,10 +839,6 @@
     },
     "securitySchemes": {
       "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer"
-      },
-      "controlKey": {
         "type": "http",
         "scheme": "bearer"
       },
@@ -2105,7 +2100,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -2253,7 +2248,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -2420,7 +2415,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -2577,7 +2572,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -2736,7 +2731,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -2914,7 +2909,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3082,7 +3077,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3241,7 +3236,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3409,7 +3404,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3595,7 +3590,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3774,7 +3769,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []
@@ -3933,7 +3928,7 @@
         "tags": ["WorkflowGroups"],
         "security": [
           {
-            "controlKey": []
+            "bearerAuth": []
           },
           {
             "kubernetesToken": []

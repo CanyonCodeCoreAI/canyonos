@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The CanyonOS API's `/v1/workflow-groups` routes, which run the workflow group's
-Global Controller, as the CLI calls them, with this machine's control key: its OpenAPI
+Global Controller, as the CLI calls them, with this machine's API key: its OpenAPI
 spec at `/docs/json` lists every route, each answer has the fields and types the spec
 gives it, each error carries its `workflow_groups.*` code (`validation_error` for a
-request it can't read), a call without the control key is refused, a rejected upload
+request it can't read), a call without the API key is refused, a rejected upload
 changes nothing, and uploading what already runs keeps the workflow's fingerprints and
 applies as nothing."""
 
@@ -37,7 +37,7 @@ ROUTES = {
     (f"{PREFIX}/{{workflow_group_id}}/workflows", "get"),
     (f"{WORKFLOW}/graph", "get"),
     (f"{PREFIX}/{{workflow_group_id}}/dashboard", "put"),
-    # The dashboard's routes of one workflow, which take the API key, not the control key.
+    # The dashboard's routes of one workflow.
     (f"{WORKFLOW}/requests", "get"),
     (f"{WORKFLOW}/requests/{{request_id}}", "get"),
     (f"{WORKFLOW}/metrics/kpis", "get"),
@@ -272,7 +272,7 @@ def test_errors_carry_their_code(recorder, deployed):
             group,
             "GET",
             f"{prefix}",
-            {"headers": {"Authorization": "Bearer not-the-control-key"}},
+            {"headers": {"Authorization": "Bearer not-the-api-key"}},
             401,
             "auth.invalid_key",
         ),

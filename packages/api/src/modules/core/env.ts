@@ -36,17 +36,6 @@ export function resolveApiKeyHash(value: string | undefined): string | null {
   );
 }
 
-/** `CANYONOS_CONTROL_KEY_HASH`: the sha256 of the control key the CLI drives workflow groups with,
- * in lowercase hex, or null when unset, which refuses every /v1/workflow-groups request. */
-export function resolveControlKeyHash(value: string | undefined): string | null {
-  if (value === undefined || value === '') return null;
-  if (API_KEY_HASH.test(value)) return value;
-  throw new Error(
-    'CANYONOS_CONTROL_KEY_HASH must be the sha256 of the control key as 64 lowercase hex ' +
-      'characters, or empty to refuse every /v1/workflow-groups request'
-  );
-}
-
 const DEVELOPMENT_REDIS_PASSWORD_KEY = 'canyonos-local-development-only-redis-password-key';
 const MIN_REDIS_PASSWORD_KEY_LENGTH = 32;
 
@@ -186,7 +175,6 @@ export const config = {
   },
   auth: {
     apiKeyHash: resolveApiKeyHash(env.CANYONOS_API_KEY_HASH),
-    controlKeyHash: resolveControlKeyHash(env.CANYONOS_CONTROL_KEY_HASH),
   },
 };
 

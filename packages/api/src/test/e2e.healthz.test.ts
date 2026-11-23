@@ -9,7 +9,7 @@ import postgres from 'postgres';
 import { set_database_state } from '@api/db/database';
 import { config } from '@core/env';
 
-import { TEST_CONTROL_KEY } from './api-key-test.utils';
+import { TEST_API_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
 import { refused_start, spawn_api } from './process-test.utils';
 import { until_answers } from './test.utils';
@@ -144,7 +144,7 @@ const admin_options = (url: URL) => ({
 describe('readyz without Docker', () => {
   const group_status = (server: SpawnedApi) =>
     fetch(`${server.url}/v1/workflow-groups/${crypto.randomUUID()}`, {
-      headers: bearer(TEST_CONTROL_KEY),
+      headers: bearer(TEST_API_KEY),
     });
 
   test('is 200 when DOCKER_SOCKET names no socket, and says Docker is unreachable', async () => {

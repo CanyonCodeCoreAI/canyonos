@@ -6,11 +6,6 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
-import { hashApiKey, TEST_CONTROL_KEY } from './api-key-test.utils';
-
-// Before env.ts reads it: /v1/workflow-groups takes no request without a control key hash.
-process.env.CANYONOS_CONTROL_KEY_HASH ??= hashApiKey(TEST_CONTROL_KEY);
-
 const { start_api } = await import('@api/app');
 const { config } = await import('@core/env');
 const { sweep_answer, sweep_routes } = await import('./route-sweep.utils');
@@ -61,14 +56,8 @@ describe('the API with its database down', () => {
     expect(await error_code(response)).toBe('database.unavailable');
   });
 
-  test('GET /v1/workflow-groups answers 401 without the control key, 503 with it', async () => {
-    const refused = await fetch(`${API_URL}/v1/workflow-groups`);
-    expect(refused.status).toBe(401);
-    expect(await error_code(refused)).toBe('auth.missing_key');
-
-    const response = await fetch(`${API_URL}/v1/workflow-groups`, {
-      headers: { authorization: `Bearer ${TEST_CONTROL_KEY}` },
-    });
+  test('GET /v1/workflow-groups answers 503 database.unavailable', async () => {
+    const response = await fetch(`${API_URL}/v1/workflow-groups`);
     expect(response.status).toBe(503);
     expect(await error_code(response)).toBe('database.unavailable');
   });
@@ -83,11 +72,9 @@ describe('the API with its database down', () => {
     expect(routes.length).toBeGreaterThan(40);
 
     for (const swept of routes) {
-      // The right key, so only the database stands in the way: params and query unchecked, and a
-      // body that parses, as the guard runs once it is read.
-      const headers: Record<string, string> =
-        swept.kind === 'control_key' ? { authorization: `Bearer ${TEST_CONTROL_KEY}` } : {};
-      const { route, status, error } = await sweep_answer(API_URL, swept, headers, '{}');
+      // No key to send, so only the database stands in the way: params and query unchecked, and
+      // a body that parses, as the guard runs once it is read.
+      const { route, status, error } = await sweep_answer(API_URL, swept, {}, '{}');
       expect({ route, status, error }).toEqual({
         route,
         status: 503,

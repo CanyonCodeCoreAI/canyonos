@@ -50,8 +50,8 @@ const PREFIX = '/v1/workflow-groups';
 // The PUTs that change an upload, counted from before their body is read.
 const UPLOAD_PATH = /^\/v1\/workflow-groups\/([^/]+)(?:\/workflows\/[^/]+)?$/;
 
-// The control key on Docker, the caller's own Kubernetes login on Kubernetes.
-const security: Record<string, string[]>[] = [{ controlKey: [] }, { kubernetesToken: [] }];
+// The API key on Docker, the caller's own Kubernetes login on Kubernetes.
+const security: Record<string, string[]>[] = [{ bearerAuth: [] }, { kubernetesToken: [] }];
 const doc = { tags: ['WorkflowGroups'], security };
 
 const refused = 'WorkflowGroupError' as const;
@@ -77,9 +77,9 @@ const upload_releases = new WeakMap<Request, () => void>();
 export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow-groups.routes' })
   .model(WORKFLOW_GROUP_MODELS)
   // Every route reads or writes the workflow group's row: 503 `database.unavailable` until the
-  // database is ready, after the control key check.
+  // database is ready, after the caller check.
   .use(databasePlugin)
-  // After the control key check, which the app mounts first: only an accepted PUT counts.
+  // After the caller check, which the app mounts first: only an accepted PUT counts.
   .onRequest(({ request, set }) => {
     if (request.method !== 'PUT') return;
     const match = UPLOAD_PATH.exec(new URL(request.url).pathname);

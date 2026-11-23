@@ -227,7 +227,6 @@ export const DashboardWorkflowsSchema = z.object({
 });
 
 export const WORKFLOW_GROUP_ERRORS = [
-  'auth.control_key_unset',
   'auth.missing_key',
   'auth.invalid_key',
   'auth.unauthenticated',

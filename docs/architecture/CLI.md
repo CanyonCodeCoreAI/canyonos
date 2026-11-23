@@ -16,7 +16,7 @@ flowchart LR
     Docker["Docker engine"]
     Dash["Dashboard stack"]
     Op["Operator (Kubernetes)"]
-    CLI -->|"HTTP /v1, control key"| API
+    CLI -->|"HTTP /v1, API key"| API
     API -->|"Docker Engine API"| GC
     CLI -->|"docker create, network, volume"| Docker
     CLI -->|"docker compose"| Dash
@@ -39,7 +39,7 @@ On Kubernetes, the CLI makes the same calls to the cluster's CanyonOS API throug
 
 ## Talking to the CanyonOS API
 
-The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with the control key in `~/.canyonos/control_key`; on Kubernetes the cluster's, through a port-forward, with the kubectl login as a bearer token: the kubeconfig's `token`, the one in its `tokenFile` (a pod's ServiceAccount), or its login plugin's, never a client certificate (`kubernetes_state` in `canyonos/kubernetes_target.py`). `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
+The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with this machine's API key, if any (`CANYONOS_API_KEY`, else `~/.canyonos/api_key`); on Kubernetes the cluster's, through a port-forward, with the kubectl login as a bearer token: the kubeconfig's `token`, the one in its `tokenFile` (a pod's ServiceAccount), or its login plugin's, never a client certificate (`kubernetes_state` in `canyonos/kubernetes_target.py`). `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
 
 | Request | What it does |
 | --- | --- |
@@ -73,7 +73,7 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | --- | --- |
 | `cli.py`, `utils/` | The parser, `--target` routing, the help screen, the arrow-key menus |
 | `canyonos/api.py`, `sdk/` | Every request to the CanyonOS API, and its answers' types (`sdk/models.py`, written by `bun run sdk:generate`) |
-| `canyonos/auth.py` | The machine's API key: saving, replacing and removing it for `deploy` and `serve`, and its hash for the Global Controller and the dashboard API; the control key |
+| `canyonos/auth.py` | The machine's API key: saving, replacing and removing it for `deploy` and `serve`, and its hash for the Global Controller and the dashboard API |
 | `canyonos/init.py`, `deploy.py`, `sync.py`, `test.py`, `verify.py` | Creating the container, deploying, syncing, testing |
 | `canyonos/records.py` | Each workflow group's record: finding, making and entering it; each workflow's `config/` in it |
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which workflow groups they act on |
@@ -106,10 +106,9 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/workflows/<workflow group>/ca/ca.crt`, `ca.key` | The workflow group's CA for internal mutual TLS, made on its first `provider: local` deploy and reused after (`0600`, folder `0700`); see [Internal TLS](CONTROLLER.md#internal-tls) |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
 | `~/.canyonos/api_key` | The machine's API key (`0600`); it never leaves this machine. `CANYONOS_API_KEY` overrides it for one command |
-| `~/.canyonos/control_key` | The key every `/v1` request to the CanyonOS API on Docker sends (`0600`), made on first use |
 | `~/.canyonos/context.json` | The workflow group `select-context` picked, by name: `{"deployment": "<workflow group>"}` |
 | `~/.canyonos/ports.lock` | Lock for picking ports |
-| `~/.canyonos/dashboard/` | The dashboard stack: `.env` (with `CANYONOS_API_KEY_HASH` and `CANYONOS_CONTROL_KEY_HASH`), `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
+| `~/.canyonos/dashboard/` | The dashboard stack: `.env` (with `CANYONOS_API_KEY_HASH`), `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
 | `~/.canyonos/forwards/<name>.json` | One background port-forward each |
 | `~/.canyonos/kind/` | The kind cluster's Pod Security file |
 | `~/.canyonos/usage/` | The usage choice and the events waiting to be sent |

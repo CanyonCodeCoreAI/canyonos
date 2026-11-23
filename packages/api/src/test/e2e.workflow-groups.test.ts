@@ -15,7 +15,7 @@ import type {
 import * as docker_engine from '@core/docker';
 import { config } from '@core/env';
 
-import { TEST_API_KEY, TEST_CONTROL_KEY } from './api-key-test.utils';
+import { TEST_API_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
 import { core_image, create_fake_controller, docker, free_port } from './process-test.utils';
 import {
@@ -35,7 +35,7 @@ const CORE_IMAGE = core_image();
 
 setupE2ETests();
 
-const control = bearer(TEST_CONTROL_KEY);
+const authorized = bearer(TEST_API_KEY);
 const HELLOWORLD = new URL('../../../../examples/helloworld/', import.meta.url).pathname;
 const DOCKER_SOCKET = '/var/run/docker.sock';
 const APPLY_TIMEOUT_MS = 60_000;
@@ -149,7 +149,7 @@ const v1 = (
 ) =>
   fetch(`${config.app.apiUrl}/v1/workflow-groups${path}`, {
     ...init,
-    headers: { ...control, ...init.headers },
+    headers: { ...authorized, ...init.headers },
   });
 
 const put_workflow = (workflow_id: string, archive: Uint8Array<ArrayBuffer>) =>
@@ -170,7 +170,7 @@ const refusal = (res: Res) => {
 };
 
 async function status(): Promise<WorkflowGroupStatus> {
-  const res = await group().get({ $headers: control });
+  const res = await group().get({ $headers: authorized });
   if (res.error || !res.data) throw new Error(`GET status failed: ${JSON.stringify(refusal(res))}`);
   return res.data;
 }
@@ -219,22 +219,22 @@ afterAll(async () => {
 }, 60_000);
 
 describe('the workflow groups API drives the Global Controller container', () => {
-  test('every route needs the control key, checked before the request is read', async () => {
+  test('every route needs the API key, checked before the request is read', async () => {
     const responses = await Promise.all([
       api.v1['workflow-groups'].get(),
-      group().get({ $headers: bearer(TEST_API_KEY) }),
+      group().get({ $headers: bearer('not-the-api-key') }),
       fetch(`${config.app.apiUrl}/v1/workflow-groups/not-a-uuid`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: '{',
       }),
     ]);
-    const [missing, api_key, unread] = responses;
+    const [missing, wrong_key, unread] = responses;
     expect(refusal(missing)).toMatchObject({
       status: 401,
       error: 'auth.missing_key',
     });
-    expect(refusal(api_key)).toMatchObject({ error: 'auth.invalid_key' });
+    expect(refusal(wrong_key)).toMatchObject({ error: 'auth.invalid_key' });
     expect(unread!.status).toBe(401);
     expect(await unread!.json()).toMatchObject({ error: 'auth.missing_key' });
   });
@@ -254,9 +254,12 @@ describe('the workflow groups API drives the Global Controller container', () =>
   });
 
   test('an unknown workflow group is 404, and a PUT without its container is 409', async () => {
-    const missing = await group().get({ $headers: control });
-    const put = await group().put({ name, config: config_text, env: null }, { headers: control });
-    const malformed = await api.v1['workflow-groups']['not-a-uuid']!.get({ $headers: control });
+    const missing = await group().get({ $headers: authorized });
+    const put = await group().put(
+      { name, config: config_text, env: null },
+      { headers: authorized }
+    );
+    const malformed = await api.v1['workflow-groups']['not-a-uuid']!.get({ $headers: authorized });
 
     expect(refusal(missing)).toMatchObject({
       status: 404,
@@ -276,11 +279,11 @@ describe('the workflow groups API drives the Global Controller container', () =>
 
       const put = await group().put(
         { name, config: config_text, env: 'GREETING=hello\n', workflows: [], api_key_hash: '' },
-        { headers: control }
+        { headers: authorized }
       );
       expect(put.data).toEqual({ generation: 1, warnings: [] });
 
-      const listed = await api.v1['workflow-groups'].get({ $headers: control });
+      const listed = await api.v1['workflow-groups'].get({ $headers: authorized });
       expect(listed.data?.workflow_groups).toContainEqual({ workflow_group_id, name });
 
       const applied = await status_when(
@@ -305,9 +308,9 @@ describe('the workflow groups API drives the Global Controller container', () =>
 
   test('the routes that need a running deploy are 409 before it starts', async () => {
     const [health, agent_logs, log] = await Promise.all([
-      group().health.get({ $headers: control }),
+      group().health.get({ $headers: authorized }),
       group().logs.agents[Bun.randomUUIDv5('helloworld.Workflow', helloworld_id)]!.get({
-        $headers: control,
+        $headers: authorized,
         $query: { tail: '10' },
       }),
       v1(`/${workflow_group_id}/logs/controller?tail=all`),
@@ -350,7 +353,9 @@ describe('the workflow groups API drives the Global Controller container', () =>
         error: 'workflow_groups.workflow_invalid',
       });
 
-      expect((await group().workflows.get({ $headers: control })).data).toEqual({ workflows: [] });
+      expect((await group().workflows.get({ $headers: authorized })).data).toEqual({
+        workflows: [],
+      });
       const no_graph = await v1(`/${workflow_group_id}/workflows/${helloworld_id}/graph`);
       expect(no_graph.status).toBe(404);
       expect(await no_graph.json()).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
@@ -366,7 +371,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
       expect(uploaded.status).toBe(200);
       expect(await uploaded.json()).toEqual({ generation: 2, warnings: [] });
 
-      const listed = await group().workflows.get({ $headers: control });
+      const listed = await group().workflows.get({ $headers: authorized });
       expect(listed.data).toEqual({
         workflows: [
           {
@@ -421,11 +426,11 @@ describe('the workflow groups API drives the Global Controller container', () =>
 
   test('DELETE stops the deploy and forgets the upload', async () => {
     const unknown = await group().workflows[crypto.randomUUID()]!.delete(undefined, {
-      headers: control,
+      headers: authorized,
     });
     expect(refusal(unknown)).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
 
-    const deleted = await group().delete(undefined, { headers: control });
+    const deleted = await group().delete(undefined, { headers: authorized });
     expect(deleted.error).toBeNull();
     expect(deleted.data?.generation).toBeGreaterThanOrEqual(3);
 
@@ -439,7 +444,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
     await create_stopping_controller(failing_id, 'exit 3');
 
     const res = await api.v1['workflow-groups'][failing_id]!.delete(undefined, {
-      headers: control,
+      headers: authorized,
     });
 
     expect(refusal(res)).toMatchObject({
@@ -456,7 +461,7 @@ describe('the workflow groups API drives the Global Controller container', () =>
       await create_stopping_controller(slow_id, `sleep ${SLOW_STOP_SECONDS}; exit 0`);
 
       const res = await api.v1['workflow-groups'][slow_id]!.delete(undefined, {
-        headers: control,
+        headers: authorized,
       });
 
       expect(res.error).toBeNull();
@@ -485,7 +490,7 @@ describe('canyonos deploy registers the workflow group with the dashboard, and t
   });
 
   const register = (group_id: string, body: DashboardRegistration) =>
-    api.v1['workflow-groups'][group_id]!.dashboard.put(body, { headers: control });
+    api.v1['workflow-groups'][group_id]!.dashboard.put(body, { headers: authorized });
 
   async function read_workflow(workflow_id: string) {
     const [row] = await db.select().from(workflows).where(eq(workflows.id, workflow_id)).limit(1);
@@ -493,7 +498,7 @@ describe('canyonos deploy registers the workflow group with the dashboard, and t
   }
 
   async function group_status(group_id: string): Promise<WorkflowGroupStatus> {
-    const res = await api.v1['workflow-groups'][group_id]!.get({ $headers: control });
+    const res = await api.v1['workflow-groups'][group_id]!.get({ $headers: authorized });
     if (res.error || !res.data)
       throw new Error(`GET status failed: ${JSON.stringify(refusal(res))}`);
     return res.data;
@@ -535,7 +540,7 @@ describe('canyonos deploy registers the workflow group with the dashboard, and t
     // Optional for Kubernetes only: on Docker the body is the only source of the workflows.
     const bodiless = await fetch(`${config.app.apiUrl}/v1/workflow-groups/${group_id}/dashboard`, {
       method: 'PUT',
-      headers: control,
+      headers: authorized,
     });
     expect(bodiless.status).toBe(422);
     expect(await bodiless.json()).toMatchObject({ error: 'workflow_groups.registration_required' });

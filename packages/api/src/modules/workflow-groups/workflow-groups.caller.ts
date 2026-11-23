@@ -8,17 +8,22 @@ import { config } from '@core/env';
 import { AppError, early_refusal, forbidden, unauthorized } from '@core/errors';
 import * as k8s from '@core/kubernetes';
 
-import { controlKeyGuard, drop_cors_headers, is_control_path } from '../auth/control-key';
+import { check_api_key, DASHBOARD_PATH, is_routed_to, TELEMETRY_PATH } from '../auth/auth.plugin';
 import { deploy_namespace } from './workflow-groups.kubernetes';
 import { workflow_groups_repo } from './workflow-groups.repo';
 
-// Who may call /v1/workflow-groups. On Docker, the CLI's control key (auth/control-key.ts). On Kubernetes the
-// caller sends their own Kubernetes login, `Authorization: Bearer <token>`: the cluster checks
-// the token (a TokenReview, else 401) and whether they may `get` (for a read) or `update` (for a
-// change) CanyonProjects in each namespace the request acts in (a SubjectAccessReview, else
-// 403), so a deploy reaches only the namespaces its caller may edit. Before the body is read;
-// a PUT of a workflow group's settings is checked again, against the namespace its body names,
-// before anything is written.
+// Who may call /v1/workflow-groups. On Docker, whoever holds the API key (auth/auth.plugin.ts),
+// and anyone when the API runs with none. On Kubernetes the caller sends their own Kubernetes
+// login, `Authorization: Bearer <token>`: the cluster checks the token (a TokenReview, else 401)
+// and whether they may `get` (for a read) or `update` (for a change) CanyonProjects in each
+// namespace the request acts in (a SubjectAccessReview, else 403), so a deploy reaches only the
+// namespaces its caller may edit. Before the body is read; a PUT of a workflow group's settings
+// is checked again, against the namespace its body names, before anything is written.
+
+// These routes serve no browser: no CORS. The exceptions: the dashboard's routes under a
+// workflow's own path, which take the API key, and a workflow group's telemetry routes, which
+// take no key.
+export const WORKFLOW_GROUPS_PATH = '/v1/workflow-groups';
 
 const BEARER = /^bearer\s+(.+)$/i;
 const GROUP_PATH =
@@ -120,6 +125,36 @@ async function namespaces_of(workflow_group_id: string): Promise<Set<string | nu
 
 type Guarded = Pick<Context, 'request' | 'set'>;
 
+/** Whether `request` is for a /v1/workflow-groups route this guard checks: not the dashboard's,
+ * not the telemetry's. */
+export function is_guarded_workflow_groups_path(request: Request): boolean {
+  const { pathname } = new URL(request.url);
+  return (
+    (pathname === WORKFLOW_GROUPS_PATH || pathname.startsWith(`${WORKFLOW_GROUPS_PATH}/`)) &&
+    !is_routed_to(request, DASHBOARD_PATH) &&
+    !is_routed_to(request, TELEMETRY_PATH)
+  );
+}
+
+/** Drops what the CORS plugin added: a browser on another origin may not read /v1/workflow-groups answers. */
+function drop_cors_headers(set: Guarded['set']): void {
+  for (const name of Object.keys(set.headers)) {
+    if (name.startsWith('access-control-') || name === 'vary') delete set.headers[name];
+  }
+}
+
+/** On Docker, lets a /v1/workflow-groups request through only with the API key, when the API
+ * runs with one. Before its body is read or checked. Answers a preflight itself, 204 with no
+ * CORS grant, so the CORS plugin never answers it. */
+export function requireDockerCaller({ request, set }: Guarded) {
+  if (!is_guarded_workflow_groups_path(request)) return;
+  drop_cors_headers(set);
+  const refusal = check_api_key({ request, set });
+  if (refusal || request.method !== 'OPTIONS') return refusal;
+  set.status = 204;
+  return '';
+}
+
 function unauthenticated(set: Guarded['set'], message: string) {
   set.headers['www-authenticate'] = 'Bearer';
   return early_refusal(set, unauthorized('auth.unauthenticated', message));
@@ -129,7 +164,7 @@ function unauthenticated(set: Guarded['set'], message: string) {
  * act on CanyonProjects in the namespaces the request acts in. A request naming no workflow
  * group this API knows, such as the list, needs the sign-in only. */
 export async function requireKubernetesCaller({ request, set }: Guarded) {
-  if (!is_control_path(request)) return;
+  if (!is_guarded_workflow_groups_path(request)) return;
   drop_cors_headers(set);
   const token = request.headers.get('authorization')?.trim().match(BEARER)?.[1]?.trim();
   if (!token) {
@@ -157,7 +192,7 @@ export async function requireKubernetesCaller({ request, set }: Guarded) {
 /** On Kubernetes, refuses (403) a PUT of a workflow group's settings unless its caller may
  * update CanyonProjects in the namespace `config_text` names, in every namespace when it names
  * none; checked once the body is read, before anything is written. Nothing to check on Docker,
- * whose control key may do everything. */
+ * whose API key may do everything. */
 export async function check_settings_caller(request: Request, config_text: string): Promise<void> {
   if (config.workflowGroups.target !== 'kubernetes') return;
   const user = callers.get(request);
@@ -171,4 +206,11 @@ export async function check_settings_caller(request: Request, config_text: strin
 export const workflowGroupsGuard =
   config.workflowGroups.target === 'kubernetes'
     ? new Elysia({ name: 'auth.kubernetes-caller' }).onRequest(requireKubernetesCaller)
-    : controlKeyGuard;
+    : new Elysia({ name: 'auth.docker-caller' }).onRequest(requireDockerCaller);
+
+/** Takes back the CORS headers the CORS plugin gave a /v1/workflow-groups request; mount it after that plugin. */
+export const noCorsOnWorkflowGroups = new Elysia({
+  name: 'auth.no-cors-on-workflow-groups',
+}).onRequest(({ request, set }) => {
+  if (is_guarded_workflow_groups_path(request)) drop_cors_headers(set);
+});

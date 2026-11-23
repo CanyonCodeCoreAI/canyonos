@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { app } from '@api/app';
-import { API_KEY_PATHS, DASHBOARD_PATH, is_routed_to } from '@api/modules/auth/auth.plugin';
-import { CONTROL_PATH_PREFIX } from '@api/modules/auth/control-key';
+import { API_KEY_PATHS } from '@api/modules/auth/auth.plugin';
+import { WORKFLOW_GROUPS_PATH } from '@api/modules/workflow-groups/workflow-groups.caller';
 
 /** `METHOD path` as Elysia lists the route. */
 export type RouteName = `${string} /${string}`;
 
-/** Which key a route takes: the dashboard's API key, the CLI's control key, or none. `unguarded`
- * is a route in none of the three, which the auth test fails on. */
-export type RouteKind = 'api_key' | 'control_key' | 'open' | 'unguarded';
+/** Which key a route takes on Docker: the API key, or none. `unguarded` is a route in neither,
+ * which the auth test fails on. */
+export type RouteKind = 'api_key' | 'open' | 'unguarded';
 
 // Written here, not read from the guards, so a route mounted outside them shows up: every route
 // is one of these, or needs a key.
@@ -39,8 +39,7 @@ export interface SweptRoute {
 
 function kind_of(route: RouteName, path: string): RouteKind {
   if (OPEN_ROUTES.includes(route)) return 'open';
-  if (is_routed_to(new Request(`http://localhost${path}`), DASHBOARD_PATH)) return 'api_key';
-  if (under(path, CONTROL_PATH_PREFIX)) return 'control_key';
+  if (under(path, WORKFLOW_GROUPS_PATH)) return 'api_key';
   if (API_KEY_PATHS.some((prefix) => under(path, prefix))) return 'api_key';
   return 'unguarded';
 }

@@ -8,8 +8,9 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
 
-import { TEST_CONTROL_KEY } from './api-key-test.utils';
+import { TEST_API_KEY } from './api-key-test.utils';
 import { spawn_api } from './process-test.utils';
+import { raw_request } from './test.utils';
 import { bearer } from './workflow-test.utils';
 import type { SpawnedApi } from './process-test.utils';
 
@@ -219,8 +220,8 @@ const config_in = (namespace: string) =>
   `workflow_group_id: x\nkubernetes:\n  namespace: ${namespace}\n  registry: registry.example\n`;
 
 describe('the Kubernetes target', () => {
-  test("checks the caller's Kubernetes login instead of the control key, before the request is read", async () => {
-    for (const token of [null, TEST_CONTROL_KEY, 'not-a-cluster-token']) {
+  test("checks the caller's Kubernetes login instead of the API key, before the request is read", async () => {
+    for (const token of [null, TEST_API_KEY, 'not-a-cluster-token']) {
       const refused = await v1('', token);
       expect(refused.status).toBe(401);
       expect(((await refused.json()) as { error: string }).error).toBe('auth.unauthenticated');
@@ -232,6 +233,28 @@ describe('the Kubernetes target', () => {
       workflow_groups: [{ workflow_group_id: RESTORED_ID, name: PROJECT }],
     });
   });
+
+  // request.url reads `\` as `/` but the router does not: each reaches a workflow group's route,
+  // not the dashboard's, which would take the API key.
+  const group = `/v1/workflow-groups/${RESTORED_ID}`;
+  const backslash_targets = [
+    ['GET', `${group}\\workflows\\${WORKFLOW_ID}\\requests`],
+    ['DELETE', `${group}/workflows/${WORKFLOW_ID}\\requests`],
+  ] as const;
+
+  for (const [method, target] of backslash_targets) {
+    test(`${method} ${target} takes the Kubernetes login, not the API key`, async () => {
+      const { status, body } = await raw_request(
+        method,
+        target,
+        bearer(TEST_API_KEY),
+        kubernetes_api!.port
+      );
+
+      expect(status).toBe(401);
+      expect(JSON.parse(body)).toMatchObject({ error: 'auth.unauthenticated' });
+    });
+  }
 
   test('finds the CanyonProjects running in the cluster again at start, as deploys that are up', async () => {
     const before = reviews.length;
