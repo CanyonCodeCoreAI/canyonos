@@ -93,15 +93,16 @@ fi
 
 # The cluster's own registry: the builder pushes to it over plain HTTP, by the name it
 # has inside the kind network.
+# The builder and the dashboard come with the chart's defaults; the API's key does not.
 kind_values=(
-  --set builder.enabled=true
   --set "builder.insecureRegistries={kind-registry:5000}"
   --set "builder.registryAliases.localhost:5001=kind-registry:5000"
-  --set dashboard.enabled=true
   --set "dashboard.apiKeyHash=${api_key_hash}"
 )
 
 if [ -n "${version}" ]; then
+  # Releases up to 0.2.x leave the builder and the dashboard off unless asked.
+  kind_values+=(--set builder.enabled=true --set dashboard.enabled=true)
   log "CanyonOS ${version}, as published"
   # Releases up to 0.2.x keep their CRDs in crds/, which Helm installs once and never
   # upgrades: apply those first. Later ones render them as templates, and show none.

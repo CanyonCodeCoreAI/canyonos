@@ -67,7 +67,8 @@ func (r *CanyonBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	if r.BuilderAddress == "" {
 		return ctrl.Result{}, r.setStatus(ctx, build, BuildFailed, "",
-			"this cluster has no image builder: install the operator's chart with builder.enabled=true")
+			"this cluster has no image builder: the operator's chart was installed with builder.enabled=false; "+
+				"upgrade it with builder.enabled=true")
 	}
 
 	if err := r.ensureIdentity(ctx, build); err != nil {

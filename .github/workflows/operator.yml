@@ -84,23 +84,28 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Both install modes must render: cluster-wide (with the builder and the
-      # dashboard) and limited to some namespaces. Each needs the CanyonOS API's key.
+      # dashboard, the defaults) and limited to some namespaces; and with the builder
+      # and the dashboard turned off. Each needs the CanyonOS API's key.
       - name: Lint and render the chart
         env:
           KEY: dashboard.apiKeyHash=0000000000000000000000000000000000000000000000000000000000000000
         run: |
           helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0 --set "${KEY}"
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set builder.enabled=true --set dashboard.enabled=true --set "${KEY}" \
+            --set "${KEY}" \
             --set dashboard.apiImage=canyonos-api@sha256:0 --set dashboard.webImage=canyonos-web@sha256:0 \
             > /dev/null
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
             --set "watchNamespaces={team-a,team-b}" --set "${KEY}" > /dev/null
           # A Secret of your own carries the key instead.
           helm template t canyonos-operator --set dashboard.existingSecret=mine > /dev/null
-          # A release's chart installs with no image set: its own release's images.
-          helm template t canyonos-operator --set builder.enabled=true \
-            --set dashboard.enabled=true --set "${KEY}" > /dev/null
+          helm template t canyonos-operator --set builder.enabled=false \
+            --set dashboard.enabled=false --set "${KEY}" > /dev/null
+          # A release's chart installs with no image set: its own release's images; and
+          # with only the key set, it installs the builder and the dashboard's web app.
+          helm template t canyonos-operator --set "${KEY}" > /tmp/defaults.yaml
+          grep -q '^  name: buildkitd$' /tmp/defaults.yaml || { echo "no builder by default"; exit 1; }
+          grep -q '^  name: canyonos-dashboard-web$' /tmp/defaults.yaml || { echo "no dashboard by default"; exit 1; }
           # With no key, every signed-in user could use the API's dashboard routes.
           if helm template t canyonos-operator > /tmp/no-key.txt 2>&1; then
             echo "the chart rendered with no dashboard.apiKeyHash"; exit 1

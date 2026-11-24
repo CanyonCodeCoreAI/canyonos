@@ -73,7 +73,7 @@ metrics:
 # storageClassName.
 dashboard:
   # The web front end only: the API and Postgres are always installed.
-  enabled: false
+  enabled: true
   namespace: canyonos-dashboard
   createNamespace: true
   # The canyonos-api and canyonos-web images; empty: this release's. The API's core
@@ -133,9 +133,11 @@ dashboard:
 # The in-cluster image builder (BuildKit, rootless) that `canyonos deploy --target
 # kubernetes` builds every project's images with. Its namespace gets the one Pod Security
 # exception CanyonOS asks for (privileged: seccomp and AppArmor unconfined for BuildKit's
-# user namespaces); nothing else runs there.
+# user namespaces); nothing else runs there. Every deploy builds with it. Where the
+# cluster's policy forbids a privileged namespace, the install is refused: set
+# enabled: false (deploys then cannot build in the cluster).
 builder:
-  enabled: false
+  enabled: true
   namespace: canyonos-build
   createNamespace: true
   # Pinned by digest, so a re-pushed tag can't change what runs; Dependabot keeps it

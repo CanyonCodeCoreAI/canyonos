@@ -85,7 +85,6 @@ publishes:
 KEY="<the dashboard's API key, which you pick>"
 helm install canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
   --version <version> --namespace canyonos-system --create-namespace \
-  --set builder.enabled=true \
   --set dashboard.apiKeyHash="$(printf %s "$KEY" | sha256sum | cut -d' ' -f1)"
 ```
 
@@ -94,9 +93,15 @@ helm install canyonos oci://ghcr.io/canyoncodecoreai/charts/canyonos-operator \
 The chart always installs the [CanyonOS API](#the-canyonos-api) too, with its Postgres
 on a 1Gi PersistentVolumeClaim, so the cluster needs a default StorageClass, or set
 `dashboard.storageClassName`. It refuses to install without `dashboard.apiKeyHash`, the
-sha256 of the key the API's dashboard routes take, or `dashboard.existingSecret`. Add
-`--set dashboard.enabled=true` for the [dashboard](#dashboard)'s web front end, and any
-of the [operator settings](#operator-settings) below.
+sha256 of the key the API's dashboard routes take, or `dashboard.existingSecret`. The
+in-cluster image builder and the [dashboard](#dashboard)'s web front end come with it.
+Add any of the [operator settings](#operator-settings) below.
+
+Where your cluster's policy forbids privileged namespaces or pods (Pod Security enforced
+cluster-wide, a Kyverno or Gatekeeper rule, OpenShift's default security policies), this
+install fails, or the builder never starts: install with `--set builder.enabled=false`.
+Deploys then can't build images in the cluster. See
+[Permissions and Pod Security](#permissions-and-pod-security).
 
 </div>
 
@@ -113,10 +118,10 @@ Set these with `--set` on `helm install`:
 
 | Setting                            | Default                        | What it does                                                                                                                                                                             |
 | ---------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builder.enabled`                  | `false`                        | Installs the in-cluster image builder (rootless BuildKit in `canyonos-build`). Every deploy builds with it, so turn it on.                                                               |
+| `builder.enabled`                  | `true`                         | Installs the in-cluster image builder (rootless BuildKit in `canyonos-build`). Every deploy builds with it. Turn it off only where policy forbids its privileged namespace.              |
 | `builder.registryAliases`          | `{}`                           | A registry the builder reaches by another name than the nodes pull it by. kind: `{"localhost:5001": "kind-registry:5000"}`.                                                              |
 | `builder.insecureRegistries`       | `[]`                           | Registries the builder may push to over plain HTTP. Use it for a local kind registry only.                                                                                               |
-| `dashboard.enabled`                | `false`                        | The dashboard's web front end, for every workflow on the cluster. The CanyonOS API is installed either way. See [Dashboard](#dashboard).                                                 |
+| `dashboard.enabled`                | `true`                         | The dashboard's web front end, for every workflow on the cluster. The CanyonOS API is installed either way. See [Dashboard](#dashboard).                                                 |
 | `watchNamespaces`                  | `[]`                           | Empty: workflows may run in any namespace, and the operator has cluster-wide permissions. A list: only those namespaces, with the operator's permissions granted in them alone.          |
 | `userRoles.enabled`                | `true`                         | Whoever may administer, edit or view a namespace may do the same with its CanyonProjects, CanyonAgents and CanyonBuilds. This is what makes a namespace's edit role enough to deploy.    |
 | `imageRegistry`                    | `ghcr.io/canyoncodecoreai`     | Where CanyonOS's own images come from. Each image setting left empty is `<imageRegistry>/canyonos-<name>:<version>`. Point it at a registry mirror that holds them under the same names. |
@@ -349,8 +354,8 @@ kubectl -n canyonos-dashboard logs deploy/canyonos-dashboard-api -c api    # or 
 ## Dashboard
 
 One dashboard serves every workflow on the cluster. Its web front end is installed with
-the operator by adding `--set dashboard.enabled=true`; `canyonos cluster up` installs it
-for you. It runs in the `canyonos-dashboard` namespace, on the
+the operator unless you pass `--set dashboard.enabled=false`; `canyonos cluster up`
+installs it too. It runs in the `canyonos-dashboard` namespace, on the
 [CanyonOS API](#the-canyonos-api), under the `restricted` Pod Security profile.
 
 ```bash
@@ -437,6 +442,12 @@ follows the new release; one you set by hand (`image.digest`, `controllerImage`,
 dashboard's) stays as it was, so pass its new value with `--set`. An install with no
 `dashboard.apiKeyHash` or `dashboard.existingSecret` needs one now: pass it with `--set`
 too.
+
+`--reuse-values` also keeps the builder and the dashboard's web front end as the install
+had them. An install from 0.2.x, where both were off unless set, keeps them off: to turn
+them on, add `--set builder.enabled=true --set dashboard.enabled=true`. A `helm upgrade`
+without `--reuse-values` takes the new defaults instead, and turns both on, the builder's
+privileged `canyonos-build` namespace included.
 
 Never delete a CRD: Kubernetes then deletes every resource of that kind in the cluster.
 Deleting the CanyonProject CRD takes down every workflow on it.

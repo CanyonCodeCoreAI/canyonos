@@ -7,3 +7,23 @@ Check it:                                kubectl get canyonprojects,canyonagents
 Open the dashboard:                      kubectl -n {{ .Values.dashboard.namespace }} port-forward svc/canyonos-dashboard-web 8080:8080
                                          then http://localhost:8080, signed in with the dashboard's API key
 {{- end }}
+{{- /* lookup finds nothing when the chart is rendered without a cluster (helm template). */}}
+{{- if and (not .Values.dashboard.storageClassName) (lookup "v1" "Namespace" "" "kube-system") }}
+{{- $default := false }}
+{{- range (lookup "storage.k8s.io/v1" "StorageClass" "" "").items }}
+{{- if eq (index (.metadata.annotations | default dict) "storageclass.kubernetes.io/is-default-class" | default "") "true" }}
+{{- $default = true }}
+{{- end }}
+{{- end }}
+{{- if not $default }}
+
+WARNING: this cluster has no default StorageClass, so the CanyonOS API's Postgres waits
+(Pending) for a volume. Name one with --set dashboard.storageClassName=<class>
+(kubectl get storageclass).
+{{- end }}
+{{- end }}
+{{- if not .Values.builder.enabled }}
+
+The in-cluster builder is off (builder.enabled=false): `canyonos deploy --target kubernetes`
+cannot build images in this cluster.
+{{- end }}

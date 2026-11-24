@@ -199,8 +199,9 @@ def _open_dashboard(port=None):
     if found.returncode:
         raise RuntimeError(
             f"No CanyonOS dashboard you can reach in namespace {DASHBOARD_NAMESPACE}: "
-            "it is not installed (the operator's chart, --set dashboard.enabled=true; "
-            "see docs/guides/KUBERNETES.md) or you may not open it there "
+            "it is not installed (the operator's chart installs it unless "
+            "dashboard.enabled=false; see docs/guides/KUBERNETES.md) or you may not "
+            "open it there "
             f"({found.stderr.strip()})"
         )
     if port is None:
