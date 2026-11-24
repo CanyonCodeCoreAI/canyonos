@@ -52,6 +52,10 @@ def notify_result(future_id):
         arrived.set()
 
 
+# The code of a call that could not be sent, as its `error_name`.
+SEND_FAILED = "SendFailed"
+
+
 class AgentCallError(RuntimeError):
     """Raised when a called agent failed; the text is that agent's own error."""
 
@@ -367,10 +371,11 @@ class Future(object):
                     {
                         "error": message,
                         "failed": 1,
+                        "error_name": SEND_FAILED,
                         "finished_at": time.time_ns(),
                         # The future is new, so this is its only log.
                         "logs": json.dumps(
-                            [build_failure_entry(message, error_name="SendFailed")]
+                            [build_failure_entry(message, error_name=SEND_FAILED)]
                         ),
                     },
                 )

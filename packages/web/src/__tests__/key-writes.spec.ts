@@ -120,7 +120,7 @@ const governanceAgent = (
   status,
   unmet_requires: [],
   models: [],
-  rules: { requires: [], spend: null },
+  rules: { requires: [], spend: null, review: null },
   spend: null,
   scaling_policy_present: false,
 });

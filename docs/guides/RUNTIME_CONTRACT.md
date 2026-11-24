@@ -230,10 +230,18 @@ Outside a request, `input()`, `interrupt()` and `Runner` behave as they normally
 and `ask_human` raises `RuntimeError`.
 
 While an agent waits, `GET /status/<request_id>` answers `input_required`, with
-`{"question": ..., "input_schema": ...}` in its `question` field: the question, and each
-key the answer takes with its type. For an Agents SDK approval, the question is
+`{"question": ..., "input_schema": ...}` in its `question` field: the oldest question,
+and each key the answer takes with its type. For an Agents SDK approval, the question is
 `{"agent", "tool", "arguments"}`. The person answers with a JSON object of those keys at
 `POST /answer/<request_id>`, such as `{"input": "1042"}`, and the request carries on.
+
+A request can wait on several questions at once, such as two agents asking in
+parallel. `questions` in the same `/status` lists every one, oldest first, as
+`{"id", "question", "input_schema", "asked_at", "expires_at", "agent"}` (`agent`: the
+agent that asked, when known), times in epoch
+milliseconds. `POST /answer/<request_id>?question=<id>` answers that one, and answers
+`409` when it isn't waiting. `GET /questions` lists the waiting questions of every
+request in the workflow group, each with its `request_id`, for a tool that answers them.
 
 | Rule                | Detail                                                                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -241,13 +249,56 @@ key the answer takes with its type. For an Agents SDK approval, the question is
 | Types shown         | Written the way a Python developer writes them. Unions, `Literal`s and nested models can show less precisely, and the answer is still checked          |
 | JSON Schema         | A JSON Schema `response_schema` shows its `properties`, or `input` when it has none, and the answer isn't checked against it                           |
 | TypedDict           | On Python 3.10 or 3.11, use `typing_extensions.TypedDict`, as LangGraph itself requires                                                                |
-| Order               | Questions waiting in one request are answered oldest first                                                                                             |
+| Order               | Without `?question=<id>`, questions waiting in one request are answered oldest first                                                                   |
 | Request ends first  | If the request finishes or fails before a question is answered, the waiting call raises                                                                |
 | No answer           | After an hour, the waiting call raises `TimeoutError`                                                                                                  |
 | Long waits          | The 65-minute wait for a `Future` still applies, so a call that asks two questions taking 40 minutes each makes its caller's wait raise `TimeoutError` |
 | Slots               | The asking agent, and every call waiting on it, keep their thread slots until the answer comes                                                         |
 | Replica loss        | If the asking replica dies while it waits, its call fails with `ReplicaRemovedError` and an answer sent afterwards is lost                             |
 | Scale-down          | A scale-down that drains the asking replica fails the request once the drain's 180-second limit passes                                                 |
+| Given up            | A question whose asker stopped waiting, past its `expires_at`, is no longer listed or answered                                                         |
+
+#### Review gates
+
+A `review` rule in an agent's [governance rules](#governance-rules) puts a person's
+approval in front of every call to that agent, with no change to the code. During a
+request, the replica that runs the call resolves its `Future` arguments and then,
+before the method runs, asks the person who sent the request, like `ask_human`:
+
+```json
+{
+  "question": {
+    "kind": "review",
+    "agent": "helloworld.HelloAgent",
+    "method": "hello",
+    "arguments": { "name": "Ada" },
+    "reviewers": "greeters"
+  },
+  "input_schema": { "approve": "bool", "message": "str | None" }
+}
+```
+
+| Answer or event                           | What the call does                                                                                              |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `{"approve": true}`                       | Runs as usual                                                                                                   |
+| `{"approve": false, "message": "..."}`    | Fails without running: `error_name` `review.rejected`, `Rejected by a reviewer: <message or 'no reason given'>` |
+| An `approve` that isn't `true` or `false` | Is asked again, as a new question, within the same time                                                         |
+| No answer within `timeout_seconds`        | Fails without running: `review.timed_out`, `No reviewer in <reviewers> answered within <n> seconds`             |
+| The question fails first                  | Fails with its code: `RequestFinished` when the request ends first, `SendFailed` or `NoRunningReplica`          |
+
+- `agent` is the name governance uses, `<workflow>.<agent>`. Each argument shows as JSON;
+  a value JSON can't hold shows as its `repr`, and one longer than 10,000 characters
+  is cut.
+- `reviewers` names the group that should decide. CanyonOS passes it on and does not
+  check who answers: anyone with the API key can.
+- Calls to the endpoint and calls made outside a request are never gated.
+- The calling agent gets the failure at the line that uses the call's result, with the
+  text above; `/status` of a request that fails on it reports that text.
+- The review is a call to `endpoint` under the gated call, in traces and on the
+  dashboard. While it waits, the gated call keeps its thread slot, and its time counts
+  as the call's.
+- The 65-minute wait for a `Future` still applies: a review that takes most of the
+  hour leaves the method a few minutes before its caller gives up.
 
 ## Environment variables
 
@@ -306,8 +357,9 @@ rules:
 
 ### Governance rules
 
-`config/governance.yaml` adds two rules per agent, which you can then change on the
-dashboard's **Governance** page:
+`config/governance.yaml` adds three rules per agent. You can change `requires` and
+`spend` on the dashboard's **Governance** page; `review` is set through the CanyonOS
+API, and the page keeps it when it saves:
 
 ```yaml
 agents:
@@ -320,14 +372,24 @@ agents:
           action: {kind: switch_model, model: us.anthropic.claude-haiku-4-5-20251001-v1:0}
         - above_usd: 20
           action: {kind: deny}
+    review:
+      reviewers: pricing-leads
+      timeout_seconds: 900
 ```
 
-| Key           | What it does                                                                         |
-| ------------- | ------------------------------------------------------------------------------------ |
-| `requires`    | Refuse calls to the agent while one of these agents has no healthy replica           |
-| `spend.since` | Count the agent's spend from this time. Default: when the file is first published    |
-| `spend.rules` | Thresholds in US dollars, each above 0. The highest one the spend has passed decides |
-| `action.kind` | `deny` refuses calls; `switch_model` sends the agent's model calls to `action.model` |
+| Key                      | What it does                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `requires`               | Refuse calls to the agent while one of these agents has no healthy replica                                            |
+| `spend.since`            | Count the agent's spend from this time. Default: when the file is first published                                     |
+| `spend.rules`            | Thresholds in US dollars, each above 0. The highest one the spend has passed decides                                  |
+| `action.kind`            | `deny` refuses calls; `switch_model` sends the agent's model calls to `action.model`                                  |
+| `review.reviewers`       | Hold each call for a person in this reviewer group to approve, 1 to 100 characters; see [Review gates](#review-gates) |
+| `review.timeout_seconds` | How long a reviewer has, 60 to 3600 seconds. Default: 3600                                                            |
+
+In the CanyonOS API, `PUT /v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/governance/agents/<agent_id>`
+replaces an agent's rules. Its body's `review` sets the gate, `null` removes it, and a
+body without `review` keeps the stored one. `GET .../governance` reports each agent's
+`review`, with its `timeout_seconds`, or `null`.
 
 The file only adds rules for agents that have none stored yet, so changes made on the
 dashboard are kept when the file is published again. An invalid file fails the deploy.

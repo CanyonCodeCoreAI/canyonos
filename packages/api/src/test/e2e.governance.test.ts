@@ -156,7 +156,7 @@ describe('workflow governance', () => {
       replicas_running: 2,
       replicas_expected: 2,
       desired_replicas: 2,
-      rules: { requires: [], spend: null },
+      rules: { requires: [], spend: null, review: null },
       spend: null,
       scaling_policy_present: false,
     });
@@ -192,6 +192,7 @@ describe('workflow governance', () => {
     expect(by_name(saved.data!.agents, 'MergeAgent').rules).toEqual({
       requires,
       spend: { since, rules: MERGE_SPEND.rules },
+      review: null,
     });
 
     const raised: AgentRules = {
@@ -243,6 +244,91 @@ describe('workflow governance', () => {
     expect(error_code(unknown_agent)).toBe('governance.unknown_agent');
     expect(named.error?.status as number).toBe(422);
     expect(error_code(named)).toBe('validation_error');
+    expect(await read_governance_config()).toEqual({
+      agents: { MergeAgent: { requires: ['TestRunnerAgent'] } },
+    });
+  });
+
+  test('a review gate is stored as sent, reported with its timeout, kept by a body without one, removed by null, and reported on every agent', async () => {
+    const { headers, workflow_id } = await governed_workflow();
+    await seed_governance({
+      agents: {
+        MergeAgent: { requires: ['TestRunnerAgent'] },
+        Workflow: { review: { reviewers: 'release', timeout_seconds: 120 } },
+      },
+    });
+    const governance = group_workflow(workflow_id).governance;
+    const merge = governance.agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!;
+    const runner_id = Bun.randomUUIDv5('TestRunnerAgent', workflow_id);
+
+    const listed = await governance.get({ $headers: headers });
+    const gated = await merge.put(
+      { requires: [runner_id], spend: null, review: { reviewers: 'legal' } },
+      { headers: key_headers }
+    );
+    const after_gate = await read_governance_config();
+    const kept = await merge.put({ requires: [], spend: MERGE_SPEND }, { headers: key_headers });
+    const after_kept = (await read_governance_config()) as {
+      agents: Record<string, { review?: unknown }>;
+    };
+    const removed = await merge.put(
+      { requires: [], spend: null, review: null },
+      { headers: key_headers }
+    );
+
+    expect(listed.error).toBeNull();
+    expect(by_name(listed.data!.agents, 'Workflow').rules.review).toEqual({
+      reviewers: 'release',
+      timeout_seconds: 120,
+    });
+    expect(by_name(listed.data!.agents, 'MergeAgent').rules.review).toBeNull();
+    expect(gated.error).toBeNull();
+    expect(by_name(gated.data!.agents, 'MergeAgent').rules).toEqual({
+      requires: [runner_id],
+      spend: null,
+      review: { reviewers: 'legal', timeout_seconds: 3600 },
+    });
+    expect(after_gate).toMatchObject({
+      agents: {
+        MergeAgent: { requires: ['TestRunnerAgent'], spend: null, review: { reviewers: 'legal' } },
+        Workflow: { review: { reviewers: 'release', timeout_seconds: 120 } },
+      },
+    });
+    expect(kept.error).toBeNull();
+    expect(after_kept.agents.MergeAgent!.review).toEqual({ reviewers: 'legal' });
+    expect(by_name(kept.data!.agents, 'MergeAgent').rules.review).toEqual({
+      reviewers: 'legal',
+      timeout_seconds: 3600,
+    });
+    expect(removed.error).toBeNull();
+    expect(by_name(removed.data!.agents, 'MergeAgent').rules.review).toBeNull();
+    expect(await read_governance_config()).toMatchObject({
+      agents: { MergeAgent: { requires: [], spend: null } },
+    });
+    expect(
+      ((await read_governance_config()) as typeof after_kept).agents.MergeAgent
+    ).not.toHaveProperty('review');
+  });
+
+  test('a review gate without a reviewer group, with a name over 100 characters or a timeout outside 60 to 3600 seconds is 422 and nothing is stored', async () => {
+    const { workflow_id } = await governed_workflow();
+    const merge =
+      group_workflow(workflow_id).governance.agents[Bun.randomUUIDv5('MergeAgent', workflow_id)]!;
+
+    const refused = await Promise.all(
+      [
+        { reviewers: '' },
+        { reviewers: 'r'.repeat(101) },
+        { reviewers: 'legal', timeout_seconds: 59 },
+        { reviewers: 'legal', timeout_seconds: 3601 },
+        { reviewers: 'legal', timeout_seconds: 90.5 },
+      ].map((review) => merge.put({ requires: [], spend: null, review }, { headers: key_headers }))
+    );
+
+    for (const res of refused) {
+      expect(res.error?.status as number).toBe(422);
+      expect(error_code(res)).toBe('validation_error');
+    }
     expect(await read_governance_config()).toEqual({
       agents: { MergeAgent: { requires: ['TestRunnerAgent'] } },
     });

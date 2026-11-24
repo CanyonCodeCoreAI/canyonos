@@ -10,6 +10,7 @@ import { assert_workflow_running, with_redis } from '../registry/registry.redis'
 import { read_agents } from '../scaling/scaling.service';
 import { publish_spend } from './governance.publisher';
 import { governance_repo } from './governance.repo';
+import { REVIEW_TIMEOUT_DEFAULT_SECONDS } from './governance.types';
 import type { AgentReading } from '../scaling/scaling.service';
 import type { LlmEntry, StoredAgentRules } from './governance.repo';
 import type {
@@ -19,6 +20,8 @@ import type {
   CostAction,
   GovernanceAgent,
   GovernanceResponse,
+  ReviewRule,
+  SavedAgentRules,
   SpendRule,
 } from './governance.types';
 
@@ -35,8 +38,27 @@ function models_for(llms: readonly LlmEntry[], agent: string): string[] {
     .map(({ model_id }) => model_id);
 }
 
-function rules_of(stored: StoredAgentRules | undefined): AgentRules {
-  return { requires: stored?.requires ?? [], spend: stored?.spend ?? null };
+/** The rules as reported, with a review gate's timeout filled in as the Local Controllers fill it
+ * when the stored rule leaves it out. */
+function rules_of(stored: StoredAgentRules | undefined): SavedAgentRules {
+  const review = stored?.review;
+  return {
+    requires: stored?.requires ?? [],
+    spend: stored?.spend ?? null,
+    review: review
+      ? { ...review, timeout_seconds: review.timeout_seconds ?? REVIEW_TIMEOUT_DEFAULT_SECONDS }
+      : null,
+  };
+}
+
+/** The review gate to store: the body's, the stored one when the body leaves it out, and none
+ * for null. */
+function review_to_store(
+  review: ReviewRule | null | undefined,
+  stored: StoredAgentRules | undefined
+): { review?: ReviewRule } {
+  const kept = review === undefined ? stored?.review : review;
+  return kept ? { review: kept } : {};
 }
 
 /** The action of the rule with the highest threshold below usd, or null when none is passed. */
@@ -47,7 +69,7 @@ function tripped_action(rules: readonly SpendRule[], usd: number): CostAction | 
     .action;
 }
 
-function spend_of(rules: AgentRules, usd: number | undefined): AgentSpend | null {
+function spend_of(rules: SavedAgentRules, usd: number | undefined): AgentSpend | null {
   const since = rules.spend?.since;
   if (!rules.spend || since === undefined) return null;
   const total = usd ?? 0;
@@ -133,7 +155,8 @@ export async function get_governance(workflow_id: string): Promise<GovernanceRes
   );
 }
 
-/** Replaces one agent's rules, keeping its spend start unless the body moves it. */
+/** Replaces one agent's rules, keeping its spend start unless the body moves it, and its review
+ * gate unless the body names one or null. */
 export async function save_agent_rules(
   workflow_id: string,
   agent_id: string,
@@ -160,11 +183,14 @@ export async function save_agent_rules(
       }
     }
 
-    await governance_repo.write_agent_rules(redis, agent, (stored) => {
-      if (rules.spend === null) return { ...rules, requires };
-      const since = rules.spend.since ?? stored?.spend?.since ?? new Date().toISOString();
-      return { requires, spend: { ...rules.spend, since } };
-    });
+    await governance_repo.write_agent_rules(redis, agent, (stored) => ({
+      requires,
+      spend: rules.spend && {
+        ...rules.spend,
+        since: rules.spend.since ?? stored?.spend?.since ?? new Date().toISOString(),
+      },
+      ...review_to_store(rules.review, stored),
+    }));
     await publish_spend(redis, workflow_id);
     return read_governance(redis, workflow_id, workflow);
   });

@@ -18,19 +18,20 @@ import {
   SCALING_CONFIG_KEY,
   UP_AGENTS_KEY,
 } from '../registry/registry.contract';
-import { SpendRuleSchema } from './governance.types';
-import type { AgentRules } from './governance.types';
+import { ReviewRuleSchema, SpendRuleSchema } from './governance.types';
 
 const EDGE_DAYS = 7;
 const DAY_MS = 86_400_000;
 
-// As stored, `requires` and `spend` may be absent, and `since` too until a writer stamps it.
+// As stored, `requires`, `spend` and `review` may be absent, and `since` too until a writer
+// stamps it.
 const StoredAgentRulesSchema = z.object({
   requires: z.array(z.string()).optional(),
   spend: z
     .object({ since: z.string().datetime().optional(), rules: z.array(SpendRuleSchema) })
     .nullable()
     .optional(),
+  review: ReviewRuleSchema.nullable().optional(),
 });
 
 // Other top-level keys are kept untouched on save.
@@ -84,7 +85,7 @@ export const governance_repo = {
   async write_agent_rules(
     redis: RedisClient,
     agent: string,
-    rules: (stored: StoredAgentRules | undefined) => AgentRules
+    rules: (stored: StoredAgentRules | undefined) => StoredAgentRules
   ): Promise<void> {
     const saved = await update_json_key(redis, GOVERNANCE_CONFIG_KEY, (raw) => {
       const config = parse_config(raw);

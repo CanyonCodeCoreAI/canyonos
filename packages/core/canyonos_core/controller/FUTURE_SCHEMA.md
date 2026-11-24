@@ -20,6 +20,7 @@ Fields currently written into `future:{future_id}`, and where:
 | `result`                    | `local_controller.py` (`_execute_locally`), `local_controller_frontend.py` (`WriteResult`) -- absent until the call succeeds, so `""` is a real empty result |
 | `failed`                    | `future.py`, `local_controller.py` |
 | `error`                     | `future.py` (`_submit_request`), `local_controller.py` (`_mark_future_failed`) -- the sole failure-message field, one readable line such as `IntentAgent.parse failed: ValueError: no valid holdings`; a failure passed on from a called agent keeps that agent's line; the LLM gateway deliberately never writes it |
+| `error_name`                | `local_controller.py` (`_mark_future_failed`), `future.py` (`_submit_request`) -- the failure's code when CanyonOS itself failed the call, such as `NoRunningReplica`, `PolicyDenied`, `review.rejected` or `review.timed_out`; absent when the agent's own code raised |
 | `finished_at`               | `local_controller.py` (`_execute_locally` finally block, `_mark_future_failed`), `future.py` (`_submit_request`) -- written together with the call's outcome, Unix nanoseconds |
 | `cpu_resource`              | `local_controller.py` |
 | `gpu_resource`              | `local_controller.py` |

@@ -30,6 +30,11 @@ from canyonos_core.schema import CONFIG_PATH
 GRAPH_VERSION = 1
 # Calls that load modules by name: what they reach only running the code can tell.
 _DYNAMIC_IMPORTS = {"__import__", "import_module"}
+# Calls with which agent code asks the person who sent the request and waits for the
+# answer (controller/utils/human_input.py): `input()` is the builtin's own name.
+_ASKING_CALLS = {"interrupt", "ask_human"}
+# `try` statements: `try ... except*` is its own node from Python 3.11.
+_TRY_STATEMENTS = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
 
 def _parse(path):
@@ -102,6 +107,7 @@ class _Reader:
         self.references = {}
         self.calls = []
         self.notes = []
+        self.asks = []
 
     def read(self):
         """Every file reachable from the entrypoint, each once."""
@@ -116,7 +122,51 @@ class _Reader:
                 self._note(path, 1, "could not be parsed: its calls are left out")
                 continue
             queue.extend(self._read_file(path, tree))
+            self._read_asks(path, tree)
         return self
+
+    def _read_asks(self, path, tree):
+        """Records where this file asks a person: `input()` (unless the file defines its
+        own), LangGraph's `interrupt()`, `ask_human()`, and a tool that needs approval
+        (`needs_approval=` anything but False). Reading can't tell whether it runs."""
+        defined = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            via = None
+            if name in _ASKING_CALLS:
+                via = name
+            elif (
+                name == "input"
+                and isinstance(func, ast.Name)
+                and "input" not in defined
+            ):
+                via = "input"
+            elif any(
+                keyword.arg == "needs_approval"
+                and not (
+                    isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is False
+                )
+                for keyword in node.keywords
+            ):
+                via = "approval"
+            if via:
+                self.asks.append(
+                    {"via": via, "path": self._relative(path), "line": node.lineno}
+                )
 
     def _note(self, path, line, text):
         self.notes.append({"path": self._relative(path), "line": line, "note": text})
@@ -296,6 +346,7 @@ class _Reader:
         # The calls whose results each name (or `self.<name>`) holds, the call
         # each agent call node is, and the calls waited on so far.
         results, call_ids, waited = {}, {}, set()
+        conditional = _conditional_nodes(function)
 
         def results_in(expr):
             """The calls whose results `expr` holds or is made from. An agent
@@ -381,6 +432,7 @@ class _Reader:
                         "line": node.lineno,
                         "waits_on": sorted(takes),
                         "after": sorted(waited - takes),
+                        "conditional": id(node) in conditional,
                     }
                 )
                 call_ids[id(node)] = call_id
@@ -418,6 +470,39 @@ def _object_key(target):
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
         return f"{target.value.id}.{target.attr}"
     return None
+
+
+def _conditional_nodes(function):
+    """The ids of the nodes in `function`'s own body that run only on some paths: the
+    branches of an `if`, a conditional expression or a `match`, a loop's body and
+    `else`, an `except` handler or a `try`'s `else`, the operands of `and`/`or` after
+    the first, and a comprehension's elements. Functions defined inside it are read on
+    their own."""
+    found = set()
+
+    def mark(nodes):
+        for node in nodes:
+            for n in _post_order(node):
+                found.add(id(n))
+
+    for node in _in_order(function):
+        if isinstance(node, ast.If):
+            mark(node.body + node.orelse)
+        elif isinstance(node, ast.IfExp):
+            mark([node.body, node.orelse])
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            mark(node.body + node.orelse)
+        elif isinstance(node, _TRY_STATEMENTS):
+            mark(node.orelse + node.handlers)
+        elif isinstance(node, ast.BoolOp):
+            mark(node.values[1:])
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            mark([node.elt])
+        elif isinstance(node, ast.DictComp):
+            mark([node.key, node.value])
+        elif isinstance(node, ast.Match):
+            mark(node.cases)
+    return found
 
 
 def _in_order(function):
@@ -462,11 +547,12 @@ def build_graph(root, workflow):
     served = {route["agent"] for route in routes}
     stubs = {agent.path: agent for agent in agents if agent.path}
 
-    edges, calls, notes = [], [], []
+    edges, calls, notes, asks = [], [], [], {}
     for agent in agents:
         if agent.path is None:
             continue
         reader = _Reader(root, agent, stubs).read()
+        asks[agent.name] = sorted(reader.asks, key=lambda a: (a["path"], a["line"]))
         calls += reader.calls
         notes += [{"agent": agent.name, **note} for note in reader.notes]
         for target in reader.references.values():
@@ -491,6 +577,7 @@ def build_graph(root, workflow):
                 "endpoint": agent.name in served,
                 # An agent without code of its own (a database) has nothing to read.
                 "read": agent.path is not None,
+                "asks": asks.get(agent.name, []),
             }
             for agent in agents
         ],

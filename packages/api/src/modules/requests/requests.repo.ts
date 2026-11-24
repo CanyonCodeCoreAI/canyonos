@@ -28,6 +28,7 @@ import {
   spanTotalTokens,
   workflowRequestSpans,
 } from '../metrics/metrics.sql';
+import { FailureCodeSchema } from './requests.types';
 import type {
   RequestList,
   RequestMetricRange,
@@ -295,8 +296,8 @@ export const requests_repo = {
 
     const row = (
       rows as unknown as [
-        | (Omit<RequestTrace, 'input' | 'output'> & {
-            blocks: RequestTraceBlock[];
+        | (Omit<RequestTrace, 'input' | 'output' | 'blocks'> & {
+            blocks: (Omit<RequestTraceBlock, 'error_name'> & { error_name: string | null })[];
             input: string | null;
             output: string | null;
           })
@@ -305,6 +306,15 @@ export const requests_repo = {
     )[0];
     if (!row) return null;
 
-    return { ...row, workflow_id, input: payload(row.input), output: payload(row.output) };
+    return {
+      ...row,
+      workflow_id,
+      input: payload(row.input),
+      output: payload(row.output),
+      blocks: row.blocks.map((block) => ({
+        ...block,
+        error_name: FailureCodeSchema.safeParse(block.error_name).data ?? null,
+      })),
+    };
   },
 };

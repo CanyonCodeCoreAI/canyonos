@@ -973,7 +973,7 @@ describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requ
     expect(res.data?.blocks[0]?.failed).toBe(true);
   });
 
-  test('a refused step carries its error name and message; a successful one carries null', async () => {
+  test('a refused step carries its error name and message; a successful one, and one whose exception type is not a CanyonOS code, carry null', async () => {
     const token = TEST_API_KEY;
     const workflow_id = await create_workflow();
     const message = 'MergeAgent requires TestRunnerAgent, which has no healthy replica right now.';
@@ -1001,6 +1001,22 @@ describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requ
       start_time_unix_nano: plus(start, 100),
       end_time_unix_nano: plus(start, 200),
     });
+    await write_workflow_span(workflow_id, {
+      span_id: 'refused-3',
+      trace_id: 'refused',
+      name: 'Writer.write',
+      start_time_unix_nano: plus(start, 300),
+      end_time_unix_nano: plus(start, 400),
+      failed: true,
+      status_message: 'Writer.write failed: ValueError: no draft',
+      events: [
+        {
+          time_unix_nano: String(plus(start, 400)),
+          name: 'exception',
+          attributes: { 'exception.message': 'no draft', 'exception.type': 'ValueError' },
+        },
+      ],
+    });
 
     const res = await group_workflow(workflow_id).requests['refused']!.get({
       $query: range(MONTH_MINUTES),
@@ -1017,6 +1033,11 @@ describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/requ
       failed: false,
       error_name: null,
       error_message: null,
+    });
+    expect(res.data!.blocks[2]).toMatchObject({
+      failed: true,
+      error_name: null,
+      error_message: 'Writer.write failed: ValueError: no draft',
     });
   });
 

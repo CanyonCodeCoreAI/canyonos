@@ -287,7 +287,9 @@ sequenceDiagram
    forwarded with `Execute`, carrying `origin`, `route_to` and the baggage (context
    and affinities); the target is added to each `Future` argument's consumers.
 5. The executing replica writes its record of the call to its own Redis, waits for any
-   `Future` arguments and reads each back as its declared type (`convert_result`), runs
+   `Future` arguments and reads each back as its declared type (`convert_result`), asks
+   for a review when the agent's governance rules have a
+   [review gate](../guides/RUNTIME_CONTRACT.md#review-gates), runs
    the method, writes `result` or the failure, and sends
    `WriteResult` with the full hash back to the origin, which writes it and fans it out
    to the call's consumers (`_fan_out_to_consumers`).
@@ -313,8 +315,10 @@ Forwarding failures:
   After that the call fails with `SendFailed`.
 - A call that a replica took fails with `ReplicaRemovedError` when that replica leaves
   `routing_table:replicas` without draining.
-- The `error_name` values are in `controller/local_controller.py` and
-  `controller/local_controller_frontend.py`.
+- The `error_name` values are constants in `controller/local_controller.py`,
+  `controller/future.py`, `controller/governance.py` and `controller/utils/human_input.py`.
+  The dashboard API's `FAILURE_CODES` (`modules/requests/requests.types.ts`) lists them
+  too, and reports any other value as `null`.
 
 ### Futures
 
@@ -355,7 +359,7 @@ The keys another component or a contributor needs. The Reconciler's are in
 | `routing_table:addresses`, `:stateful`, `:replicas`, `:up`        | where each agent's replicas are                                 | kept current by the Reconciler or operator         |
 | `controller:<host>:<port>:status`, `:metrics`, `:draining`        | replica status, heartbeat, drain flag                           | no expiry on status; heartbeat every `CANYONOS_POLL_INTERVAL` (5 s) |
 | `future:<future_id>`, `:consumers`                                | one call's record, and the replicas waiting on it               | expires `max(30, 3 × poll interval)` s after cleanup |
-| `request:<request_id>:futures`, `:context`, `:future`, `:waiting` | a request's futures, context, root future and open questions    | same expiry as its futures                         |
+| `request:<request_id>:futures`, `:context`, `:future`, `:waiting` | a request's futures, context, root future and open questions; each `:waiting` entry is `{"future_id", "question", "asked_at", "expires_at"}`, times in epoch ms ([ENDPOINT](ENDPOINT.md#answering-a-question)) | same expiry as its futures                         |
 | `request:<request_id>:result`                                     | the root future's outcome, read by the endpoint                 | 1 day                                              |
 | `request:completed`                                               | requests whose root call finished                               | removed once no machine holds a future of the request |
 | `reconciler:wake`, `:replace`, `:stopping`, `:images_ready`       | signals from the Global Controller to the Reconciler            | `:stopping` expires after 60 s; the rest cleared at startup |
@@ -393,7 +397,7 @@ All paths are under `packages/core/canyonos_core/`.
 | `cli.py`                                  | `deploy`: the build, then `GlobalController`; the commands the API runs  |
 | `deploy_runner.py`, `deploy_progress.py`  | `run-deploy`, the container's main process, and its progress file        |
 | `workspace_jobs.py`, `controller_status.py` | The commands the CanyonOS API runs in a job container or by `docker exec` |
-| `graph.py`                                | Which agents each agent of an upload can call, read from its code without running it; `put-workflow` keeps it for `GET .../workflows/<workflow_id>/graph` |
+| `graph.py`                                | Which agents each agent of an upload can call, and where its code asks a person (`asks`), read from its code without running it; `put-workflow` keeps it for `GET .../workflows/<workflow_id>/graph` |
 | `job_worker.py`, `kubernetes/commands.py` | On Kubernetes, the CanyonOS API's `core` container: its job queue, and the Kubernetes-only commands it runs |
 | `controller/global_controller.py`         | `GlobalController`: config publishing, poll loop, cleanup, teardown      |
 | `controller/orchestrator.py`              | `CanyonOrchestrator`, and `orchestrator_for`                             |

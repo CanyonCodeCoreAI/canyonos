@@ -14,9 +14,33 @@ export const SpendRuleSchema = z.object({
   action: CostActionSchema,
 });
 
+// Duplicated from canyonos_core.controller.governance, whose Local Controllers run the gates: how
+// long a reviewer has to answer before a gated call fails with `review.timed_out`, and the longest
+// reviewer group name.
+export const REVIEW_TIMEOUT_DEFAULT_SECONDS = 3600;
+export const REVIEW_TIMEOUT_MIN_SECONDS = 60;
+export const REVIEW_TIMEOUT_MAX_SECONDS = 3600;
+export const REVIEWERS_MAX_LENGTH = 100;
+
+/**
+ * A review gate: during a request, every call to the agent waits for a person in the reviewer
+ * group `reviewers` to approve it, answered at the endpoint like any question to the person.
+ */
+export const ReviewRuleSchema = z.object({
+  reviewers: z.string().min(1).max(REVIEWERS_MAX_LENGTH),
+  timeout_seconds: z
+    .number()
+    .int()
+    .min(REVIEW_TIMEOUT_MIN_SECONDS)
+    .max(REVIEW_TIMEOUT_MAX_SECONDS)
+    .optional(),
+});
+
 /**
  * One agent's rules. `requires` lists, by agent_id, the agents that must have a replica up;
  * `spend.since` is when the counter starts, stamped by whoever saves the rules without one.
+ * `review` puts a person's approval in front of each of its calls: null removes it, and a body
+ * without it keeps the stored one, so a client that doesn't know review gates never drops one.
  */
 export const AgentRulesSchema = z.object({
   requires: z.array(z.string().min(1)),
@@ -26,6 +50,12 @@ export const AgentRulesSchema = z.object({
       rules: z.array(SpendRuleSchema),
     })
     .nullable(),
+  review: ReviewRuleSchema.nullable().optional(),
+});
+
+/** An agent's rules as saved: its review gate, if any, with the timeout it runs with. */
+export const SavedAgentRulesSchema = AgentRulesSchema.extend({
+  review: ReviewRuleSchema.required().nullable(),
 });
 
 /** `stopped` when its desired replicas are 0, `unknown` before the controller's first sample. */
@@ -58,7 +88,7 @@ export const GovernanceAgentSchema = z.object({
    * the workflow has no llms.yaml, so any model may be named.
    */
   models: z.array(z.string()).nullable(),
-  rules: AgentRulesSchema,
+  rules: SavedAgentRulesSchema,
   /** Null while the agent has no spend rules. */
   spend: AgentSpendSchema.nullable(),
   /** A scaling policy brings a stopped agent back to its min_replicas. */
@@ -77,7 +107,9 @@ export const StoppedBodySchema = z.object({ stopped: z.boolean() });
 
 export type CostAction = z.infer<typeof CostActionSchema>;
 export type SpendRule = z.infer<typeof SpendRuleSchema>;
+export type ReviewRule = z.infer<typeof ReviewRuleSchema>;
 export type AgentRules = z.infer<typeof AgentRulesSchema>;
+export type SavedAgentRules = z.infer<typeof SavedAgentRulesSchema>;
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 export type AgentSpend = z.infer<typeof AgentSpendSchema>;
 export type GovernanceAgent = z.infer<typeof GovernanceAgentSchema>;

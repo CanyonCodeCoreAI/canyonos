@@ -39,7 +39,7 @@ function agent(name: string, fields: Partial<GovernanceAgent> = {}): GovernanceA
     status: 'up',
     unmet_requires: [],
     models: ['gpt-5.5', 'gpt-5.5-mini'],
-    rules: { requires: [], spend: null },
+    rules: { requires: [], spend: null, review: null },
     spend: null,
     scaling_policy_present: false,
     ...fields,
@@ -64,6 +64,7 @@ const GOVERNANCE: GovernanceResponse = {
             { above_usd: 10, action: { kind: 'deny' } },
           ],
         },
+        review: null,
       },
       spend: {
         since: SINCE,
@@ -651,7 +652,7 @@ const STOPPED_AND_WAITING: GovernanceResponse = {
     }),
     agent('MergeAgent', {
       unmet_requires: ['id-TestRunnerAgent'],
-      rules: { requires: ['id-TestRunnerAgent'], spend: null },
+      rules: { requires: ['id-TestRunnerAgent'], spend: null, review: null },
     }),
     agent('ReviewAgent', { status: 'unknown', replicas_running: 0 }),
   ],

@@ -392,8 +392,21 @@ describe('the workflow groups API drives the Global Controller container', () =>
         version: 1,
         workflow: 'helloworld',
         routes: [{ agent: 'Workflow', method: 'main' }],
+        // Neither agent's code asks a person.
+        agents: [
+          expect.objectContaining({ name: 'HelloAgent', asks: [] }),
+          expect.objectContaining({ name: 'Workflow', asks: [] }),
+        ],
         edges: [{ source: 'Workflow', target: 'HelloAgent', methods: ['hello'] }],
-        calls: [{ source: 'Workflow', target: 'HelloAgent', method: 'hello', declared: true }],
+        calls: [
+          {
+            source: 'Workflow',
+            target: 'HelloAgent',
+            method: 'hello',
+            declared: true,
+            conditional: false,
+          },
+        ],
         notes: [],
       });
 
@@ -770,7 +783,12 @@ describe("put-workflow reads each upload's agent graph from its code", () => {
   const EXAMPLES = new URL('../../../../examples/', import.meta.url).pathname;
 
   type Graph = {
-    agents: { name: string; endpoint: boolean; read: boolean }[];
+    agents: {
+      name: string;
+      endpoint: boolean;
+      read: boolean;
+      asks: { via: string; path: string; line: number }[];
+    }[];
     edges: { source: string; target: string; methods: string[] }[];
     calls: {
       id: string;
@@ -779,8 +797,10 @@ describe("put-workflow reads each upload's agent graph from its code", () => {
       method: string;
       declared: boolean;
       path: string;
+      line: number;
       waits_on: string[];
       after: string[];
+      conditional: boolean;
     }[];
     notes: { agent: string; path: string }[];
     routes: { agent: string; method: string | null }[];
@@ -998,6 +1018,48 @@ describe("put-workflow reads each upload's agent graph from its code", () => {
     expect(calls.Write!.waits_on).toEqual([calls.Decide!.id]);
     expect(calls.Publish!.waits_on).toEqual([]);
     expect(calls.Publish!.after).toEqual([calls.Decide!.id, calls.Write!.id].sort());
+  }, 60_000);
+
+  test('it reads where an agent asks a person, and which calls a run can skip', async () => {
+    const graph = await graph_of('ask', {
+      'config/workflow_config.yaml': [
+        'agents:',
+        '  - name: Helper',
+        '    entrypoint: agents/helper.py',
+        '    functions:',
+        '      - {name: run, arguments: [{name: q, type: str}], returns: {type: str}}',
+        '  - name: Workflow',
+        '    entrypoint: agents/workflow.py',
+        '    functions:',
+        '      - {name: main, arguments: [{name: query, type: str}], returns: {type: str}}',
+        'endpoint:',
+        '  routes:',
+        '    - {agent: Workflow, method: main}',
+        '',
+      ].join('\n'),
+      'agents/helper.py': 'class Helper(object):\n    def run(self, q):\n        return q\n',
+      'agents/workflow.py': [
+        'from agents.helper import Helper',
+        '',
+        '',
+        'class Workflow(object):',
+        '    def main(self, query: str):',
+        '        first = Helper().run(q=query)',
+        '        if query == "again":',
+        '            return Helper().run(q=input("What next?"))',
+        '        return first',
+        '',
+      ].join('\n'),
+    });
+
+    expect(graph.agents.map(({ name, asks }) => [name, asks])).toEqual([
+      ['Helper', []],
+      ['Workflow', [{ via: 'input', path: 'agents/workflow.py', line: 8 }]],
+    ]);
+    expect(graph.calls.map(({ line, conditional }) => [line, conditional])).toEqual([
+      [6, false],
+      [8, true],
+    ]);
   }, 60_000);
 
   test('an upload whose graph cannot be read is kept, without a graph', async () => {

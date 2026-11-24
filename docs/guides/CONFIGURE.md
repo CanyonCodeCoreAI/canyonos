@@ -20,7 +20,7 @@ path.
 | `prompts.yaml`                                                  | The system prompt of each agent function, with versions                                              | [Prompt management](PROMPTS.md)                          |
 | `scaling.yaml`                                                  | When to add and remove replicas                                                                      | [Autoscaling](SCALING.md)                                |
 | `policy.yaml`                                                   | Which agents a request may reach                                                                     | [Policy](RUNTIME_CONTRACT.md#policy)                     |
-| `governance.yaml`                                               | Per agent: refuse calls while an agent it needs is down, and switch model or refuse past a spend     | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
+| `governance.yaml`                                               | Per agent: refuse calls while an agent it needs is down, switch model or refuse past a spend, and hold calls for a reviewer | [Governance rules](RUNTIME_CONTRACT.md#governance-rules) |
 | `.env`, in the workflow folder (beside `.canyon` after convert)  | API keys and other secrets                                                                           | [What `.env` is for](BUILD_ARTIFACT.md#what-env-is-for)  |
 | `workflow_group.yaml`, in the workflow group's record, `~/.canyonos/workflows/<workflow group>/` | Where every workflow's agents run, the ports, Redis and telemetry, for the whole workflow group           | [Top-level keys](WORKFLOW_CONFIG.md#top-level-keys)      |
 

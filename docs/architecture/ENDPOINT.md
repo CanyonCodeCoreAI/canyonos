@@ -2,11 +2,12 @@
 
 The endpoint is the HTTP door into a workflow group. It queues a call to one of its routes, each an agent method, and answers with a request ID at once, because a workflow can finish long after the HTTP response.
 
-No agent code runs in it. It serves three routes:
+No agent code runs in it. It serves four routes:
 
 1. `POST /<workflow_id>`, or `POST /<name>/<agent>/<method>`, queues a call to the route named in a workflow's `endpoint: routes:`.
-2. `GET /status/<request_id>` reports the result, or the question the workflow is waiting on.
-3. `POST /answer/<request_id>` answers that question.
+2. `GET /status/<request_id>` reports the result, or the questions the workflow is waiting on.
+3. `POST /answer/<request_id>` answers the oldest of those questions, or the one `?question=<id>` names.
+4. `GET /questions` lists every question waiting in the workflow group, across requests.
 
 Every route needs the machine's API key, when one is set; see [API key](#api-key).
 
@@ -46,7 +47,7 @@ sequenceDiagram
 | `packages/core/canyonos_core/auth.py`                          | the API key's hash, reading it from the environment, and the bearer check            |
 | `packages/core/canyonos_core/controller/controller_context.py` | adds the endpoint to the agent specs                                           |
 | `packages/core/canyonos_core/reconciler/replicas.py`           | the image, command and env the Reconciler launches it with                     |
-| `packages/core/canyonos_core/controller/utils/human_input.py`  | `ask_human`, the agent side of [a question](#answering-a-question)            |
+| `packages/core/canyonos_core/controller/utils/human_input.py`  | `ask_human` and `review`, the agent side of [a question](#answering-a-question) |
 | `packages/operator/internal/builders/endpoint.go`              | the endpoint as a StatefulSet on Kubernetes                                    |
 
 ## Where it runs
@@ -91,11 +92,16 @@ A refusal's body is `{"error": <message>, "error_name": <code>}`; a `401` also s
 
 ## Answering a question
 
-A call to the agent named `endpoint` is a question for the caller. `input()`, a LangGraph `interrupt()` and an Agents SDK approval all become one (`ask_human`).
+A call to the agent named `endpoint` is a question for the caller. `input()`, a LangGraph `interrupt()`, an Agents SDK approval and a [review gate](../guides/RUNTIME_CONTRACT.md#review-gates) all become one (`ask_human`, or `review` for a gate).
 
-The endpoint's Local Controller does not run it. It queues the question on `request:<request_id>:waiting`, and `GET /status` answers `input_required` with it.
+The endpoint's Local Controller does not run it. It pushes the question on `request:<request_id>:waiting`, as `{"future_id", "question", "asked_at", "expires_at", "agent"}`: the asking call's future ID, which is the question's ID, the question and its `input_schema`, when it was asked and when the asker stops waiting, in epoch milliseconds, and the agent that asked (read from the asking call's parent future; left out when that record isn't in this Redis).
 
-`POST /answer/<request_id>` pops the oldest question and returns the body to the asking replica as that call's result. See [Asking the person](../guides/RUNTIME_CONTRACT.md#asking-the-person) for the caller's side.
+- `GET /status/<request_id>` answers `input_required` while a question waits. `question` holds the oldest one's `{"question", "input_schema"}`, and `questions` every one, oldest first, each as `{"id", "question", "input_schema", "asked_at", "expires_at", "agent"}`.
+- `POST /answer/<request_id>` pops the oldest question and returns the body to the asking replica as that call's result. With `?question=<id>` it answers that one, removed with `LREM` so two answers at once can't both take it. Either answers `409` with `{"error"}` when no such question waits.
+- `GET /questions` answers `{"questions": [...]}`: every waiting question in the workflow group's Redis, oldest first, each as in `questions` plus its `request_id`. It reads every `request:*:waiting` list it finds with `SCAN` and lists the oldest 1,000 questions.
+- A question past its `expires_at` is no longer waited for: none of the three lists or answers it. Its entry stays until its request finishes.
+
+See [Asking the person](../guides/RUNTIME_CONTRACT.md#asking-the-person) for the caller's side.
 
 ## Where callers find it
 

@@ -149,12 +149,19 @@ class WorkflowGraphRoute(TypedDict, closed=True):
     method: str | None
 
 
+class WorkflowGraphAsk(TypedDict, closed=True):
+    via: Literal["input", "interrupt", "ask_human", "approval"]
+    path: str
+    line: int
+
+
 class WorkflowGraphAgent(TypedDict, closed=True):
     name: str
     entrypoint: str | None
     functions: list[str]
     endpoint: bool
     read: bool
+    asks: NotRequired[list[WorkflowGraphAsk]]
 
 
 class WorkflowGraphEdge(TypedDict, closed=True):
@@ -173,6 +180,7 @@ class WorkflowGraphCall(TypedDict, closed=True):
     line: int
     waits_on: list[str]
     after: list[str]
+    conditional: NotRequired[bool]
 
 
 class WorkflowGraphNote(TypedDict, closed=True):

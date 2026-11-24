@@ -13,18 +13,52 @@ import importlib
 import inspect
 import json
 import logging
+import math
 import sys
+import time
 
 try:
     import canyonos_core.controller.canyonos_context as canyonos_context
-    from canyonos_core.controller.future import ENDPOINT_AGENT_NAME, Future
+    from canyonos_core.controller.future import (
+        ENDPOINT_AGENT_NAME,
+        AgentCallError,
+        Future,
+    )
 except ImportError:
     import canyonos_context
-    from future import ENDPOINT_AGENT_NAME, Future
+    from future import ENDPOINT_AGENT_NAME, AgentCallError, Future
 
 logger = logging.getLogger(__name__)
 
 QUESTION_TIMEOUT_SECONDS = 3600
+# The answer a review question takes, as `_approval` reads it.
+APPROVAL_SCHEMA = {"approve": "bool", "message": "str | None"}
+# How much of one argument's JSON text a review question shows; the rest is cut.
+REVIEW_ARGUMENT_MAX_CHARACTERS = 10_000
+# The codes a gated call fails with. The dashboard API's FAILURE_CODES lists them too.
+REVIEW_REJECTED = "review.rejected"
+REVIEW_TIMED_OUT = "review.timed_out"
+
+
+def _question(question, input_schema, timeout):
+    """Put `question` to the person who made this request, who has `timeout` seconds
+    to answer, and return the call that waits for their reply."""
+    return Future(
+        None,
+        ENDPOINT_AGENT_NAME,
+        "ask_human",
+        {
+            "question": {"question": question, "input_schema": input_schema},
+            # The endpoint stops listing the question once nobody waits for it.
+            "timeout_seconds": math.ceil(timeout),
+        },
+    )
+
+
+def _ask(question, input_schema, timeout):
+    """Put `question` to the person who made this request and return their JSON reply,
+    unchecked; raises TimeoutError when none comes within `timeout` seconds."""
+    return json.loads(_question(question, input_schema, timeout).value(timeout=timeout))
 
 
 def ask_human(question, input_schema):
@@ -37,15 +71,9 @@ def ask_human(question, input_schema):
             "ask_human() needs a request: it asks the person who sent it"
         )
     try:
-        reply = Future(
-            None,
-            ENDPOINT_AGENT_NAME,
-            "ask_human",
-            {"question": {"question": question, "input_schema": input_schema}},
-        ).value(timeout=QUESTION_TIMEOUT_SECONDS)
+        return _ask(question, input_schema, QUESTION_TIMEOUT_SECONDS)
     except TimeoutError:
         raise TimeoutError("The person did not answer within an hour") from None
-    return json.loads(reply)
 
 
 def _answer(question, input_schema, read):
@@ -145,6 +173,79 @@ def _approval(reply):
     if not isinstance(reply["approve"], bool):
         raise ValueError("approve must be true or false")
     return reply
+
+
+class ReviewRefused(Exception):
+    """A reviewer rejected a gated call, none answered in time, or the question failed
+    first, such as when its request finished; the call fails with `error_name` and this
+    text, without running."""
+
+    def __init__(self, error_name, message):
+        super().__init__(message)
+        self.error_name = error_name
+        self.message = message
+
+
+def _shown(value):
+    """`value` as a review question shows it: as JSON, with what JSON can't hold as its
+    `repr`, and cut to REVIEW_ARGUMENT_MAX_CHARACTERS of text."""
+    try:
+        text = json.dumps(value, default=repr)
+    except Exception:
+        # A key JSON can't hold, or a value that contains itself.
+        text = json.dumps(repr(value))
+    if len(text) <= REVIEW_ARGUMENT_MAX_CHARACTERS:
+        return json.loads(text)
+    return (
+        f"{text[:REVIEW_ARGUMENT_MAX_CHARACTERS]}... "
+        f"({len(text) - REVIEW_ARGUMENT_MAX_CHARACTERS} more characters)"
+    )
+
+
+def review(agent, method, arguments, reviewers, timeout_seconds):
+    """Ask the person who made this request to approve the call to `agent.method` with
+    `arguments`, for the reviewer group `reviewers`, before it runs; the Local
+    Controller calls it for an agent whose governance rules have a `review`. Returns
+    once they approve; raises ReviewRefused when they reject it, no valid answer comes
+    within `timeout_seconds`, or the question fails first, with the question's own
+    `error_name`. An answer without a true or false `approve` is asked again while
+    time is left."""
+    question = {
+        "kind": "review",
+        "agent": agent,
+        "method": method,
+        "arguments": {name: _shown(value) for name, value in arguments.items()},
+        "reviewers": reviewers,
+    }
+    deadline = time.monotonic() + timeout_seconds
+    while (remaining := deadline - time.monotonic()) > 0:
+        asked = _question(question, APPROVAL_SCHEMA, remaining)
+        try:
+            reply = json.loads(asked.value(timeout=remaining))
+            _approval(reply)
+        except TimeoutError:
+            break
+        except AgentCallError as e:
+            raise ReviewRefused(
+                asked.redis.hget(f"future:{asked.id}", "error_name"), str(e)
+            ) from None
+        except (KeyError, TypeError, ValueError) as e:
+            logger.warning(
+                "The review answer does not fit %s, asking again: %s",
+                APPROVAL_SCHEMA,
+                e,
+            )
+            continue
+        if reply["approve"]:
+            return
+        raise ReviewRefused(
+            REVIEW_REJECTED,
+            f"Rejected by a reviewer: {reply.get('message') or 'no reason given'}",
+        )
+    raise ReviewRefused(
+        REVIEW_TIMED_OUT,
+        f"No reviewer in {reviewers} answered within {timeout_seconds} seconds",
+    )
 
 
 def _decide(result):

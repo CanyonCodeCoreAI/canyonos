@@ -58,6 +58,9 @@ MISSING_KEY = (
     "Bearer <your api key>. It is the key passed to `canyonos deploy --api-key`"
 )
 INVALID_KEY = "This is not the API key this endpoint was deployed with"
+# How many questions `GET /questions` lists at most, the oldest first, so its answer
+# stays bounded however many requests wait.
+MAX_LISTED_QUESTIONS = 1000
 
 
 def _api_key_hash(redis_client) -> str | None:
@@ -78,6 +81,80 @@ def _refusal(code: str, message: str, status: int):
     if status == 401:
         response.headers["WWW-Authenticate"] = "Bearer"
     return response
+
+
+def _waiting_key(request_id):
+    return f"request:{request_id}:waiting"
+
+
+def _now_ms():
+    return time.time_ns() // 1_000_000
+
+
+def _live(entry, now_ms):
+    """Whether a waiting question still has someone waiting for its answer: one past
+    its `expires_at` was given up on by the agent that asked it."""
+    return entry.get("expires_at") is None or entry["expires_at"] > now_ms
+
+
+def _waiting_questions(raw_entries):
+    """The questions in a request's waiting list, oldest first, leaving out those
+    nobody waits for any more."""
+    now_ms = _now_ms()
+    entries = [json.loads(raw) for raw in reversed(raw_entries)]
+    return [entry for entry in entries if _live(entry, now_ms)]
+
+
+def _question_view(entry):
+    """One waiting question as `/status` and `/questions` list it: its id (the
+    asking future's), what it asks, the answer it takes, the agent that asked when
+    known, and when it was asked and stops being waited for, in epoch milliseconds."""
+    view = {
+        "id": entry["future_id"],
+        "question": entry["question"].get("question"),
+        "input_schema": entry["question"].get("input_schema"),
+        "asked_at": entry.get("asked_at"),
+    }
+    if entry.get("agent"):
+        view["agent"] = entry["agent"]
+    if entry.get("expires_at") is not None:
+        view["expires_at"] = entry["expires_at"]
+    return view
+
+
+def _take_question(redis_client, request_id, question_id):
+    """Remove one of the request's waiting questions and return its future id: the
+    one `question_id` names, else the oldest still waited for. None when there is
+    no such question waiting."""
+    key = _waiting_key(request_id)
+    now_ms = _now_ms()
+    if question_id is None:
+        while (raw := redis_client.rpop(key)) is not None:
+            entry = json.loads(raw)
+            if _live(entry, now_ms):
+                return entry["future_id"]
+        return None
+    for raw in redis_client.lrange(key):
+        entry = json.loads(raw)
+        if entry["future_id"] != question_id or not _live(entry, now_ms):
+            continue
+        # LREM removes it once, so of two answers at once only one gets it.
+        return question_id if redis_client.lrem(key, 1, raw) else None
+    return None
+
+
+def _all_waiting_questions(redis_client):
+    """Every question waiting in this workflow group's Redis, with its request id,
+    oldest first, up to MAX_LISTED_QUESTIONS of them."""
+    # SCAN returns a key twice when Redis resizes its table meanwhile.
+    keys = sorted(set(redis_client.scan_keys(_waiting_key("*"))))
+    questions = [
+        {"request_id": key.split(":")[1], **_question_view(entry)}
+        for key, raw_entries in zip(keys, redis_client.lists(keys))
+        for entry in _waiting_questions(raw_entries)
+    ]
+    questions.sort(key=lambda question: question["asked_at"] or 0)
+    return questions[:MAX_LISTED_QUESTIONS]
 
 
 def _record_from_dashboard(request_id):
@@ -109,7 +186,8 @@ def create_app(routes, redis_client):
     """Build the Flask app that queues calls to each route's agent method at
     `POST /<workflow_id>` and `POST /<workflow>/<agent>/<method>`, refusing a body that lacks one of the method's
     declared `arguments`, and reports their results at `GET /status/<request_id>`;
-    `POST /answer/<request_id>` answers that request's oldest waiting question. Every
+    `POST /answer/<request_id>` answers that request's oldest waiting question, or the
+    one `?question=<id>` names, and `GET /questions` lists every waiting question. Every
     route first needs the machine's API key, when the deploy set one."""
     app = Flask("canyonos-endpoint")
     served = {
@@ -174,12 +252,16 @@ def create_app(routes, redis_client):
             kwargs = {}
 
         if request_id:
-            waiting = redis_client.rpop(f"request:{request_id}:waiting")
-            if waiting is None:
-                return jsonify(
-                    {"error": f"Request {request_id} is not waiting for input"}
-                ), 409
-            future_id = json.loads(waiting)["future_id"]
+            question_id = request.args.get("question") or None
+            future_id = _take_question(redis_client, request_id, question_id)
+            if future_id is None:
+                error = (
+                    f"Request {request_id} is not waiting for input"
+                    if question_id is None
+                    else f"Question {question_id} of request {request_id} is not "
+                    "waiting for an answer"
+                )
+                return jsonify({"error": error}), 409
             # The endpoint's controller passes it on to the agent that asked.
             Future._get_stub().WriteResult(
                 local_controller_pb2.JsonResponse(
@@ -264,11 +346,21 @@ def create_app(routes, redis_client):
         elif record.get("result"):
             response["status"] = "done"
             response["result"] = json.loads(record["result"])
-        elif oldest := redis_client.lrange(f"request:{request_id}:waiting", -1):
+        elif waiting := _waiting_questions(
+            redis_client.lrange(_waiting_key(request_id))
+        ):
             response["status"] = "input_required"
-            response["question"] = json.loads(oldest[0])["question"]
+            response["question"] = waiting[0]["question"]
+            response["questions"] = [_question_view(entry) for entry in waiting]
 
         return jsonify(response), 200
+
+    @app.route("/questions", methods=["GET"])
+    def list_questions():
+        """List every question waiting for a person's answer in this workflow group,
+        oldest first, each with its request id and its own id for
+        `POST /answer/<request_id>?question=<id>`."""
+        return jsonify({"questions": _all_waiting_questions(redis_client)}), 200
 
     return app
 

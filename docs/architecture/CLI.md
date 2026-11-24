@@ -48,7 +48,7 @@ The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboar
 | `PUT G/workflows/<workflow_id>` | Uploads one workflow as a gzip tar; the API keeps it only if it passes `canyonos validate`'s checks, else answers their findings |
 | `GET G` | The deploy's phase, the last apply's outcome, the [endpoint record](ENDPOINT.md#where-callers-find-it) and each agent's replicas |
 | `GET G/workflows` | The uploaded workflows, with each one's `config/test_query.txt`, for `canyonos test` |
-| `GET G/workflows/<workflow_id>/graph` | Which agents each agent of the workflow can call, read from its code when it was uploaded; the platform's workflow page draws it |
+| `GET G/workflows/<workflow_id>/graph` | Which agents each agent of the workflow can call, where each asks a person (`asks`: `input()`, `interrupt()`, `ask_human()` or a tool that needs approval), and which calls a run can skip (`conditional`), read from its code when it was uploaded; the platform's workflow page draws it |
 | `GET G/logs/controller?tail=N&follow=` | The Global Controller's log |
 | `GET G/logs/agents/<name>?tail=N` | The last log lines of an agent's (`<workflow>.<agent>`) replicas |
 | `GET G/health` | The checks `canyonos doctor` shows |

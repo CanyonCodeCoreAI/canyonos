@@ -948,11 +948,14 @@ def answer(
     request_id: str,
     body: dict,
     *,
+    question: str | None = None,
     check: bool = True,
 ) -> Call:
     """POST `body` to `/answer/<request_id>`, answering the request's oldest
-    waiting question."""
+    waiting question, or the one whose id is `question`."""
     url = f"{endpoint.url}/answer/{request_id}"
+    if question is not None:
+        url = f"{url}?question={question}"
     return http(recorder, "POST", url, json=body, headers=endpoint.headers, check=check)
 
 

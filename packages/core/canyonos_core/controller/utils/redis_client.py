@@ -188,6 +188,11 @@ class RedisClient(object):
         """Push one or more values onto the head of a list."""
         self.client.lpush(key, *values)
 
+    def lrem(self, key, count, value):
+        """Remove up to `count` copies of `value` from a list (all of them with 0);
+        returns how many it removed."""
+        return self.client.lrem(key, count, value)
+
     def rpop(self, key):
         """Pop one value off the tail of a list. Returns None if the list is empty."""
         value = self.client.rpop(key)
@@ -265,6 +270,14 @@ class RedisClient(object):
     def lrange(self, name, start=0, end=-1):
         """Get a range of list values, newest first for lists written by push_capped."""
         return [self._decode(v) for v in self.client.lrange(name, start, end)]
+
+    def lists(self, names):
+        """Every list in `names`, each read whole, in one round trip; a missing one
+        reads as empty."""
+        pipe = self.client.pipeline(transaction=False)
+        for name in names:
+            pipe.lrange(name, 0, -1)
+        return [[self._decode(v) for v in values] for values in pipe.execute()]
 
     # --- Scan operations ---
 

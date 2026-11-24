@@ -34,7 +34,7 @@ export const governanceRoutes = new Elysia({ name: 'governance.routes' })
       params: AgentParams,
       body: AgentRulesSchema,
       response: { 200: GovernanceResponseSchema },
-      detail: { ...doc, summary: "Replace one agent's requirements and spend rules" },
+      detail: { ...doc, summary: "Replace one agent's requirements, spend rules and review gate" },
     }
   )
   .put(

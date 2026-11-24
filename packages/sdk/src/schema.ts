@@ -741,7 +741,7 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace one agent's requirements and spend rules */
+    /** Replace one agent's requirements, spend rules and review gate */
     put: operations['putV1Workflow-groupsByWorkflow_group_idWorkflowsByWorkflow_idGovernanceAgentsByAgent_id'];
     post?: never;
     delete?: never;
@@ -985,12 +985,19 @@ export interface components {
       agent: string;
       method: string | null;
     };
+    WorkflowGraphAsk: {
+      /** @enum {string} */
+      via: 'input' | 'interrupt' | 'ask_human' | 'approval';
+      path: string;
+      line: number;
+    };
     WorkflowGraphAgent: {
       name: string;
       entrypoint: string | null;
       functions: string[];
       endpoint: boolean;
       read: boolean;
+      asks?: components['schemas']['WorkflowGraphAsk'][];
     };
     WorkflowGraphEdge: {
       source: string;
@@ -1007,6 +1014,7 @@ export interface components {
       line: number;
       waits_on: string[];
       after: string[];
+      conditional?: boolean;
     };
     WorkflowGraphNote: {
       agent: string;
@@ -3887,7 +3895,26 @@ export interface operations {
               total_cost: string;
               errors: number;
               failed: boolean;
-              error_name: string | null;
+              /** @enum {string|null} */
+              error_name:
+                | 'PolicyDenied'
+                | 'DependencyDown'
+                | 'SpendLimit'
+                | 'review.rejected'
+                | 'review.timed_out'
+                | 'SendFailed'
+                | 'RequestFinished'
+                | 'MalformedRequest'
+                | 'NoRunningReplica'
+                | 'InvalidArgument'
+                | 'NoAgentLoaded'
+                | 'UnknownMethod'
+                | 'ResultNotDelivered'
+                | 'ReplicaRemovedError'
+                | 'InvalidFutureArg'
+                | 'NoEndpointFound'
+                | 'ResultCallbackFailed'
+                | null;
               error_message: string | null;
             }[];
           };
@@ -7484,6 +7511,10 @@ export interface operations {
                         };
                   }[];
                 } | null;
+                review: {
+                  reviewers: string;
+                  timeout_seconds: number;
+                } | null;
               };
               spend: {
                 /** Format: date-time */
@@ -7654,6 +7685,10 @@ export interface operations {
                   };
             }[];
           } | null;
+          review?: {
+            reviewers: string;
+            timeout_seconds?: number;
+          } | null;
         };
         'application/x-www-form-urlencoded': {
           requires: string[];
@@ -7674,6 +7709,10 @@ export interface operations {
                   };
             }[];
           } | null;
+          review?: {
+            reviewers: string;
+            timeout_seconds?: number;
+          } | null;
         };
         'multipart/form-data': {
           requires: string[];
@@ -7693,6 +7732,10 @@ export interface operations {
                     kind: 'deny';
                   };
             }[];
+          } | null;
+          review?: {
+            reviewers: string;
+            timeout_seconds?: number;
           } | null;
         };
       };
@@ -7733,6 +7776,10 @@ export interface operations {
                           kind: 'deny';
                         };
                   }[];
+                } | null;
+                review: {
+                  reviewers: string;
+                  timeout_seconds: number;
                 } | null;
               };
               spend: {
@@ -7932,6 +7979,10 @@ export interface operations {
                           kind: 'deny';
                         };
                   }[];
+                } | null;
+                review: {
+                  reviewers: string;
+                  timeout_seconds: number;
                 } | null;
               };
               spend: {

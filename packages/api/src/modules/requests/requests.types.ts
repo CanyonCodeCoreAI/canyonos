@@ -33,6 +33,31 @@ export const RequestListSchema = z.object({
   items: z.array(RequestListItemSchema),
 });
 
+// The codes CanyonOS gives a call it failed itself, as `error_name`. Kept in step by hand with the
+// constants in packages/core/canyonos_core/controller: governance.py, human_input.py, future.py and
+// local_controller.py. The last three are no longer written, but older spans can hold them.
+export const FAILURE_CODES = [
+  'PolicyDenied',
+  'DependencyDown',
+  'SpendLimit',
+  'review.rejected',
+  'review.timed_out',
+  'SendFailed',
+  'RequestFinished',
+  'MalformedRequest',
+  'NoRunningReplica',
+  'InvalidArgument',
+  'NoAgentLoaded',
+  'UnknownMethod',
+  'ResultNotDelivered',
+  'ReplicaRemovedError',
+  'InvalidFutureArg',
+  'NoEndpointFound',
+  'ResultCallbackFailed',
+] as const;
+
+export const FailureCodeSchema = z.enum(FAILURE_CODES);
+
 export const RequestTraceBlockSchema = z.object({
   future_id: z.string(),
   label: z.string(),
@@ -47,7 +72,10 @@ export const RequestTraceBlockSchema = z.object({
   total_cost: z.string(),
   errors: z.number().int().nonnegative(),
   failed: z.boolean(),
-  error_name: z.string().nullable(),
+  // Null for a failure raised in the agent's own code, and for a span whose exception type is not
+  // one of CanyonOS's codes, such as one an OTLP export from elsewhere sent; its text stays in
+  // error_message.
+  error_name: FailureCodeSchema.nullable(),
   error_message: z.string().nullable(),
 });
 
@@ -135,6 +163,7 @@ export const ListRequestsQuerySchema = timeRangeQuery({
 export type RequestStatus = z.infer<typeof RequestStatusSchema>;
 export type RequestListItem = z.infer<typeof RequestListItemSchema>;
 export type RequestList = z.infer<typeof RequestListSchema>;
+export type FailureCode = z.infer<typeof FailureCodeSchema>;
 export type RequestTraceBlock = z.infer<typeof RequestTraceBlockSchema>;
 export type RequestTrace = z.infer<typeof RequestTraceSchema>;
 export type RequestSort = z.infer<typeof RequestSortSchema>;

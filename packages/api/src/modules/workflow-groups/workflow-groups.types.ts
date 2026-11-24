@@ -167,13 +167,23 @@ export const WorkflowGraphRouteSchema = z.object({
   method: z.string().nullable(),
 });
 
-// `read` is false for an agent with no code of its own, such as a database.
+// Where an agent's code asks a person and waits for the answer: `input()`, LangGraph's
+// `interrupt()`, `ask_human()`, or a tool that needs approval.
+export const WorkflowGraphAskSchema = z.object({
+  via: z.enum(['input', 'interrupt', 'ask_human', 'approval']),
+  path: z.string(),
+  line: z.number().int(),
+});
+
+// `read` is false for an agent with no code of its own, such as a database. `asks` is absent
+// from graphs read before the API looked for it.
 export const WorkflowGraphAgentSchema = z.object({
   name: z.string(),
   entrypoint: z.string().nullable(),
   functions: z.array(z.string()),
   endpoint: z.boolean(),
   read: z.boolean(),
+  asks: z.array(WorkflowGraphAskSchema).optional(),
 });
 
 // One agent can call another, with the methods it calls on it.
@@ -196,6 +206,9 @@ export const WorkflowGraphCallSchema = z.object({
   line: z.number().int(),
   waits_on: z.array(z.string()),
   after: z.array(z.string()),
+  // Under an `if`, a loop, an `except`, `and`/`or`, a conditional expression or a `match`
+  // case, so a run can skip it. Absent from graphs read before the API looked.
+  conditional: z.boolean().optional(),
 });
 
 // What reading the code can't tell, such as a module loaded by name.
@@ -294,6 +307,7 @@ export const WORKFLOW_GROUP_MODELS = {
   Workflow: WorkflowSchema,
   Workflows: WorkflowsSchema,
   WorkflowGraphRoute: WorkflowGraphRouteSchema,
+  WorkflowGraphAsk: WorkflowGraphAskSchema,
   WorkflowGraphAgent: WorkflowGraphAgentSchema,
   WorkflowGraphEdge: WorkflowGraphEdgeSchema,
   WorkflowGraphCall: WorkflowGraphCallSchema,

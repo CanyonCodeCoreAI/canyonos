@@ -73,6 +73,7 @@ import local_controller_pb2_grpc
 try:
     from canyonos_core.controller.future import (
         ENDPOINT_AGENT_NAME,
+        SEND_FAILED,
         AgentCallError,
         Future,
         convert_result,
@@ -84,6 +85,7 @@ try:
 except ImportError:
     from future import (
         ENDPOINT_AGENT_NAME,
+        SEND_FAILED,
         AgentCallError,
         Future,
         convert_result,
@@ -114,6 +116,18 @@ CANYONOS_FILES = {
     lazy_values.__file__,
     sys.modules[Future.__module__].__file__,
 }
+
+# The codes a call CanyonOS failed itself carries as its `error_name`, beside
+# SEND_FAILED and those of governance.py and human_input.py. The dashboard API's
+# FAILURE_CODES lists them too.
+REQUEST_FINISHED = "RequestFinished"
+MALFORMED_REQUEST = "MalformedRequest"
+NO_RUNNING_REPLICA = "NoRunningReplica"
+INVALID_ARGUMENT = "InvalidArgument"
+NO_AGENT_LOADED = "NoAgentLoaded"
+UNKNOWN_METHOD = "UnknownMethod"
+RESULT_NOT_DELIVERED = "ResultNotDelivered"
+REPLICA_REMOVED_ERROR = "ReplicaRemovedError"
 
 ROUTING_ADDRESSES_KEY = "routing_table:addresses"
 ROUTING_STATEFUL_KEY = "routing_table:stateful"
@@ -999,8 +1013,27 @@ class LocalController(object):
             self._mark_future_failed(
                 future_id,
                 "Request finished before the question was answered",
-                error_name="RequestFinished",
+                error_name=REQUEST_FINISHED,
             )
+
+    def _waiting_question(self, future_id, args, parent):
+        """The entry a question to the person gets in its request's waiting list, which
+        the endpoint lists and answers from: what it asks, when, until when the asker
+        waits, and the agent that asked."""
+        asked_at = time.time_ns() // 1_000_000
+        waiting = {
+            "future_id": future_id,
+            "question": args["question"],
+            "asked_at": asked_at,
+        }
+        # The agent running the call the question came from. Its record is in this Redis
+        # on Kubernetes and on one machine; elsewhere it's left out.
+        asker = parent and self.redis.hget(f"future:{parent}", "service")
+        if asker:
+            waiting["agent"] = asker
+        if args.get("timeout_seconds") is not None:
+            waiting["expires_at"] = asked_at + args["timeout_seconds"] * 1000
+        return waiting
 
     def _process_request(self, data):
         """
@@ -1039,7 +1072,7 @@ class LocalController(object):
                 future_id,
                 "Malformed request: missing service, function, or future_id",
                 origin,
-                error_name="MalformedRequest",
+                error_name=MALFORMED_REQUEST,
             )
             return
 
@@ -1059,7 +1092,7 @@ class LocalController(object):
                     f"No running replica of {agent_name} right now; all are starting, "
                     "restarting or being removed.",
                     origin,
-                    error_name="NoRunningReplica",
+                    error_name=NO_RUNNING_REPLICA,
                 )
                 return
 
@@ -1078,7 +1111,7 @@ class LocalController(object):
                         future_id,
                         f"Argument '{key}' of {agent_name}.{function} comes from a different request.",
                         origin,
-                        error_name="InvalidArgument",
+                        error_name=INVALID_ARGUMENT,
                     )
                     return
 
@@ -1103,7 +1136,7 @@ class LocalController(object):
                 self.redis.sadd(f"future:{future_id}:consumers", origin)
                 self.redis.lpush(
                     f"request:{request_id}:waiting",
-                    json.dumps({"future_id": future_id, "question": args["question"]}),
+                    json.dumps(self._waiting_question(future_id, args, parent)),
                 )
                 # A question can arrive after its request finished; checking after holding closes the race.
                 root = self.redis.hgetall(
@@ -1303,7 +1336,7 @@ class LocalController(object):
                 future_id,
                 "No agent loaded",
                 origin,
-                error_name="NoAgentLoaded",
+                error_name=NO_AGENT_LOADED,
             )
             return
 
@@ -1314,7 +1347,7 @@ class LocalController(object):
                 future_id,
                 f"Agent {agent_name} has no method '{function}'",
                 origin,
-                error_name="UnknownMethod",
+                error_name=UNKNOWN_METHOD,
             )
             return
 
@@ -1327,6 +1360,23 @@ class LocalController(object):
         try:
             # Resolve any Future IDs in the args before executing
             args = self._resolve_future_args(args, future_args)
+            # Once its arguments resolved, so the reviewer sees what the call runs with.
+            gate = governance.review_for(self._rules, agent_name)
+            if request_id and gate is not None:
+                logger.info(
+                    "Asking %s to review %s.%s (future=%s)",
+                    gate["reviewers"],
+                    agent_name,
+                    function,
+                    future_id,
+                )
+                human_input.review(
+                    agent_name,
+                    function,
+                    args,
+                    gate["reviewers"],
+                    gate["timeout_seconds"],
+                )
 
             logger.info(
                 "Executing %s.%s (future=%s) locally", agent_name, function, future_id
@@ -1416,6 +1466,14 @@ class LocalController(object):
             }
             if failure is None:
                 self.redis.hset_multiple(f"future:{future_id}", final)
+            elif isinstance(failure, human_input.ReviewRefused):
+                # The reviewer's decision, not the agent's failure: the call never ran.
+                self._mark_future_failed(
+                    future_id,
+                    failure.message,
+                    error_name=failure.error_name,
+                    final=final,
+                )
             else:
                 # A call whose arguments never arrived, or that only passed on a called agent's failure, is not this agent's failure.
                 own_failure = started and not isinstance(failure, AgentCallError)
@@ -1529,7 +1587,7 @@ class LocalController(object):
             self._mark_future_failed(
                 data.get("future_id"),
                 f"Could not send the call to {data.get('service')}.{data.get('function')}: {reason}",
-                error_name="SendFailed",
+                error_name=SEND_FAILED,
             )
             self._count_unsent(-1)
             return
@@ -1612,7 +1670,7 @@ class LocalController(object):
                     f"{snapshot.get('method')} back to its caller: {reason}"
                 )
                 self._mark_future_failed(
-                    future_id, error_message, error_name="ResultNotDelivered"
+                    future_id, error_message, error_name=RESULT_NOT_DELIVERED
                 )
             # One plain try with a small note, since the full hash may be over gRPC's size limit.
             note = json.dumps(
@@ -1653,7 +1711,7 @@ class LocalController(object):
                     future_id,
                     f"{call.get('service')}.{call.get('method')} stopped before it "
                     "finished: its replica is gone (its machine may have stopped).",
-                    error_name="ReplicaRemovedError",
+                    error_name=REPLICA_REMOVED_ERROR,
                 )
 
     def _fan_out_to_consumers(
@@ -1729,7 +1787,7 @@ class LocalController(object):
                 f"{agent_name}.{function} stopped before it finished: its replica "
                 "was removed (scaled down or replaced).",
                 origin,
-                error_name="ReplicaRemovedError",
+                error_name=REPLICA_REMOVED_ERROR,
             )
 
     def _forget_executor_future(self, executor_future):

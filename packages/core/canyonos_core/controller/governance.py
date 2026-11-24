@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Every governance decision: which calls to an agent are refused and which model its
-LLM calls switch to, from `policy.yaml`'s rules and the dashboard-edited
-`governance:config`.
+"""Every governance decision: which calls to an agent are refused, which wait for a
+person's review, and which model its LLM calls switch to, from `policy.yaml`'s rules
+and the dashboard-edited `governance:config`.
 
 Replica images import this file flat, beside `local_controller.py`, so it imports
 nothing from `canyonos_core`.
@@ -23,6 +23,15 @@ ROUTING_UP_KEY = "routing_table:up"
 # Duplicated from canyonos_core.endpoint, which replica images do not carry.
 ENDPOINT_AGENT_NAME = "endpoint"
 ACTION_KINDS = ("switch_model", "deny")
+# The codes of a refused call. The dashboard API's FAILURE_CODES lists them too.
+POLICY_DENIED = "PolicyDenied"
+DEPENDENCY_DOWN = "DependencyDown"
+SPEND_LIMIT = "SpendLimit"
+# A review gate's bounds: how long a reviewer has to answer, and its group's name.
+REVIEW_TIMEOUT_DEFAULT_SECONDS = 3600
+REVIEW_TIMEOUT_MIN_SECONDS = 60
+REVIEW_TIMEOUT_MAX_SECONDS = 3600
+REVIEWERS_MAX_LENGTH = 100
 
 logger = logging.getLogger(__name__)
 
@@ -104,23 +113,61 @@ def _agent_rules(rules, path):
             raise ValueError(f"{path}.requires: must be a list of agent names")
         parsed["requires"] = list(requires)
     if "spend" in rules:
-        spend = rules["spend"]
-        if spend is None:
-            parsed["spend"] = None
-            return parsed
-        if not isinstance(spend, dict):
-            raise ValueError(f"{path}.spend: must be a mapping")
-        if not isinstance(spend.get("rules"), list):
-            raise ValueError(f"{path}.spend.rules: must be a list")
-        parsed["spend"] = {
-            "rules": [
-                _spend_rule(rule, f"{path}.spend.rules[{index}]")
-                for index, rule in enumerate(spend["rules"])
-            ]
-        }
-        if spend.get("since") is not None:
-            parsed["spend"]["since"] = _since(spend["since"], f"{path}.spend.since")
+        parsed["spend"] = _spend_rules(rules["spend"], f"{path}.spend")
+    if "review" in rules:
+        parsed["review"] = _review_rule(rules["review"], f"{path}.review")
     return parsed
+
+
+def _spend_rules(spend, path):
+    if spend is None:
+        return None
+    if not isinstance(spend, dict):
+        raise ValueError(f"{path}: must be a mapping")
+    if not isinstance(spend.get("rules"), list):
+        raise ValueError(f"{path}.rules: must be a list")
+    parsed = {
+        "rules": [
+            _spend_rule(rule, f"{path}.rules[{index}]")
+            for index, rule in enumerate(spend["rules"])
+        ]
+    }
+    if spend.get("since") is not None:
+        parsed["since"] = _since(spend["since"], f"{path}.since")
+    return parsed
+
+
+def _review_rule(review, path):
+    """A review gate as stored, its timeout filled in; None when there is none."""
+    if review is None:
+        return None
+    if not isinstance(review, dict):
+        raise ValueError(f"{path}: must be a mapping with `reviewers`")
+    reviewers = review.get("reviewers")
+    if (
+        not isinstance(reviewers, str)
+        or not reviewers
+        or len(reviewers) > REVIEWERS_MAX_LENGTH
+    ):
+        raise ValueError(
+            f"{path}.reviewers: must name a reviewer group in 1 to "
+            f"{REVIEWERS_MAX_LENGTH} characters"
+        )
+    timeout_seconds = review.get("timeout_seconds")
+    if timeout_seconds is None:
+        timeout_seconds = REVIEW_TIMEOUT_DEFAULT_SECONDS
+    elif (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not REVIEW_TIMEOUT_MIN_SECONDS
+        <= timeout_seconds
+        <= REVIEW_TIMEOUT_MAX_SECONDS
+    ):
+        raise ValueError(
+            f"{path}.timeout_seconds: must be a whole number of seconds from "
+            f"{REVIEW_TIMEOUT_MIN_SECONDS} to {REVIEW_TIMEOUT_MAX_SECONDS}"
+        )
+    return {"reviewers": reviewers, "timeout_seconds": timeout_seconds}
 
 
 def parse(config):
@@ -263,25 +310,33 @@ def refuse_call(rules, agent, function, context, redis=None):
     a redis-py client, read only before refusing for a dependency that is down."""
     if not _policy_allows(rules.policy, agent, context):
         return Refusal(
-            "PolicyDenied",
+            POLICY_DENIED,
             f"Policy denied the call to {agent}.{function}: no rule in policy.yaml "
             "allows it for this request.",
         )
     dependency = _down(rules, agent, redis)
     if dependency is not None:
         return Refusal(
-            "DependencyDown",
+            DEPENDENCY_DOWN,
             f"{agent} requires {dependency}, which has no healthy replica right now.",
         )
     tripped = _tripped(rules, agent)
     if tripped is not None and tripped["action"]["kind"] == "deny":
         since = rules.agents[agent]["spend"].get("since", "the deploy")
         return Refusal(
-            "SpendLimit",
+            SPEND_LIMIT,
             f"{agent} is over its ${_usd(tripped['above_usd'])} cap "
             f"(${rules.spend.get(agent, 0.0):.2f} spent since {since}).",
         )
     return None
+
+
+def review_for(rules, agent):
+    """The review gate in front of every call to `agent` during a request, as
+    `{"reviewers", "timeout_seconds"}`, or None when its calls run unreviewed."""
+    if agent == ENDPOINT_AGENT_NAME:
+        return None
+    return rules.agents.get(agent, {}).get("review")
 
 
 def model_for(rules, agent):

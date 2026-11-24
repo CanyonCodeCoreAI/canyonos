@@ -473,6 +473,23 @@
         "required": ["agent", "method"],
         "additionalProperties": false
       },
+      "WorkflowGraphAsk": {
+        "type": "object",
+        "properties": {
+          "via": {
+            "type": "string",
+            "enum": ["input", "interrupt", "ask_human", "approval"]
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": ["via", "path", "line"],
+        "additionalProperties": false
+      },
       "WorkflowGraphAgent": {
         "type": "object",
         "properties": {
@@ -494,6 +511,12 @@
           },
           "read": {
             "type": "boolean"
+          },
+          "asks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowGraphAsk"
+            }
           }
         },
         "required": ["name", "entrypoint", "functions", "endpoint", "read"],
@@ -553,6 +576,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "conditional": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -4656,6 +4682,25 @@
                           },
                           "error_name": {
                             "type": "string",
+                            "enum": [
+                              "PolicyDenied",
+                              "DependencyDown",
+                              "SpendLimit",
+                              "review.rejected",
+                              "review.timed_out",
+                              "SendFailed",
+                              "RequestFinished",
+                              "MalformedRequest",
+                              "NoRunningReplica",
+                              "InvalidArgument",
+                              "NoAgentLoaded",
+                              "UnknownMethod",
+                              "ResultNotDelivered",
+                              "ReplicaRemovedError",
+                              "InvalidFutureArg",
+                              "NoEndpointFound",
+                              "ResultCallbackFailed"
+                            ],
                             "nullable": true
                           },
                           "error_message": {
@@ -10936,9 +10981,27 @@
                                 "required": ["rules"],
                                 "additionalProperties": false,
                                 "nullable": true
+                              },
+                              "review": {
+                                "type": "object",
+                                "properties": {
+                                  "reviewers": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  "timeout_seconds": {
+                                    "type": "integer",
+                                    "minimum": 60,
+                                    "maximum": 3600
+                                  }
+                                },
+                                "required": ["reviewers", "timeout_seconds"],
+                                "additionalProperties": false,
+                                "nullable": true
                               }
                             },
-                            "required": ["requires", "spend"],
+                            "required": ["requires", "spend", "review"],
                             "additionalProperties": false
                           },
                           "spend": {
@@ -11162,7 +11225,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Replace one agent's requirements and spend rules",
+        "summary": "Replace one agent's requirements, spend rules and review gate",
         "parameters": [
           {
             "name": "workflow_id",
@@ -11262,6 +11325,24 @@
                     "required": ["rules"],
                     "additionalProperties": false,
                     "nullable": true
+                  },
+                  "review": {
+                    "type": "object",
+                    "properties": {
+                      "reviewers": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 3600
+                      }
+                    },
+                    "required": ["reviewers"],
+                    "additionalProperties": false,
+                    "nullable": true
                   }
                 },
                 "required": ["requires", "spend"],
@@ -11335,6 +11416,24 @@
                     "required": ["rules"],
                     "additionalProperties": false,
                     "nullable": true
+                  },
+                  "review": {
+                    "type": "object",
+                    "properties": {
+                      "reviewers": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 3600
+                      }
+                    },
+                    "required": ["reviewers"],
+                    "additionalProperties": false,
+                    "nullable": true
                   }
                 },
                 "required": ["requires", "spend"],
@@ -11406,6 +11505,24 @@
                       }
                     },
                     "required": ["rules"],
+                    "additionalProperties": false,
+                    "nullable": true
+                  },
+                  "review": {
+                    "type": "object",
+                    "properties": {
+                      "reviewers": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 3600
+                      }
+                    },
+                    "required": ["reviewers"],
                     "additionalProperties": false,
                     "nullable": true
                   }
@@ -11530,9 +11647,27 @@
                                 "required": ["rules"],
                                 "additionalProperties": false,
                                 "nullable": true
+                              },
+                              "review": {
+                                "type": "object",
+                                "properties": {
+                                  "reviewers": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  "timeout_seconds": {
+                                    "type": "integer",
+                                    "minimum": 60,
+                                    "maximum": 3600
+                                  }
+                                },
+                                "required": ["reviewers", "timeout_seconds"],
+                                "additionalProperties": false,
+                                "nullable": true
                               }
                             },
-                            "required": ["requires", "spend"],
+                            "required": ["requires", "spend", "review"],
                             "additionalProperties": false
                           },
                           "spend": {
@@ -11941,9 +12076,27 @@
                                 "required": ["rules"],
                                 "additionalProperties": false,
                                 "nullable": true
+                              },
+                              "review": {
+                                "type": "object",
+                                "properties": {
+                                  "reviewers": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  "timeout_seconds": {
+                                    "type": "integer",
+                                    "minimum": 60,
+                                    "maximum": 3600
+                                  }
+                                },
+                                "required": ["reviewers", "timeout_seconds"],
+                                "additionalProperties": false,
+                                "nullable": true
                               }
                             },
-                            "required": ["requires", "spend"],
+                            "required": ["requires", "spend", "review"],
                             "additionalProperties": false
                           },
                           "spend": {
