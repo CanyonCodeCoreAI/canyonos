@@ -31,7 +31,7 @@ from canyonos.api import (
     require_state,
     workflow_group_status,
 )
-from canyonos.auth import machine_api_key
+from canyonos.auth import group_api_key
 from canyonos.constants import (
     DEPLOYMENT_CONFIG,
     container_path,
@@ -243,5 +243,5 @@ def run_sync_and_reload(folders):
         # Imported here, since deploy imports this module.
         from canyonos.deploy import _watch_deploy
 
-        _watch_deploy(state, serve=False, verbose=False, key=machine_api_key())
+        _watch_deploy(state, serve=False, verbose=False, key=group_api_key())
     return True

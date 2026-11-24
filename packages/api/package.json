@@ -66,7 +66,7 @@
     "db:migrate": "bun run src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "test:e2e": "bun test --bail --env-file .env.test --preload ./src/test/setup.ts src/test/e2e.*.test.ts",
-    "test:no-database": "DATABASE_URL=postgres://canyonos:canyonos@127.0.0.1:1/canyonos CANYONOS_API_KEY_HASH= PORT=3005 API_URL=http://localhost:3005 bun test --bail --env-file .env.test src/test/no-database.test.ts",
+    "test:no-database": "DATABASE_URL=postgres://canyonos:canyonos@127.0.0.1:1/canyonos CANYONOS_DEPLOY_KEY_HASH= PORT=3005 API_URL=http://localhost:3005 bun test --bail --env-file .env.test src/test/no-database.test.ts",
     "test:migration": "PORT=3004 API_URL=http://localhost:3004 bun test --bail --env-file .env.test --preload ./src/test/setup.ts src/test/migration.populated.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --type-aware --deny-warnings -c ../../.oxlintrc.json .",

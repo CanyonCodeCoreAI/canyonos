@@ -41,8 +41,9 @@ from when there is one, and a copy of each workflow's `config/`. Run the other c
 folder: `canyonos deploy .`. From any folder, `canyonos deploy --workflow-group
 <workflow group>` redeploys it.
 
-`--api-key` sets the key every request to the endpoint and the dashboard must carry. The
-CLI saves it to `~/.canyonos/api_key` and later deploys reuse it, so pass it once.
+`--api-key` sets the key every request to this workflow group's endpoint and its
+dashboard routes must carry. The CLI saves it in the workflow group's record and later
+deploys of it reuse it, so pass it once.
 Without a key, the deploy warns and anyone who reaches the endpoint can use it. See
 [API key](AUTHORIZATION.md).
 

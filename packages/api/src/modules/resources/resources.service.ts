@@ -145,7 +145,11 @@ export function build_overview(rows: readonly FleetWorkflowRow[], range: TimeRan
   return { kpis, resources, workflows, from: range.from, to: range.to };
 }
 
-export async function get_fleet_overview(range: TimeRange): Promise<FleetOverview> {
-  const rows = await resources_repo.fleet_workflows(range);
+/** The overview of the workflows of the workflow groups `workflow_group_ids`. */
+export async function get_fleet_overview(
+  range: TimeRange,
+  workflow_group_ids: readonly string[]
+): Promise<FleetOverview> {
+  const rows = await resources_repo.fleet_workflows(range, workflow_group_ids);
   return build_overview(rows, range);
 }

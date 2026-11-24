@@ -4,11 +4,11 @@
 """`canyonos deploy` through the installed command: the checks it runs before
 anything is built, the workflows' own checked by the Global Controller it starts, and
 the record under `~/.canyonos/workflows/` it picks or makes for the workflow group
-before them. The folder checks come first, before `--api-key` stores anything: a run
-that must stop there points DOCKER_HOST at nothing, so a Docker call would show. The
-record is settled before the deploy looks for Docker, so the cases on records run
-with no Docker engine and stop at that. `canyonos serve` without a Docker engine stops
-at that, after it warns that no key is set."""
+before them, where `--api-key` keeps the workflow group's key. The folder checks come
+first, before `--api-key` stores anything: a run that must stop there points
+DOCKER_HOST at nothing, so a Docker call would show. The record is settled before the
+deploy looks for Docker, so the cases on records run with no Docker engine and stop at
+that. `canyonos serve`, which takes no key, stops there too."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ ECHO = "echo-[0-9a-f]{8}"
 SCHEMA_ERROR = rf"CANYON-SCHEMA {ECHO}/config/workflow_config\.yaml:1"
 STOPPED = "Fix the workflow errors"
 OPEN_WARNING = (
-    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
-    "them. Set one with --api-key <key>."
+    "This workflow group has no API key: its endpoint and its dashboard routes answer "
+    "anyone who reaches them. Set one with --api-key <key>."
 )
 
 
@@ -68,7 +68,8 @@ def _broken_workflow(case: CliCase) -> None:
 
 
 def _key_file(case: CliCase) -> Path:
-    return case.home / ".canyonos" / "api_key"
+    """Where the workflow group of `echo` keeps its API key."""
+    return workflow_group_record(case, case.cwd / "echo") / "api_key"
 
 
 def _deploy(case: CliCase, *args: str, docker: bool = True, cwd: Path | None = None):
@@ -356,7 +357,7 @@ def test_deploy_of_a_folder_that_is_no_workflow_says_so_before_the_key_is_stored
     output = _said(result)
     assert result.returncode == 1, output
     assert f"is {cli_case.cwd / 'nowhere'} a workflow folder?" in output
-    assert not _key_file(cli_case).exists()
+    assert not list((cli_case.home / ".canyonos").glob("**/api_key"))
     assert _records(cli_case) == []
 
 
@@ -378,10 +379,10 @@ def test_deploy_refuses_a_workflow_group_id_that_is_not_a_lowercase_uuid(
     assert "Docker" not in output
 
 
-def test_serve_without_a_docker_engine_warns_of_no_key_and_stops(cli_case: CliCase):
+def test_serve_without_a_docker_engine_stops(cli_case: CliCase):
     result = cli_case.run_cli(["serve"], timeout=60, env=NO_DOCKER)
 
     output = _said(result)
     assert result.returncode == 1, output
-    assert OPEN_WARNING in output
+    assert OPEN_WARNING not in output
     assert "docker daemon or socket is unavailable" in output

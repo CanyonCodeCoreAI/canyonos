@@ -7,7 +7,8 @@ import { workflow_not_found } from './workflows.service';
 /**
  * Shared `resolve` for every dashboard route under a workflow group's workflow (requests,
  * metrics, monitoring and the rest): 404 unless the workflow exists and runs in that workflow
- * group. `apiKeyGuard` has checked the key before the request got here.
+ * group. `apiKeyGuard` has checked that workflow group's key before the request got here, so a
+ * key that does not open it is 401 whatever workflow it names.
  */
 export async function resolve_group_workflow_access({
   params,

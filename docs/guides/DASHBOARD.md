@@ -72,17 +72,20 @@ The last three pages change a workflow while it runs:
 
 ## Who can open it
 
-When the machine has an API key, the dashboard asks for it before it shows anything,
-and its API, on port `3000`, takes it from scripts. `canyonos dashboard` signs you in
-with it. Without a key, anyone who reaches either port can read and change every
-workflow group on it. Both ports listen on every interface.
+Each workflow group has its own API key, the one it was deployed with. Once any workflow
+group has one, the dashboard asks for a key before it shows anything, and shows the
+workflows of the workflow groups that key opens, the ones deployed with no key included;
+its API, on port `3000`, takes the key from scripts the same way. `canyonos dashboard`
+signs you in with the key of the workflow group you run it from. A workflow group with no
+key is open: anyone who reaches either port can read and change it. Both ports listen on
+every interface.
 
 ```bash
-canyonos serve --api-key <your api key>   # set or replace the key, restart the dashboard
-canyonos serve --no-api-key               # remove it: the dashboard opens for anyone
+canyonos deploy . --api-key <your api key>   # set or replace this workflow group's key
+canyonos deploy . --no-api-key               # remove it: the workflow group opens for anyone
 ```
 
-How to set, send and replace the key is in [API key](AUTHORIZATION.md).
+How to set, send and replace a key is in [API key](AUTHORIZATION.md).
 
 The dashboard API also keeps each workflow group's Redis password, encrypted with
 `REDIS_PASSWORD_ENCRYPTION_KEY`, and won't start without that key (32 characters or

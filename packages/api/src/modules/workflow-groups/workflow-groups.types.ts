@@ -36,8 +36,16 @@ export const WorkflowGroupBody = z.object({
   // Every workflow of the workflow group, by workflow_id; the uploaded ones it leaves out are
   // removed.
   workflows: z.array(z.string().uuid()).nullable().optional(),
-  // The SHA-256 of the deploy's API key, "" for none; a change restarts the deploy.
-  api_key_hash: z.string().nullable().optional(),
+  // The SHA-256 of the workflow group's API key in lowercase hex, "" for none; a change restarts
+  // the deploy.
+  api_key_hash: z
+    .string()
+    .regex(
+      /^(?:[0-9a-f]{64})?$/,
+      'api_key_hash must be 64 lowercase hex characters, or "" for none'
+    )
+    .nullable()
+    .optional(),
 });
 
 export const WorkflowGroupSchema = z.object({
@@ -260,6 +268,7 @@ export const WORKFLOW_GROUP_ERRORS = [
   'workflow_groups.reupload_needed',
   'workflow_groups.registration_required',
   'registry.registration_failed',
+  'registry.workflow_taken',
   'database.unavailable',
   'kubernetes.error',
   'docker.disabled',

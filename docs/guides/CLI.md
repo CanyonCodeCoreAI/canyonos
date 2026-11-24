@@ -14,7 +14,7 @@ its folder. Run the other commands from one of its workflow folders. A typical s
 ```bash
 cd my-workflow
 canyonos doctor                       # can this machine deploy?
-# build the images, start the workflow, save the machine's API key, open the dashboard
+# build the images, start the workflow, save its workflow group's API key, open the dashboard
 canyonos deploy . --api-key <your api key>
 canyonos test "hello"                 # send one query end to end
 canyonos logs my-workflow.MyAgent     # print one agent's logs
@@ -58,7 +58,7 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 | `config`    | View or edit `workflow_group.yaml`; `sync` applies the changes           |
 | `sync`      | Apply changes you made by hand in the record's `config/` to the running workflow group |
 | `serve`     | Start the local dashboard on its own                                 |
-| `dashboard` | Open the running dashboard, signed in with this machine's API key    |
+| `dashboard` | Open the running dashboard, signed in with the workflow group's key  |
 
 - `deploy <folder>...` deploys the workflow folders it names as one workflow group: the
   recorded one that has exactly those folders, by absolute path, else a new one. Two
@@ -86,12 +86,14 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
   workflow group's record on its first deploy.
 - `deploy --serve false` doesn't open the dashboard. On Docker, `-v` streams the full
   build and deploy logs instead of a progress summary.
-- `deploy --api-key <key>` and `serve --api-key <key>` save the machine's API key to
-  `~/.canyonos/api_key`, replacing any saved one, and say `Your deploys now use an API
-  key for secure connections.`; later runs reuse it. `--no-api-key`
-  deletes it and runs open. Without a key, they warn that anyone who reaches the
-  endpoint and the dashboard can use them. See [API key](AUTHORIZATION.md).
-- `test` sends the saved API key with each request.
+- `deploy --api-key <key>` saves the workflow group's API key in its record,
+  `~/.canyonos/workflows/<workflow group>/api_key`, replacing its saved one, and says
+  `This workflow group now uses an API key for secure connections.`; later deploys of
+  it reuse it. Other workflow groups keep their own keys. `--no-api-key` deletes it and
+  runs the workflow group open. Without a key, `deploy` warns that anyone who reaches
+  its endpoint and its dashboard routes can use them. `serve` takes no key. See
+  [API key](AUTHORIZATION.md).
+- `test` sends the workflow group's API key with each request.
 - `deploy -y` deploys the resources the config sets, without the resource picker, and
   replaces a workflow group's workflows without asking.
   `--detach` returns once the deploy has started, without the dashboard; `status`
@@ -104,7 +106,7 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 - `test --timeout SECONDS` sets the wait (default 300), which restarts after each answer
   you give. `--json` prints one JSON result, for CI.
 - `curl '<json>'` POSTs that body to the running workflow group's workflow endpoint, with
-  the saved API key, and prints the answer, indented when it is JSON:
+  the workflow group's API key, and prints the answer, indented when it is JSON:
   `canyonos curl '{"query": "World"}'` prints the queued request's `request_id`. It
   sends that one request and waits for nothing more; `/status/<request_id>` has the
   result. It exits 0 on a 2xx answer, else 1 with the status code. A body that is not
@@ -132,9 +134,9 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
   the config; code changes need `deploy`. `sync` and `config` change a deploy on Docker
   only; on Kubernetes, run `deploy` again. See
   [Configure your workflow](CONFIGURE.md#apply-a-change) for which command applies what.
-- `dashboard` opens the dashboard signed in, with the API key in the link's `#key=`
-  fragment, which the browser never sends to a server; the sign-in screen saves it and
-  drops the fragment. With no key set, it opens the dashboard as it is.
+- `dashboard` opens the dashboard signed in, with the workflow group's API key in the
+  link's `#key=` fragment, which the browser never sends to a server; the sign-in screen saves it and
+  drops the fragment. For a workflow group with no key, it opens the dashboard as it is.
 - `deploy`, `sync`, `stop`, `clean`, `logs` and `doctor` take `--json`: they
   print one JSON object, `ok`, the `errors` they hit, a `code` and their result, and
   nothing else. `code` is null on success, else why it failed, such as `no_deploy`,
@@ -207,7 +209,7 @@ canyonos stop --all                 # every workflow group on this machine
   folders are deleted.
 - `clean --all` removes everything CanyonOS put on this machine, for before you
   uninstall: every workflow group, the dashboard and its data, CanyonOS's images and
-  `~/.canyonos`, the API key included. It asks first; `-y` skips the question.
+  `~/.canyonos`, the keys included. It asks first; `-y` skips the question.
 - `--all` and workflow group names act on this machine's Docker only. On Kubernetes,
   `stop` and `clean` act on this folder's workflow in the cluster; see
   [Kubernetes workflow group](KUBERNETES.md).

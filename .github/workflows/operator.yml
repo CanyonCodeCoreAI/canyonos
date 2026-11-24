@@ -85,39 +85,35 @@ jobs:
 
       # Both install modes must render: cluster-wide (with the builder and the
       # dashboard, the defaults) and limited to some namespaces; and with the builder
-      # and the dashboard turned off. Each needs the CanyonOS API's key.
+      # and the dashboard turned off. None takes an API key: each workflow group's
+      # dashboard routes take its own, from its CanyonProject.
       - name: Lint and render the chart
-        env:
-          KEY: dashboard.apiKeyHash=0000000000000000000000000000000000000000000000000000000000000000
         run: |
-          helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0 --set "${KEY}"
+          helm lint canyonos-operator --set controllerImage=canyonos-core@sha256:0
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set "${KEY}" \
             --set dashboard.apiImage=canyonos-api@sha256:0 --set dashboard.webImage=canyonos-web@sha256:0 \
             > /dev/null
           helm template t canyonos-operator --set controllerImage=canyonos-core@sha256:0 \
-            --set "watchNamespaces={team-a,team-b}" --set "${KEY}" > /dev/null
-          # A Secret of your own carries the key instead.
+            --set "watchNamespaces={team-a,team-b}" > /dev/null
           helm template t canyonos-operator --set dashboard.existingSecret=mine > /dev/null
           helm template t canyonos-operator --set builder.enabled=false \
-            --set dashboard.enabled=false --set "${KEY}" > /dev/null
-          # A release's chart installs with no image set: its own release's images; and
-          # with only the key set, it installs the builder and the dashboard's web app.
-          helm template t canyonos-operator --set "${KEY}" > /tmp/defaults.yaml
+            --set dashboard.enabled=false > /dev/null
+          # A release's chart installs with no image set: its own release's images, and
+          # the builder and the dashboard's web app.
+          helm template t canyonos-operator > /tmp/defaults.yaml
           grep -q '^  name: buildkitd$' /tmp/defaults.yaml || { echo "no builder by default"; exit 1; }
           grep -q '^  name: canyonos-dashboard-web$' /tmp/defaults.yaml || { echo "no dashboard by default"; exit 1; }
-          # With no key, every signed-in user could use the API's dashboard routes.
-          if helm template t canyonos-operator > /tmp/no-key.txt 2>&1; then
-            echo "the chart rendered with no dashboard.apiKeyHash"; exit 1
+          # No chart-wide key: neither the Secret nor the API's environment holds one.
+          if grep -q -e 'api-key-hash' -e 'CANYONOS_API_KEY_HASH' /tmp/defaults.yaml; then
+            echo "the chart still renders a chart-wide API key"; exit 1
           fi
-          grep -q "dashboard.apiKeyHash is required" /tmp/no-key.txt || { cat /tmp/no-key.txt; exit 1; }
           # Every CRD is rendered, and kept by Helm (never deleted, not even on
           # uninstall); with crds.enabled=false, none is.
           crds="$(ls canyonos-operator/files/crds/*.yaml | wc -l)"
-          helm template t canyonos-operator --set "${KEY}" --show-only templates/crds.yaml > /tmp/crds.yaml
+          helm template t canyonos-operator --show-only templates/crds.yaml > /tmp/crds.yaml
           [ "$(grep -c '^kind: CustomResourceDefinition$' /tmp/crds.yaml)" = "${crds}" ]
           [ "$(grep -c '^    helm.sh/resource-policy: keep$' /tmp/crds.yaml)" = "${crds}" ]
-          helm template t canyonos-operator --set "${KEY}" --set crds.enabled=false > /tmp/no-crds.yaml
+          helm template t canyonos-operator --set crds.enabled=false > /tmp/no-crds.yaml
           if grep -q 'kind: CustomResourceDefinition' /tmp/no-crds.yaml; then exit 1; fi
 
       # Each pod setting reaches the pods it is for (the operator, the builder, and the

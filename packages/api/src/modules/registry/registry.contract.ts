@@ -16,6 +16,9 @@ import { parse_json } from '@core/json';
 // llm_gateway/prompts.py, llm_gateway/llms.py (prompts:*, llms:config).
 
 export const CONTROLLER_IDENTITY_KEY = 'controller:identity';
+/** The sha256 of the workflow group's API key, "" for none, as its Global Controller publishes
+ * it (canyonos_core/auth.py API_KEY_HASH_KEY) for the endpoint to check requests against. */
+export const API_KEY_HASH_KEY = 'auth:api_key_hash';
 export const ENDPOINT_KEY = 'endpoint:address';
 export const ACTIVE_AGENTS_KEY = 'agents:active';
 export const LAUNCH_ERRORS_KEY = 'reconciler:launch_errors';

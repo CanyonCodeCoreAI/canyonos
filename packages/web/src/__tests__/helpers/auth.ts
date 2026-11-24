@@ -3,17 +3,22 @@
 
 import { createHash } from 'node:crypto';
 
-import type { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+
+import { apiBaseUrl } from './workflows';
+import type { ApiErrorBody } from './workflows';
 
 export const AUTH_STORAGE_KEY = 'cc-auth-storage';
 
 /**
- * The API key `playwright.config.ts` starts the API with. Its space, `+`, `&`, `=` and `%` make
- * every sign-in link percent-encode it, as `canyonos dashboard` does.
+ * The API key of the workflow groups the API seeds (`SEED_DEV_API_KEY_HASH` in
+ * `playwright.config.ts`). Its space, `+`, `&`, `=` and `%` make every sign-in link
+ * percent-encode it, as `canyonos dashboard` does.
  */
 export const TEST_API_KEY = 'canyonos e2e+key&=%2B';
 
-/** The `CANYONOS_API_KEY_HASH` of `key`. */
+/** The sha256 of `key` in lowercase hex, as the API stores a workflow group's key. */
 export const hashApiKey = (key: string): string =>
   createHash('sha256').update(key, 'utf8').digest('hex');
 
@@ -38,4 +43,13 @@ export const readStoredApiKey = (page: Page): Promise<unknown> =>
 /** Boots the app holding the API key. */
 export async function authenticate(page: Page): Promise<void> {
   await setApiKey(page, TEST_API_KEY);
+}
+
+/** The message the API refuses `apiKey` with at the key check, which the sign-in screen shows. */
+export async function keyRefusal(request: APIRequestContext, apiKey: string): Promise<string> {
+  const response = await request.get(`${apiBaseUrl}/v1/auth/check`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  expect(response.status()).toBe(401);
+  return ((await response.json()) as ApiErrorBody).message;
 }

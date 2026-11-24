@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { databasePlugin } from '@api/db/database';
 
+import { opened_by_key } from '../auth/auth.plugin';
 import { add_sample_data } from './sample-data';
 import { resolve_group_workflow_access } from './workflows.access';
 import { delete_workflow, get_workflow, list_workflows } from './workflows.service';
@@ -20,15 +21,17 @@ import {
 
 const doc = { tags: ['Workflows'], security: [{ bearerAuth: [] }] };
 
-// Every workflow this dashboard knows, in whatever workflow group: a workflow's id alone finds
-// the group its other routes are under.
+// The workflows of the workflow groups the key opens, the open ones included: a workflow's id
+// alone finds the group its other routes are under. The key is checked before the request's
+// params are, in `derive`.
 export const workflowsRoutes = new Elysia({ prefix: '/v1/workflows', name: 'workflows.routes' })
   .use(databasePlugin)
-  .get('/', () => list_workflows(), {
+  .derive(async ({ request }) => ({ opened: await opened_by_key(request) }))
+  .get('/', ({ opened }) => list_workflows(opened.ids), {
     response: { 200: z.array(WorkflowSummarySchema) },
     detail: doc,
   })
-  .get('/:workflow_id', ({ params }) => get_workflow(params.workflow_id), {
+  .get('/:workflow_id', ({ params, opened }) => get_workflow(params.workflow_id, opened.ids), {
     params: WorkflowIdParams,
     response: { 200: WorkflowSummarySchema },
     detail: doc,

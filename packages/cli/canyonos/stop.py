@@ -24,7 +24,6 @@ from canyonos.api import (
     list_workflow_groups,
     workflow_group_status,
 )
-from canyonos.auth import hash_api_key, machine_api_key
 from canyonos.docker_cmd import (
     DOCKER_CLEANUP_TIMEOUT,
     DOCKER_QUICK_TIMEOUT,
@@ -66,9 +65,9 @@ def _container_state(container_id, env):
 
 
 def ensure_api_for_stop():
-    """Bring up the CanyonOS API, which stops a workflow group's Global Controller, with
-    it checking this machine's API key; raise RuntimeError when it can't start."""
-    ensure_api(hash_api_key(machine_api_key()))
+    """Bring up the CanyonOS API, which stops a workflow group's Global Controller;
+    raise RuntimeError when it can't start."""
+    ensure_api()
 
 
 def _status(state):
@@ -462,14 +461,14 @@ def confirm_clean_all():
     if not is_interactive():
         ui.fail(
             "`clean --all` deletes every CanyonOS image, the dashboard's data and "
-            "~/.canyonos, with this machine's API key, so it asks first. Add --yes to "
+            "~/.canyonos, with every workflow group's API key, so it asks first. Add --yes to "
             "run it without a terminal."
         )
         return False
     ui.say(
         "This removes every CanyonOS workflow group, the dashboard and its data, "
         "CanyonOS's images and ~/.canyonos, which holds every workflow group's records, "
-        "your usage settings and this machine's API key."
+        "their API keys, this machine's deploy key and your usage settings."
     )
     answer = select_menu(
         [(True, "Yes, remove everything"), (False, "No, keep it")],

@@ -3,8 +3,10 @@
 A typed TypeScript client for the CanyonOS REST API (`/v1`).
 
 On Docker the API is the dashboard's, on `http://127.0.0.1:3000` unless that port was
-taken, and every request sends this machine's API key, in `~/.canyonos/api_key`, when it
-has one.
+taken. A request about a workflow sends its workflow group's API key, the one in
+`~/.canyonos/workflows/<workflow group>/api_key`, when it has one; the
+`/v1/workflow-groups` routes the CLI deploys through take this machine's deploy key,
+`~/.canyonos/dashboard/deploy_key`, or the workflow group's key.
 
 ```sh
 npm install @canyoncode/canyonos-sdk

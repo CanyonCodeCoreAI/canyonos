@@ -15,8 +15,6 @@ names the reason: an agent whose replica cannot launch, a config
 file that is not valid YAML, with its line, or a `.python-version` outside 3.10
 to 3.15 or not saved as UTF-8."""
 
-from pathlib import Path
-
 import pytest
 
 from ..conftest import DEPLOY_TIMEOUT
@@ -40,8 +38,8 @@ DASHBOARD_GROUP = "canyonos-dashboard"
 API_KEY_HASH_KEY = "auth:api_key_hash"
 BEARER = '-H "Authorization: Bearer <your api key>"'
 OPEN_WARNING = (
-    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
-    "them. Set one with --api-key <key>."
+    "This workflow group has no API key: its endpoint and its dashboard routes answer "
+    "anyone who reaches them. Set one with --api-key <key>."
 )
 PSYCOPG = "psycopg[binary]==3.3.6"
 DATABASE_AGENT = """
@@ -160,9 +158,9 @@ def test_new_app_deploys_and_answers(recorder, starter):
 
 
 def test_a_deploy_without_an_api_key_answers_anyone(recorder, starter):
-    """Run without CANYONOS_API_KEY, and `--no-api-key` removes any
-    `~/.canyonos/api_key`, so the deploy has no key at all; `--serve false` keeps it
-    off the shared dashboard, which needs the session's key."""
+    """Run without CANYONOS_API_KEY, and `--no-api-key` removes any key the workflow
+    group's record keeps, so the deploy has no key at all; `--serve false` keeps it
+    off the shared dashboard."""
     call = canyonos(
         recorder,
         ["deploy", str(workflow_dir(starter)), "--no-api-key", "--serve", "false"],
@@ -172,7 +170,7 @@ def test_a_deploy_without_an_api_key_answers_anyone(recorder, starter):
     )
     assert OPEN_WARNING in " ".join(call.output.split()), call.output
     assert BEARER not in call.output, call.output
-    assert not (Path.home() / ".canyonos" / "api_key").exists()
+    assert not (record(starter) / "api_key").exists()
     assert workflow_group_redis(recorder, starter).get(API_KEY_HASH_KEY) == ""
 
     endpoint = deployed_endpoint(recorder, starter, keyed=False)

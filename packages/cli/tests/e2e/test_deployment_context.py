@@ -350,6 +350,26 @@ def test_dashboard_prints_a_link_that_signs_in_with_the_api_key(cli_case: CliCas
     assert API_KEY not in result.stderr, result.stderr
 
 
+def test_dashboard_signs_in_with_the_key_of_the_workflow_group_it_runs_from(
+    cli_case: CliCase,
+):
+    """Each workflow group's record keeps its own key: the link from one workflow
+    group's folder signs in with that one's, never the other's."""
+    env = _with_a_running_dashboard(cli_case)
+    keys = {"app-abcz": API_KEY, "app-xyza": "e2e other group's key"}
+    for (folder, key), deployment_id in zip(keys.items(), (FIRST_ID, SECOND_ID)):
+        name = _record(cli_case, folder, deployment_id)
+        (_record_dir(cli_case, name) / "api_key").write_text(f"{key}\n")
+
+    for folder, key in keys.items():
+        result = cli_case.run_cli(["dashboard"], env=env, cwd=cli_case.cwd / folder)
+
+        assert result.returncode == 0, _said(result)
+        link = urlsplit(result.stdout.strip())
+        assert link.fragment == f"key={quote(key, safe='')}", result.stdout
+        assert "this workflow group's API key" in _said(result), _said(result)
+
+
 def test_dashboard_without_an_api_key_prints_the_bare_dashboard_url(
     cli_case: CliCase,
 ):

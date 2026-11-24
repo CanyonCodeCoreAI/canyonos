@@ -109,8 +109,8 @@ edit it there, not in `.canyon/config/`. Run the other commands from `my-app/`.
 
 It first shows each agent's CPU, memory, GPU and replicas. Choose **1. Deploy**, or
 **2. Configure an agent** to change them first. What it deploys with, defaults included,
-is saved in the record's workflow config. `--api-key` sets the key every request must carry;
-later deploys reuse it (see [API key](AUTHORIZATION.md)). When it's up, it prints the
+is saved in the record's workflow config. `--api-key` sets the key every request to this workflow group must carry;
+later deploys of it reuse it (see [API key](AUTHORIZATION.md)). When it's up, it prints the
 endpoint and the dashboard address. Then send it the query in `test_query.txt`:
 
 ```bash

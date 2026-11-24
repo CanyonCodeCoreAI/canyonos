@@ -7,7 +7,7 @@
   "globalPassThroughEnv": [
     "APP_ENV",
     "API_URL",
-    "CANYONOS_API_KEY_HASH",
+    "CANYONOS_DEPLOY_KEY_HASH",
     "CANYONOS_REDIS_HOST",
     "CANYONOS_REDIS_PORT",
     "DATABASE_URL",
@@ -25,7 +25,7 @@
       "dependsOn": ["^build"],
       "persistent": true,
       "cache": false,
-      "passThroughEnv": ["SEED_DEV_DATA"]
+      "passThroughEnv": ["SEED_DEV_DATA", "SEED_DEV_API_KEY_HASH"]
     },
     "build": {
       "cache": true,

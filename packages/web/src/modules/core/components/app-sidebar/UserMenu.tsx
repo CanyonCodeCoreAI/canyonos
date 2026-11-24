@@ -65,7 +65,7 @@ export function UserMenu() {
           <div className="flex items-center gap-2">
             <KeyAvatar />
             <p className="min-w-0 truncate text-sm font-medium" data-testid="sidebar-signed-in">
-              Signed in with the API key
+              Signed in with an API key
             </p>
           </div>
         </DropdownMenuLabel>

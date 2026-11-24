@@ -25,7 +25,12 @@ import {
   seed_workflows,
   seed_workflows_raw,
 } from './redis-test.utils';
-import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
+import {
+  bearer,
+  create_test_workflow,
+  create_test_workflow_group,
+  TEST_API_KEY,
+} from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -137,7 +142,7 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
   }
 
   test("each workflow of a listed group is stored by its own id, and its routes reach the group's Redis", async () => {
-    const workflow_group_id = crypto.randomUUID();
+    const workflow_group_id = await create_test_workflow_group();
     const workflow_id = await run_controller('helloworld');
     // What an older dashboard stored for the listed group, as if it were a workflow.
     await db.insert(workflows).values({ id: workflow_group_id, name: 'hello' });
@@ -172,7 +177,7 @@ describe('on Kubernetes the operator lists workflow groups, and the dashboard th
 
   test('a workflow whose group the operator does not list is not running in the cluster', async () => {
     const workflow_id = await run_controller('elsewhere');
-    const workflow_group_id = crypto.randomUUID();
+    const workflow_group_id = await create_test_workflow_group();
     await db.insert(workflows).values({ id: workflow_id, name: 'elsewhere', workflow_group_id });
 
     await listing(crypto.randomUUID(), async () => {
@@ -219,7 +224,7 @@ describe("a controller's identity", () => {
   const WORKFLOW_GROUP_ID = '44444444-4444-4444-8444-444444444444';
 
   const save_group = (workflow_group_id: string | null, names: Record<string, string> = {}) =>
-    save_controller_workflows({ workflow_group_id, workflows: names }, REDIS);
+    save_controller_workflows({ workflow_group_id, workflows: names, api_key_hash: '' }, REDIS);
 
   test('with no usable workflow group id is 422 registry.identity_unusable and stores nothing', async () => {
     const before = await count_workflows();

@@ -150,18 +150,18 @@ curl -X PUT "http://localhost:3000/v1/workflow-groups/$(sed -n 's/^workflow_grou
   -H 'Content-Type: application/json' -d @registration.json
 ```
 
-Started with `CANYONOS_API_KEY_HASH`, the API needs the key that hash was made from on
-that call: `-H "Authorization: Bearer <your api key>"`.
+Started with `CANYONOS_DEPLOY_KEY_HASH`, the API needs the deploy key that hash was made
+from on that call: `-H "Authorization: Bearer <deploy key>"`.
 
 The API stores the password encrypted, with a fixed development key unless
 `REDIS_PASSWORD_ENCRYPTION_KEY` is set.
 
-**Sign in.** `bun run dashboard:dev` starts the API with no API key, so the dashboard
-opens directly. To check a key instead, set its SHA-256 in the shell before you start
-it, then sign in with the key:
+**Sign in.** `bun run dashboard:dev` seeds an open demo workflow group, so the dashboard
+opens directly. To check a key instead, set the SHA-256 the seeded workflow group gets
+before you start it, with `SEED_DEV_DATA=true`, then sign in with the key:
 
 ```bash
-export CANYONOS_API_KEY_HASH=$(printf %s '<your api key>' | shasum -a 256 | cut -d' ' -f1)
+export SEED_DEV_API_KEY_HASH=$(printf %s '<your api key>' | shasum -a 256 | cut -d' ' -f1)
 ```
 
 The API reads it when it starts, so restart it after a change.
@@ -246,8 +246,7 @@ Kubernetes deploys don't support multi-folder workflow groups yet.
 3. CanyonOS, through `scripts/kind/operator.sh`: the three images from this checkout
    and the operator's image, pushed to that registry, then the chart with the in-cluster
    builder, the CanyonOS API and the dashboard. `up.sh` builds the images first if they
-   are missing. The dashboard takes this machine's API key, `~/.canyonos/api_key` (or
-   `CANYONOS_API_KEY`), made there if there is none, as `canyonos cluster up` does.
+   are missing. Each workflow group's dashboard routes take that workflow group's own API key.
 
 It's safe to re-run. The API server's Pod Security file is kept in `~/.canyonos/kind`,
 so switching branches never stops the cluster from starting.

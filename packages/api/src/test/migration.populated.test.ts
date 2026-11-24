@@ -12,12 +12,13 @@ import { app } from '@api/app';
 import { db, run_migrations, sql } from '@api/db/client';
 import { set_database_state } from '@api/db/database';
 
-import { bearer, TEST_API_KEY } from './workflow-test.utils';
+import { bearer, create_test_workflow_group, TEST_API_KEY } from './workflow-test.utils';
 
 const MIGRATIONS = new URL('../db/migrations', import.meta.url).pathname;
 const PASSWORD_AUTH_TAG = '0005_password_auth';
 const DROP_USERS_TAG = '0009_drop_users';
 const DROP_DEPLOY_QUEUE_TAG = '0013_drop_deploy_queue';
+const STOPPED_AT_TAG = '0017_workflow_group_stopped_at';
 
 interface Journal {
   entries: { tag: string }[];
@@ -40,6 +41,11 @@ let seeded: Seeded;
 let password_seeded: PasswordSeeded;
 let after_password_auth: Record<string, unknown>[];
 let before_drop_deploy_queue: string[];
+// A workflow whose workflow group was stopped before 0017: the stop deleted the group's row.
+const stopped_before_0017 = {
+  workflow_id: crypto.randomUUID(),
+  workflow_group_id: crypto.randomUUID(),
+};
 
 /** Migrates with a journal copy that stops right before `tag`, the shape a running install has. */
 async function migrate_before(tag: string): Promise<void> {
@@ -156,6 +162,11 @@ beforeAll(async () => {
   password_seeded = await seed_password_install();
   await migrate_before(DROP_DEPLOY_QUEUE_TAG);
   before_drop_deploy_queue = (await survivors()).map(({ kind }) => kind);
+  await migrate_before(STOPPED_AT_TAG);
+  await sql`
+    INSERT INTO workflows (id, name, workflow_group_id)
+    VALUES (${stopped_before_0017.workflow_id}, 'stopped', ${stopped_before_0017.workflow_group_id})
+  `;
   await run_migrations();
   // The API is not started here: its routes wait for the database until told it is ready.
   set_database_state('ready');
@@ -227,16 +238,25 @@ describe('migration 0009 on a password install', () => {
     ]);
   });
 
-  test('the API key lists the workflow', async () => {
-    const response = await app.handle(
-      new Request('http://localhost/v1/workflows', { headers: bearer(TEST_API_KEY) })
-    );
+  // From before workflow groups: in none, so nobody's key opens it until a deploy puts it in one.
+  test('the workflow is listed once it is in a workflow group, to its key', async () => {
+    const list = async () => {
+      const response = await app.handle(
+        new Request('http://localhost/v1/workflows', { headers: bearer(TEST_API_KEY) })
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()) as { id: string; name: string }[];
+    };
+    const migrated = expect.objectContaining({
+      id: password_seeded.workflow_id,
+      name: 'controller',
+    });
 
-    expect(response.status).toBe(200);
-    const listed = (await response.json()) as { id: string; name: string }[];
-    expect(listed).toContainEqual(
-      expect.objectContaining({ id: password_seeded.workflow_id, name: 'controller' })
-    );
+    expect(await list()).not.toContainEqual(migrated);
+
+    const workflow_group_id = await create_test_workflow_group();
+    await sql`UPDATE workflows SET workflow_group_id = ${workflow_group_id} WHERE id = ${password_seeded.workflow_id}`;
+    expect(await list()).toContainEqual(migrated);
   });
 });
 
@@ -286,5 +306,43 @@ describe('migration 0016 on a populated install', () => {
 
     const types = await sql`SELECT 1 FROM pg_type WHERE typname = 'file_component_kind'`;
     expect(types).toHaveLength(0);
+  });
+});
+
+describe('migration 0017 on a populated install', () => {
+  test('workflow_groups gets stopped_at, null on every row', async () => {
+    const column = await sql<{ data_type: string; is_nullable: string }[]>`
+      SELECT data_type, is_nullable FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'workflow_groups'
+        AND column_name = 'stopped_at'
+    `;
+    expect(column.map((row) => ({ ...row }))).toEqual([
+      { data_type: 'timestamp with time zone', is_nullable: 'YES' },
+    ]);
+    const stopped = await sql`SELECT 1 FROM workflow_groups WHERE stopped_at IS NOT NULL`;
+    expect(stopped).toHaveLength(0);
+  });
+
+  // A stop before 0017 deleted the workflow group's row, and its key with it: its workflows
+  // stay hidden, to every key and to none, until the workflow group is deployed again, which
+  // makes its row with its key and registers them under it.
+  test("a workflow of a workflow group stopped before 0017 is nobody's until that workflow group is deployed again", async () => {
+    const { workflow_id, workflow_group_id } = stopped_before_0017;
+    const rows = await sql`SELECT 1 FROM workflow_groups WHERE id = ${workflow_group_id}`;
+    expect(rows).toHaveLength(0);
+
+    for (const headers of [{}, bearer(TEST_API_KEY)]) {
+      const listed = await app.handle(new Request('http://localhost/v1/workflows', { headers }));
+      expect(listed.status).toBe(200);
+      const ids = ((await listed.json()) as { id: string }[]).map(({ id }) => id);
+      expect(ids).not.toContain(workflow_id);
+      const history = await app.handle(
+        new Request(
+          `http://localhost/v1/workflow-groups/${workflow_group_id}/workflows/${workflow_id}/requests?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z&limit=20&offset=0`,
+          { headers }
+        )
+      );
+      expect([401, 404]).toContain(history.status);
+    }
   });
 });

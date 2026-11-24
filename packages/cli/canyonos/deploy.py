@@ -31,6 +31,7 @@ from rich.text import Text
 
 from canyonos import deployment, internal_ca, records, ui
 from canyonos.auth import (
+    check_api_key_options,
     curl_auth,
     gc_env,
     hash_api_key,
@@ -154,12 +155,16 @@ def run_deploy(
     """Deploy the workflows in `folders` as one workflow group, named after the folder this
     runs from and configured by its `workflow_group.yaml`. `yes` skips the resource picker;
     `detach` returns once the deploy started, without the dashboard. The deploy hands
-    the Global Controller the hash of this machine's API key, which `api_key` sets or
-    replaces and `no_api_key` removes; with no key, the endpoint checks nothing."""
+    the Global Controller the hash of this workflow group's API key, which `api_key`
+    sets or replaces and `no_api_key` removes; with no key, the endpoint checks
+    nothing. Other workflow groups and the CanyonOS API keep running as they are."""
     ids = deployment.workflow_ids(folders)
     workflows = deployment.workflow_folders(folders, ids)
     config_path = deployment_config_path()
     require_deployment_id(config_path)
+    check_api_key_options(api_key, no_api_key)
+    # Before the key: outside a record, the workflow_group_id names the one it goes in.
+    save_deployment_config(config_path)
     key = resolve_api_key(api_key, no_api_key)
     kubernetes = deployment.configured_target() == "kubernetes"
     if not kubernetes:
@@ -169,7 +174,6 @@ def run_deploy(
             raise DockerUnavailableError(str(e)) from None
     internal_ca.refuse_redis_that_outlived_its_ca()
 
-    save_deployment_config(config_path)
     deployment.save_workflows(config_path, workflows, ids)
     records.import_workflow_configs(workflows)
     workflow_configs = {
@@ -184,7 +188,7 @@ def run_deploy(
     if not kubernetes:
         # First: replacing an old Global Controller and running the new one both go
         # through it.
-        started_api = ensure_api(hash_api_key(key))
+        started_api = ensure_api()
         try:
             run_init(banner=banner, auth_env=gc_env(key), auth_disabled=key is None)
         except (Exception, KeyboardInterrupt):
@@ -221,7 +225,7 @@ def run_deploy(
             # A daemon, so a failed deploy exits without waiting.
             threading.Thread(
                 target=run_dashboard,
-                args=(None, dashboard_port(config_path), hash_api_key(key)),
+                args=(None, dashboard_port(config_path)),
                 daemon=True,
             ).start()
     _watch_deploy(state, serve=serve, verbose=verbose, key=key)
@@ -309,10 +313,10 @@ def _print_deploy_summary(dashboard_url, endpoint, keyed):
     ui.blank()
 
 
-def _start_dashboard(key):
+def _start_dashboard():
     """The dashboard's URL, or None -- a dashboard that won't start doesn't fail the deploy.
-    Its web app starts unless it runs already, in front of the API that checks `key`,
-    which the deploy brought up and registered the workflow group with."""
+    Its web app starts unless it runs already, in front of the API the deploy brought
+    up and registered the workflow group with."""
     try:
         if deployment.configured_target() == "kubernetes":
             return f"http://127.0.0.1:{_open_dashboard()}"
@@ -322,7 +326,7 @@ def _start_dashboard(key):
         if port is not None:
             _warn_if_dashboard_port_ignored()
             return dashboard_url(port)
-        result = serve_dashboard(api_key_hash=hash_api_key(key))
+        result = serve_dashboard()
     except Exception as e:
         ui.fail(f"Could not start the dashboard automatically: {e}")
         ui.hint("Run `canyonos serve` manually to view it.")
@@ -332,7 +336,7 @@ def _start_dashboard(key):
 
 def _deploy_summary(state, endpoint, serve, key):
     if serve:
-        dashboard = _start_dashboard(key)
+        dashboard = _start_dashboard()
     else:
         port = running_web_port()
         dashboard = dashboard_url(port) if port else None
@@ -453,9 +457,9 @@ def _report_failure(state, status, verbose):
 
 def _watch_deploy(state, serve, verbose, key):
     """Show the deploy's progress, or with `verbose` stream its whole log, until the
-    CanyonOS API says it is up, then start the dashboard (unless `serve=False`)
-    with its API checking the API key `key`, and print where everything lives; raise
-    when it fails. Ctrl-C stops only this."""
+    CanyonOS API says it is up, then start the dashboard (unless `serve=False`) and
+    print where everything lives, each `curl` with the API key's placeholder when the
+    workflow group has `key`; raise when it fails. Ctrl-C stops only this."""
     stop_log = threading.Event()
     try:
         if verbose:

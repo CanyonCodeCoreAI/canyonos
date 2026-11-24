@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """
-Logic for `canyonos dashboard`: open the dashboard running on this machine, signed in.
-With an API key here, it hands the key to the sign-in screen in the URL's fragment,
-which the browser never sends to a server; the screen stores it and strips it. A
-dashboard that checks no key just opens.
+Logic for `canyonos dashboard`: open the dashboard running on this machine, signed in
+with the API key of the workflow group this command acts on, which shows that workflow
+group's workflows and those of every workflow group without a key. It hands the key to
+the sign-in screen in the URL's fragment, which the browser never sends to a server;
+the screen stores it and strips it. A dashboard that checks no key just opens.
 """
 
 import json
@@ -15,7 +16,7 @@ import webbrowser
 from urllib.parse import quote
 
 from canyonos import ui
-from canyonos.auth import machine_api_key
+from canyonos.auth import group_api_key
 from canyonos.dashboard_stack import dashboard_url, running_api_port, running_web_port
 from canyonos.os_support import is_terminal
 
@@ -50,8 +51,8 @@ def _open(url, shown):
 
 def run_open_dashboard():
     """Run `canyonos dashboard`: open the dashboard on this machine signed in with
-    this machine's API key, or show its URL and how to sign in when there is no key
-    here. Returns False when no dashboard runs."""
+    the API key of the workflow group this command acts on, or show its URL and how to
+    sign in when it has no key. Returns False when no dashboard runs."""
     port = running_web_port()
     if port is None:
         ui.fail(
@@ -60,7 +61,7 @@ def run_open_dashboard():
         )
         return False
     url = dashboard_url(port)
-    key = machine_api_key()
+    key = group_api_key()
     if not _requires_key():
         with ui.to_stderr():
             _open(url, url)
@@ -69,13 +70,13 @@ def run_open_dashboard():
         with ui.to_stderr():
             _open(url, url)
             ui.say(
-                "No API key is set here, so sign in with the key the dashboard was "
-                "started with, or restart it with one: canyonos serve --api-key <key>"
+                "This workflow group has no API key, so sign in with the key of the "
+                "workflow group to see: `canyonos deploy --api-key <key>` sets one"
             )
         return True
     with ui.to_stderr():
         opened = _open(f"{url}/login#key={quote(key, safe='')}", url)
-        ui.hint("Signed in with this machine's API key.")
+        ui.hint("Signed in with this workflow group's API key.")
         if not opened:
             ui.hint(
                 "The link above holds the API key and signs in whoever opens it: keep "

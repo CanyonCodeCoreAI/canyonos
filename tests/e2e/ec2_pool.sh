@@ -48,7 +48,8 @@ STAGE_DIR="$(mktemp -d)"
 WORKFLOW_DIR="$STAGE_DIR/ec2pool"
 WORKFLOW_GROUP_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 RECORD_DIR="$HOME/.canyonos/workflows/ec2pool-${WORKFLOW_GROUP_ID:0:8}"
-# Its own API key, which wins over ~/.canyonos/api_key and is never written to it.
+# Its own API key, which wins over the one the workflow group's record keeps and is
+# never written to it.
 CANYONOS_API_KEY="e2e-$(openssl rand -hex 24)"
 export CANYONOS_API_KEY
 START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

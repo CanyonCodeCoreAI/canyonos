@@ -28,7 +28,7 @@ CLI keeps in the workflow group's record, `~/.canyonos/workflows/<workflow group
 | Workflow group config   | `workflow_group.yaml`: where the workflow group runs, and the settings all its workflows share                             | [Configure your workflow](guides/CONFIGURE.md) |
 | Global Controller   | Builds an image per agent, starts the agents, and replaces any that fail                                          | [Controller](architecture/CONTROLLER.md)       |
 | Agents and replicas | Each agent runs in containers of its own; a replica is one copy, and autoscaling adds or removes copies with load | [Autoscaling](guides/SCALING.md)               |
-| Endpoint            | Your workflow's HTTP API, which answers requests that carry the machine's API key                                 | [Endpoint](architecture/ENDPOINT.md)           |
+| Endpoint            | Your workflow's HTTP API, which answers requests that carry its workflow group's API key                          | [Endpoint](architecture/ENDPOINT.md)           |
 | Local Controller    | Runs in every replica and carries calls between agents                                                            | [Controller](architecture/CONTROLLER.md)       |
 | LLM Gateway         | Runs in every replica, takes every model call, records tokens and cost, and applies your limits                   | [LLM Gateway](guides/LLM_GATEWAY.md)           |
 | Redis               | Keeps track of the running replicas and the requests in flight                                                    | [Controller](architecture/CONTROLLER.md)       |

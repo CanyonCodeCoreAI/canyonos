@@ -8,10 +8,12 @@ PATH signs in with a token, records the port-forward it is asked for and serves 
 last archive uploaded for each workflow; a stand-in `docker` reports nothing, so no
 cluster and no Docker are needed. That makes a deploy to the cluster the one deploy
 that runs here in full, so it is where the upload of each workflow is checked: the
-config its workflow group's record keeps, and the local files it leaves out."""
+config its workflow group's record keeps, the local files it leaves out, and the hash
+of the API key the workflow group's record keeps."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -67,14 +69,18 @@ elif "port-forward" in args:
 
     class Api(BaseHTTPRequestHandler):
         def answer(self):
-            with open(os.path.join(here, "requests.jsonl"), "a") as log:
-                log.write(json.dumps({
-                    "method": self.command,
-                    "path": self.path,
-                    "authorization": self.headers.get("Authorization"),
-                }) + "\\n")
             length = int(self.headers.get("Content-Length") or 0)
             upload = self.rfile.read(length) if length else b""
+            json_body = self.headers.get("Content-Type") == "application/json"
+            request = {
+                "method": self.command,
+                "path": self.path,
+                "authorization": self.headers.get("Authorization"),
+            }
+            if json_body and upload:
+                request["body"] = json.loads(upload)
+            with open(os.path.join(here, "requests.jsonl"), "a") as log:
+                log.write(json.dumps(request) + "\\n")
             if self.command == "PUT" and "/workflows/" in self.path:
                 name = self.path.rsplit("/", 1)[1]
                 with open(os.path.join(here, name + ".tar.gz"), "wb") as kept:
@@ -422,6 +428,46 @@ def test_a_deploy_uploads_the_config_the_workflow_group_s_record_keeps(
         _uploaded(records, kept)["config/workflow_config.yaml"]
         == (kept / "workflow_config.yaml").read_text()
     )
+
+
+def test_a_deploy_hands_the_cluster_the_hash_of_the_workflow_group_s_key(
+    cli_case: CliCase, close_forwards
+):
+    """`--api-key` keeps the key in the workflow group's record and the deploy hands the
+    cluster's API only its SHA-256, signed in with the Kubernetes login, never the key;
+    a redeploy keeps it, and `--no-api-key` hands an empty hash and removes it."""
+    environment, records = _kubernetes_group(
+        cli_case, {"GET": [200, APPLIED], "PUT": [200, UPLOADED]}
+    )
+    _workflow(cli_case.cwd / "alpha")
+    key = "e2e-kubernetes-group-key"
+
+    def deployed_hashes(*args: str) -> list:
+        (records / "requests.jsonl").unlink(missing_ok=True)
+        result = cli_case.run_cli(
+            ["deploy", "alpha", "--yes", "--detach", *args], env=environment, timeout=60
+        )
+        said = _said(result)
+        assert result.returncode == 0, said
+        assert key not in result.stdout + result.stderr, said
+        requests = _lines(records / "requests.jsonl")
+        assert {request["authorization"] for request in requests} == {
+            f"Bearer {KUBE_TOKEN}"
+        }, requests
+        return [
+            request["body"]["api_key_hash"]
+            for request in requests
+            if request["method"] == "PUT" and "api_key_hash" in request.get("body", {})
+        ]
+
+    assert deployed_hashes("--api-key", key) == [
+        hashlib.sha256(key.encode()).hexdigest()
+    ]
+    record = workflow_config_dir(cli_case, cli_case.cwd / "alpha").parent.parent
+    assert (record / "api_key").read_text().strip() == key
+    assert deployed_hashes() == [hashlib.sha256(key.encode()).hexdigest()]
+    assert deployed_hashes("--no-api-key") == [""]
+    assert not (record / "api_key").exists()
 
 
 def test_a_deploy_leaves_local_files_out_of_the_upload(

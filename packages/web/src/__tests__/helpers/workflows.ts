@@ -5,8 +5,11 @@ import type { Route } from '@playwright/test';
 
 export const apiBaseUrl = process.env.VITE_API_URL ?? 'http://localhost:3000';
 
-/** A second API on the same database with no API key, started by Playwright. */
-export const noAuthApiBaseUrl = 'http://localhost:3010';
+/** A second API, on a database of its own whose workflow groups have no API key. */
+export const openApiBaseUrl = 'http://localhost:3010';
+
+/** The workflow the API's dev seed makes. */
+export const SEEDED_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
 /**
  * The API's error answer (ApiErrorSchema in packages/api/src/modules/core/errors.ts), which the

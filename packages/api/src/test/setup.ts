@@ -3,7 +3,7 @@
 
 import postgres from 'postgres';
 
-import { hashApiKey, TEST_API_KEY } from './api-key-test.utils';
+import { hashApiKey, TEST_DEPLOY_KEY } from './api-key-test.utils';
 
 const isSafeIdentifier = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 
@@ -39,7 +39,7 @@ async function resetPostgresTestDatabase(): Promise<void> {
 /**
  * What the suite runs against unless the shell or `.env.test` says otherwise, set before `env.ts`
  * reads them: the `canyonos_test` database beside the one `bun run docker:up` starts, a Redis on
- * loopback, and the hashes of the keys the tests send. A value the run sets, empty included, is
+ * loopback, and the hash of the deploy key the tests send. A value the run sets, empty included, is
  * kept.
  */
 function setTestDefaults(): void {
@@ -50,7 +50,7 @@ function setTestDefaults(): void {
   env.LOG_LEVEL ??= 'warn';
   env.CANYONOS_REDIS_HOST ??= '127.0.0.1';
   env.CANYONOS_REDIS_PORT ??= '6379';
-  env.CANYONOS_API_KEY_HASH ??= hashApiKey(TEST_API_KEY);
+  env.CANYONOS_DEPLOY_KEY_HASH ??= hashApiKey(TEST_DEPLOY_KEY);
 }
 
 setTestDefaults();

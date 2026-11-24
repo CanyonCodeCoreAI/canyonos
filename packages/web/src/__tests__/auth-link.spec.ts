@@ -4,7 +4,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-import { readStoredApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
+import { keyRefusal, readStoredApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
 import {
   expectPath,
   stubFleetSpend,
@@ -12,9 +12,6 @@ import {
   stubWorkflowsList,
   WORKFLOW,
 } from './helpers/session';
-
-const INVALID_KEY =
-  'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`';
 
 /** The link `canyonos dashboard` opens: the key rides percent-encoded in the fragment. */
 const signInLink = (apiKey: string, path = '/login') => `${path}#key=${encodeURIComponent(apiKey)}`;
@@ -59,11 +56,15 @@ test('a dashboard link goes on to where the visitor was going', async ({ page })
 
 test('a dashboard link whose key the API refuses stays on sign-in, says why and keeps nothing', async ({
   page,
+  request,
 }) => {
-  await page.goto(signInLink('not-the-api-key'));
+  const wrongKey = 'not-the-api-key';
+  const refusal = await keyRefusal(request, wrongKey);
+
+  await page.goto(signInLink(wrongKey));
 
   await expectPath(page, '/login');
-  await expect(page.getByTestId('auth-error')).toHaveText(INVALID_KEY);
+  await expect(page.getByTestId('auth-error')).toHaveText(refusal);
   await expect(page.getByTestId('auth-api-key')).toHaveAttribute(
     'aria-describedby',
     /\bauth-error\b/

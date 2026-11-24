@@ -15,7 +15,7 @@ import type {
 import * as docker_engine from '@core/docker';
 import { config } from '@core/env';
 
-import { TEST_API_KEY } from './api-key-test.utils';
+import { hashApiKey, TEST_DEPLOY_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
 import { core_image, create_fake_controller, docker, free_port } from './process-test.utils';
 import {
@@ -35,7 +35,8 @@ const CORE_IMAGE = core_image();
 
 setupE2ETests();
 
-const authorized = bearer(TEST_API_KEY);
+// The machine's deploy key, which the CLI sends on every /v1/workflow-groups call on Docker.
+const authorized = bearer(TEST_DEPLOY_KEY);
 const HELLOWORLD = new URL('../../../../examples/helloworld/', import.meta.url).pathname;
 const DOCKER_SOCKET = '/var/run/docker.sock';
 const APPLY_TIMEOUT_MS = 60_000;
@@ -191,6 +192,9 @@ let redis_port = 0;
 let config_text = '';
 // The workflow_id the uploaded workflow_group.yaml gives the workflow named helloworld.
 const helloworld_id = crypto.randomUUID();
+// The workflow group's key, from its first PUT, and the one a later PUT changes it to.
+const FIRST_KEY = `first group key ${run_id}`;
+const SECOND_KEY = `second group key ${run_id}`;
 
 beforeAll(() => {
   redis_port = free_port();
@@ -219,10 +223,10 @@ afterAll(async () => {
 }, 60_000);
 
 describe('the workflow groups API drives the Global Controller container', () => {
-  test('every route needs the API key, checked before the request is read', async () => {
+  test('a workflow group this API does not know yet takes the deploy key, checked before the request is read', async () => {
     const responses = await Promise.all([
-      api.v1['workflow-groups'].get(),
-      group().get({ $headers: bearer('not-the-api-key') }),
+      group().get(),
+      group().get({ $headers: bearer('not-the-deploy-key') }),
       fetch(`${config.app.apiUrl}/v1/workflow-groups/not-a-uuid`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -240,9 +244,9 @@ describe('the workflow groups API drives the Global Controller container', () =>
   });
 
   test('a browser on another origin gets no CORS answer', async () => {
-    const preflight = await fetch(`${config.app.apiUrl}/v1/workflow-groups/`, {
+    const preflight = await fetch(`${config.app.apiUrl}/v1/workflow-groups/${workflow_group_id}`, {
       method: 'OPTIONS',
-      headers: { origin: 'http://elsewhere.example', 'access-control-request-method': 'GET' },
+      headers: { origin: 'http://elsewhere.example', 'access-control-request-method': 'PUT' },
     });
     const keyed = await v1('/', { headers: { origin: 'http://elsewhere.example' } });
 
@@ -273,18 +277,33 @@ describe('the workflow groups API drives the Global Controller container', () =>
   });
 
   test(
-    'a PUT writes the settings; with no workflow nothing starts',
+    "a PUT writes the settings, and its api_key_hash is the workflow group's key from the start; with no workflow nothing starts",
     async () => {
       await create_controller(redis_port);
 
       const put = await group().put(
-        { name, config: config_text, env: 'GREETING=hello\n', workflows: [], api_key_hash: '' },
+        {
+          name,
+          config: config_text,
+          env: 'GREETING=hello\n',
+          workflows: [],
+          api_key_hash: hashApiKey(FIRST_KEY),
+        },
         { headers: authorized }
       );
       expect(put.data).toEqual({ generation: 1, warnings: [] });
 
+      // Never open: the row was made with its key.
+      expect(refusal(await group().get())).toMatchObject({
+        status: 401,
+        error: 'auth.missing_key',
+      });
+      expect((await group().get({ $headers: bearer(FIRST_KEY) })).error).toBeNull();
       const listed = await api.v1['workflow-groups'].get({ $headers: authorized });
       expect(listed.data?.workflow_groups).toContainEqual({ workflow_group_id, name });
+      expect(
+        (await api.v1['workflow-groups'].get({ $headers: bearer(FIRST_KEY) })).data?.workflow_groups
+      ).toContainEqual({ workflow_group_id, name });
 
       const applied = await status_when(
         ({ applied_generation }) => applied_generation >= 1,
@@ -437,20 +456,134 @@ describe('the workflow groups API drives the Global Controller container', () =>
     APPLY_TIMEOUT_MS + DEPLOY_TIMEOUT_MS + 30_000
   );
 
-  test('DELETE stops the deploy and forgets the upload', async () => {
+  const settings = (api_key_hash?: string) => ({
+    name,
+    config: config_text,
+    env: null,
+    ...(api_key_hash === undefined ? {} : { api_key_hash }),
+  });
+  const status_with = (key: string) => group().get({ $headers: bearer(key) });
+  const scaling_with = (headers: Record<string, string> = {}) =>
+    api.v1['workflow-groups'][workflow_group_id]!.workflows[helloworld_id]!.scaling.get({
+      $headers: headers,
+    });
+
+  test(
+    "a PUT's api_key_hash is the workflow group's key from the next request on: the old one stops working, with no restart",
+    async () => {
+      expect((await status_with(FIRST_KEY)).error).toBeNull();
+      expect(refusal(await status_with(SECOND_KEY))).toMatchObject({
+        status: 401,
+        error: 'auth.invalid_key',
+      });
+      expect(refusal(await scaling_with(bearer(FIRST_KEY))).status).not.toBe(401);
+      expect(refusal(await scaling_with(bearer(SECOND_KEY)))).toMatchObject({ status: 401 });
+
+      // The workflow group's own key may change it, as the deploy key may.
+      const changed = await group().put(settings(hashApiKey(SECOND_KEY)), {
+        headers: bearer(FIRST_KEY),
+      });
+      expect(changed.error).toBeNull();
+      expect(refusal(await status_with(FIRST_KEY))).toMatchObject({
+        status: 401,
+        error: 'auth.invalid_key',
+      });
+      expect((await status_with(SECOND_KEY)).error).toBeNull();
+      expect(refusal(await scaling_with(bearer(FIRST_KEY)))).toMatchObject({ status: 401 });
+      expect(refusal(await scaling_with(bearer(SECOND_KEY))).status).not.toBe(401);
+      expect((await status_with(TEST_DEPLOY_KEY)).error).toBeNull();
+      // A PUT that sends no api_key_hash keeps the key.
+      expect((await group().put(settings(), { headers: authorized })).error).toBeNull();
+      expect(refusal(await status_with(FIRST_KEY))).toMatchObject({ status: 401 });
+      expect((await status_with(SECOND_KEY)).error).toBeNull();
+      await status_when(
+        ({ applied_generation, generation }) => applied_generation >= generation,
+        APPLY_TIMEOUT_MS
+      );
+    },
+    APPLY_TIMEOUT_MS + 30_000
+  );
+
+  test("DELETE stops the deploy and forgets the upload, but keeps the key its workflows' history stays behind", async () => {
     const unknown = await group().workflows[crypto.randomUUID()]!.delete(undefined, {
       headers: authorized,
     });
     expect(refusal(unknown)).toMatchObject({ error: 'workflow_groups.unknown_workflow' });
+    expect(refusal(await group().delete(undefined, { headers: bearer(FIRST_KEY) }))).toMatchObject({
+      status: 401,
+      error: 'auth.invalid_key',
+    });
+    // As `canyonos deploy` did before the Global Controller started: the dashboard knows the
+    // workflow, whose history the stop then leaves behind the key.
+    const registered = await group().dashboard.put(
+      {
+        workflows: { [helloworld_id]: 'helloworld' },
+        redis_host: `${project}-redis-localhost`,
+        redis_port: redis_port,
+        redis_password: run_id,
+        redis_tls: null,
+      },
+      { headers: authorized }
+    );
+    expect(registered.error).toBeNull();
 
-    const deleted = await group().delete(undefined, { headers: authorized });
+    const deleted = await group().delete(undefined, { headers: bearer(SECOND_KEY) });
     expect(deleted.error).toBeNull();
     expect(deleted.data?.generation).toBeGreaterThanOrEqual(3);
 
     const after = await status();
     expect(after).toMatchObject({ name: '', config: null, running: false, generation: 0 });
     expect(['stopped', 'failed']).toContain(after.phase!);
+    // Its key no longer lists it; the deploy key still sees its stopped container, unnamed.
+    const to_its_key = await api.v1['workflow-groups'].get({ $headers: bearer(SECOND_KEY) });
+    expect(to_its_key.data?.workflow_groups.map((group) => group.workflow_group_id)).not.toContain(
+      workflow_group_id
+    );
+    const to_the_deploy_key = await api.v1['workflow-groups'].get({ $headers: authorized });
+    expect(to_the_deploy_key.data?.workflow_groups).toContainEqual({ workflow_group_id, name: '' });
+
+    // Its history opens to its key alone.
+    expect(refusal(await scaling_with(bearer(SECOND_KEY))).status).not.toBe(401);
+    expect(refusal(await scaling_with())).toMatchObject({ status: 401, error: 'auth.missing_key' });
+    expect(refusal(await scaling_with(bearer(FIRST_KEY)))).toMatchObject({
+      status: 401,
+      error: 'auth.invalid_key',
+    });
+    const workflows = await api.v1.workflows.get({ $headers: bearer(SECOND_KEY) });
+    expect(workflows.data?.map(({ id }) => id)).toContain(helloworld_id);
+    expect((await api.v1.workflows.get()).data?.map(({ id }) => id)).not.toContain(helloworld_id);
+    // Deploying it again takes its key or the deploy key, as before the stop.
+    expect(refusal(await group().put(settings()))).toMatchObject({
+      status: 401,
+      error: 'auth.missing_key',
+    });
   }, 300_000);
+
+  test(
+    'a deploy after the stop brings the workflow group back, with the key it kept',
+    async () => {
+      const put = await group().put(settings(), { headers: authorized });
+      expect(put.error).toBeNull();
+      expect(put.data).toEqual({ generation: 1, warnings: [] });
+
+      const back = await api.v1['workflow-groups'].get({ $headers: authorized });
+      expect(back.data?.workflow_groups).toContainEqual({ workflow_group_id, name });
+      expect((await status_with(SECOND_KEY)).data).toMatchObject({ name, config: config_text });
+      expect(refusal(await status_with(FIRST_KEY))).toMatchObject({ status: 401 });
+      await status_when(
+        ({ applied_generation, generation }) => applied_generation >= generation,
+        APPLY_TIMEOUT_MS
+      );
+
+      expect((await group().put(settings(''), { headers: authorized })).error).toBeNull();
+      expect((await group().get()).error).toBeNull();
+      const deleted = await group().delete(undefined, { headers: authorized });
+      expect(deleted.error).toBeNull();
+      // It keeps its key, none now, so its workflows' history stays open.
+      expect(refusal(await scaling_with()).status).not.toBe(401);
+    },
+    APPLY_TIMEOUT_MS * 2 + 30_000
+  );
 
   test('a Global Controller with no upload here is stopped too, and a failed stop is 500', async () => {
     const failing_id = crypto.randomUUID();

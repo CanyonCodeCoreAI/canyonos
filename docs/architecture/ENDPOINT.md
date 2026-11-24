@@ -9,7 +9,7 @@ No agent code runs in it. It serves four routes:
 3. `POST /answer/<request_id>` answers the oldest of those questions, or the one `?question=<id>` names.
 4. `GET /questions` lists every question waiting in the workflow group, across requests.
 
-Every route needs the machine's API key, when one is set; see [API key](#api-key).
+Every route needs its workflow group's API key, when it has one; see [API key](#api-key).
 
 The request and response contract is in [Runtime contract](../guides/RUNTIME_CONTRACT.md#endpoint).
 
@@ -74,9 +74,9 @@ Status has a fallback worth knowing. When a request's keys are gone from Redis, 
 
 ## API key
 
-Every route needs the machine's API key, checked before the body is read. How a person sets and sends it is in [API key](../guides/AUTHORIZATION.md).
+Every route needs its workflow group's API key, checked before the body is read. How a person sets and sends it is in [API key](../guides/AUTHORIZATION.md).
 
-- The Global Controller reads the key's SHA-256 from `CANYONOS_API_KEY_HASH`, which `canyonos deploy` or the operator set, and does not start when it is not 64 lowercase hex characters.
+- The Global Controller reads the key's SHA-256 from `CANYONOS_API_KEY_HASH`, which the CanyonOS API or the operator set from the workflow group's deploy, and does not start when it is not 64 lowercase hex characters.
 - Each time it applies the config, it writes the hash to every machine's Redis as `auth:api_key_hash`, or `""` for no key.
 - On each request the worker reads `auth:api_key_hash` and keeps no copy, so a redeploy's key counts from the next request.
 - `""` lets every request pass. Otherwise the worker hashes the `Authorization: Bearer` value and compares it with the hash in constant time.

@@ -13,7 +13,7 @@ import type { BrandCopy } from '@/modules/auth/components/CanyonBrandPanel';
 const QUERY_RETRIES = 3;
 
 /**
- * A 401 in a session means the stored key stopped working, as a new key on this machine leaves it:
+ * A 401 in a session means the stored key stopped working, as a redeploy with a new key leaves it:
  * forget it and let the root guard send the person to sign in, back to this page after. The key
  * checks under `['auth']` are left to the sign-in guard that asked them.
  */

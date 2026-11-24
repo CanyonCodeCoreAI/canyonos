@@ -9,6 +9,7 @@ import {
   agent_replicas_key,
   agent_samples_key,
   agent_spec_key,
+  API_KEY_HASH_KEY,
   CONTROLLER_IDENTITY_KEY,
   desired_replicas_key,
   ENDPOINT_KEY,
@@ -106,10 +107,13 @@ export async function seed_workflows(workflows: Record<string, string>): Promise
 }
 
 /** Publishes a controller's identity as given, `workflow_group_id` unchecked and left out when
- * null, with no other controller state, as a Global Controller nothing registered does. */
+ * null, and its API key's hash (`auth:api_key_hash`: a sha256, "" for a deploy with no key, or
+ * nothing while it has published none), with no other controller state, as a Global Controller
+ * nothing registered does. */
 export async function seed_controller_identity(
   workflow_group_id: string | null,
-  workflows: Record<string, string>
+  workflows: Record<string, string>,
+  api_key_hash: string | null = null
 ): Promise<void> {
   await reset_controller();
   await with_test_redis(async (redis) => {
@@ -117,6 +121,7 @@ export async function seed_controller_identity(
       await redis.hset(CONTROLLER_IDENTITY_KEY, 'workflow_group_id', workflow_group_id);
     }
     await redis.hset(CONTROLLER_IDENTITY_KEY, 'workflows', JSON.stringify(workflows));
+    if (api_key_hash !== null) await redis.set(API_KEY_HASH_KEY, api_key_hash);
   });
 }
 
@@ -129,6 +134,7 @@ export async function seed_workflows_raw(raw: string): Promise<void> {
 export async function reset_controller(): Promise<void> {
   await with_test_redis(async (redis) => {
     await redis.del(CONTROLLER_IDENTITY_KEY);
+    await redis.del(API_KEY_HASH_KEY);
     await redis.del(PROMPTS_CONFIG_KEY);
     await redis.del(PROMPTS_YAML_KEY);
     await redis.del(SCALING_CONFIG_KEY);

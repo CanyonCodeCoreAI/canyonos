@@ -19,7 +19,7 @@ export const authSearchSchema = z.object({
 });
 export type AuthSearch = z.infer<typeof authSearchSchema>;
 
-/** False only for an API started with no `CANYONOS_API_KEY_HASH`, where nobody needs a key. */
+/** False only while no workflow group has an API key, where nobody needs one. */
 export async function signInRequired(queryClient: QueryClient): Promise<boolean> {
   const { api_key_required } = await queryClient.ensureQueryData(authStatusQuery);
   return api_key_required;

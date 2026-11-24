@@ -1036,7 +1036,7 @@ export const kubernetes_target: WorkflowGroupTarget = {
     return [...deploys.keys()];
   },
 
-  async put_group_files(workflow_group_id, body) {
+  async put_group_files(workflow_group_id, body, api_key_hash) {
     const before = await workflow_groups_repo.find(workflow_group_id);
     if (
       body.workflows == null &&
@@ -1048,7 +1048,7 @@ export const kubernetes_target: WorkflowGroupTarget = {
         "Run `canyonos deploy` again: the API restarted and holds none of this workflow group's workflows"
       );
     }
-    const row = await workflow_groups_repo.claim(workflow_group_id, null);
+    const row = await workflow_groups_repo.claim(workflow_group_id, null, api_key_hash);
     await write_group_files(workflow_group_id, body.config, body.env);
     const listed = body.workflows ? new Set(body.workflows) : null;
     const removed = Object.entries(row.workflows).filter(
@@ -1070,7 +1070,7 @@ export const kubernetes_target: WorkflowGroupTarget = {
     const path = (archive as Blob & { name?: string }).name;
     if (!path) throw new Error('The upload was not received into a file');
     try {
-      await workflow_groups_repo.claim(workflow_group_id, null);
+      await workflow_groups_repo.claim(workflow_group_id, null, undefined);
       return await run_sidecar_job({
         workflow_group_id,
         command: ['put-workflow', name, '--archive', path],
@@ -1095,18 +1095,34 @@ export const kubernetes_target: WorkflowGroupTarget = {
 
   /** Holds again each workflow group whose CanyonProject is in the cluster, as a deploy that is
    * up, so stop, status and logs reach it: its namespace and name from the CanyonProject, and
-   * the fingerprints and API key it runs from its annotation and spec. The uploads were in the
-   * old pod's /workspace, so every row starts with no workflows and nothing to apply, and a
-   * CanyonBuild a restart cut short is deleted. */
+   * the fingerprints and API key it runs from its annotation and spec. A workflow group runs in
+   * one namespace: of two CanyonProjects claiming one id, the older is its deploy, and the
+   * other, which someone made by hand elsewhere, is left alone and logged, so it sets no key.
+   * The uploads were in the old pod's /workspace, so every row starts with no workflows and
+   * nothing to apply, and a CanyonBuild a restart cut short is deleted. */
   async restore() {
     await workflow_groups_repo.forget_uploads();
     for (const { id } of await workflow_groups_repo.list()) forgotten.add(id);
     const projects = await k8s.list<CanyonProject>(`${k8s.CANYONOS_API}/canyonprojects`);
-    for (const project of projects) {
+    const made_at = (project: CanyonProject) =>
+      Date.parse(project.metadata.creationTimestamp ?? '') || Number.MAX_SAFE_INTEGER;
+    for (const project of [...projects].sort((a, b) => made_at(a) - made_at(b))) {
       const workflow_group_id = project.spec?.projectID;
       const name = project.spec?.displayName;
       const namespace = project.metadata.namespace;
       if (!workflow_group_id || !UUID.test(workflow_group_id) || !name || !namespace) continue;
+      const held = deploys.get(workflow_group_id);
+      if (held) {
+        k8s_logger.warn(
+          'Left a CanyonProject that claims the id of a workflow group running elsewhere',
+          {
+            workflow_group_id,
+            namespace,
+            deployed_in: held.namespace,
+          }
+        );
+        continue;
+      }
       let deployed: DeployedFingerprints | null = null;
       try {
         const annotation = project.metadata.annotations?.[DEPLOYED_ANNOTATION];

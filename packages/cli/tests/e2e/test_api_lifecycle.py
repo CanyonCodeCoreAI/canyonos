@@ -5,21 +5,27 @@
 that runs or reads a deploy goes through it, so each must find it again when it is
 gone. A deploy registers with the dashboard before its upload, and `canyonos status`,
 `logs` and `sync` start a stopped API again; `canyonos stop` and `sync` bring back a
-removed one, which then serves them from what it stored; a rebuilt API image, or an
-API key the running API was not started with, has the next command that runs a
-deploy replace the API, while `status` names the API key file and the fix; and an
-API image that is nowhere stops a deploy before it starts anything, naming the image
-and the variable that picks it.
+removed one, which then serves them from what it stored; a rebuilt API image, or a
+deploy key the running API was not started with, has the next command that runs a
+deploy replace the API, while `status` names the fix; the deploy key is made once and
+only its hash reaches the API, and a workflow group's new API key restarts no API;
+and an API image that is nowhere stops a deploy before it starts anything, naming the
+image and the variable that picks it.
 
 Each case has its own HOME, but the API's container name, ports and the Docker engine
 are the machine's, so every case tears its deploy down whether or not it passed."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import secrets
+import stat
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import yaml
@@ -36,9 +42,11 @@ from .harness import (
     runtime_environment,
     workflow_config_dir,
     workflow_group_id,
+    workflow_group_record,
 )
 
 DEPLOY_TIMEOUT = 600
+DEPLOY_KEY_HASH = "CANYONOS_DEPLOY_KEY_HASH"
 # An image tag no registry has, so pulling it fails wherever the case runs.
 MISSING_API_IMAGE = "canyonos-api:does-not-exist"
 
@@ -61,6 +69,21 @@ def _containers_of(case, folder: Path) -> list[str]:
     prefix = workflow_group_id(case, folder)[:8]
     names = docker("ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}")
     return names.split()
+
+
+def _deploy_key_file(case) -> Path:
+    return case.home / ".canyonos" / "dashboard" / "deploy_key"
+
+
+def _dashboard_env(case) -> str:
+    return (case.home / ".canyonos" / "dashboard" / ".env").read_text()
+
+
+def _api_env() -> list[str]:
+    """The environment the running API container was started with."""
+    return json.loads(
+        docker("inspect", "--format", "{{json .Config.Env}}", API_CONTAINER)
+    )
 
 
 def _said(result) -> str:
@@ -235,16 +258,112 @@ def test_a_rebuilt_api_image_replaces_the_running_api(deployed_workflow):
 
 
 @needs_a_runtime
-def test_status_names_the_api_key_until_stop_restarts_the_api(deployed_workflow):
-    """An API key in `~/.canyonos/api_key` that the running API was not started with:
-    `canyonos status`, which never replaces a running API, fails and says to restart
-    it with that file's key; `canyonos stop` restarts it itself and stops the
-    deploy."""
+def test_the_deploy_key_is_made_once_and_only_its_hash_reaches_the_api(
+    deployed_workflow,
+):
+    """The first deploy makes this machine's deploy key, readable only by you, and the
+    API gets its SHA-256 alone; the next deploy keeps both and the API. An API started
+    before deploy keys, with no hash in the stack's `.env`, is replaced once."""
     case, folder = deployed_workflow
-    deploy_starter(case, folder, "--api-key", secrets.token_urlsafe(32))
-    api_key = case.home / ".canyonos" / "api_key"
-    assert api_key.is_file(), "the deploy saved no API key"
-    api_key.write_text(secrets.token_urlsafe(32) + "\n")
+    deploy_starter(case, folder)
+    key_file = _deploy_key_file(case)
+    key = key_file.read_text().strip()
+    assert re.fullmatch(r"[0-9a-f]{64}", key), "the deploy key is not 32 random bytes"
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    assert f"{DEPLOY_KEY_HASH}={key_hash}" in _dashboard_env(case).splitlines()
+    assert "CANYONOS_API_KEY_HASH" not in _dashboard_env(case)
+    api_env = _api_env()
+    assert f"{DEPLOY_KEY_HASH}={key_hash}" in api_env, api_env
+    assert not any(entry.startswith("CANYONOS_API_KEY_HASH=") for entry in api_env)
+    assert all(key not in entry for entry in api_env), "the API got the raw key"
+    before, _ = _api_container()
+
+    deploy_starter(case, folder)
+
+    assert key_file.read_text().strip() == key, "a second deploy made a new key"
+    assert _api_container()[0] == before, "a second deploy replaced the API"
+
+    env_path = case.home / ".canyonos" / "dashboard" / ".env"
+    env_path.write_text(
+        "".join(
+            line
+            for line in env_path.read_text().splitlines(keepends=True)
+            if not line.startswith(f"{DEPLOY_KEY_HASH}=")
+        )
+    )
+    run_ok(
+        case,
+        ["sync", STARTER],
+        timeout=DEPLOY_TIMEOUT,
+        env=runtime_environment(),
+        cwd=folder,
+    )
+    upgraded, _ = _api_container()
+    assert upgraded != before, "an API with no deploy key hash was kept"
+    assert key_file.read_text().strip() == key
+    run_ok(
+        case,
+        ["sync", STARTER],
+        timeout=DEPLOY_TIMEOUT,
+        env=runtime_environment(),
+        cwd=folder,
+    )
+    assert _api_container()[0] == upgraded, "the upgraded API was replaced again"
+
+
+def _api_url(case) -> str:
+    """The CanyonOS API the CLI of `case` started, on the port its dashboard records."""
+    ports = json.loads(
+        (case.home / ".canyonos" / "dashboard" / "ports.json").read_text()
+    )
+    return f"http://127.0.0.1:{ports['api']}"
+
+
+def _key_check(case, key: str) -> int:
+    """The status the running API answers `/v1/auth/check` with for `key`."""
+    request = urllib.request.Request(
+        f"{_api_url(case)}/v1/auth/check", headers={"Authorization": f"Bearer {key}"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as reply:
+            return reply.status
+    except urllib.error.HTTPError as refused:
+        return refused.code
+
+
+@needs_a_runtime
+def test_a_new_api_key_keeps_the_running_api(deployed_workflow):
+    """A redeploy with another API key sets it in the workflow group's record and its
+    endpoint, and leaves the CanyonOS API's container running as it was: that API takes
+    the new key and refuses the old one from then on, with no restart."""
+    case, folder = deployed_workflow
+    old_key = secrets.token_urlsafe(32)
+    deploy_starter(case, folder, "--api-key", old_key)
+    before, _ = _api_container()
+    assert _key_check(case, old_key) == 200
+    new_key = secrets.token_urlsafe(32)
+
+    _, output = deploy_starter(case, folder, "--api-key", new_key)
+
+    assert "Only this workflow group changes" in output, output
+    record = workflow_group_record(case, folder)
+    assert (record / "api_key").read_text().strip() == new_key
+    assert not (case.home / ".canyonos" / "api_key").exists()
+    assert _api_container()[0] == before, "a new API key replaced the API"
+    assert _key_check(case, new_key) == 200
+    assert _key_check(case, old_key) == 401
+
+
+@needs_a_runtime
+def test_status_names_the_deploy_key_until_stop_restarts_the_api(deployed_workflow):
+    """A deploy key the running API was not started with, on a workflow group that has
+    a key, so only the deploy key or its own opens its routes: `canyonos status`, which
+    never replaces a running API, fails and says how to restart it with this machine's
+    deploy key; `canyonos stop` restarts it itself and stops the deploy."""
+    case, folder = deployed_workflow
+    deploy_starter(case, folder, "--api-key", secrets.token_hex(16))
+    _deploy_key_file(case).write_text(secrets.token_hex(32) + "\n")
 
     refused = case.run_cli(
         ["status"], timeout=DEPLOY_TIMEOUT, env=runtime_environment(), cwd=folder
@@ -252,8 +371,7 @@ def test_status_names_the_api_key_until_stop_restarts_the_api(deployed_workflow)
 
     said = _said(refused)
     assert refused.returncode == 1, said
-    assert "this machine's API key" in said, said
-    assert str(api_key) in said and "`canyonos serve`" in said, said
+    assert "deploy key" in said and "`canyonos serve`" in said, said
     assert "Traceback" not in said, said
     run_ok(
         case, ["stop"], timeout=DEPLOY_TIMEOUT, env=runtime_environment(), cwd=folder

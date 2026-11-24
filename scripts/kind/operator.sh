@@ -6,9 +6,8 @@
 # checkout: the core, api and web images `bun run canyonos:dev` builds, and the
 # operator image built here, are pushed to the cluster's registry, then the operator's
 # chart is installed with the in-cluster image builder, the CanyonOS API and the
-# dashboard, which takes this machine's API key as `canyonos cluster up` sets it:
-# CANYONOS_API_KEY, else ~/.canyonos/api_key, made there when there is none. An image
-# that changed rolls out, one that did not restarts nothing. scripts/kind/up.sh runs it
+# dashboard, whose routes take each workflow group's own API key, as its CanyonProject
+# carries it. An image that changed rolls out, one that did not restarts nothing. scripts/kind/up.sh runs it
 # first, and `bun run canyonos:dev` again after each rebuild while the cluster exists.
 # With --version, a published release instead, as a customer installs it: its chart
 # and images, from ghcr.
@@ -16,7 +15,6 @@
 # Usage: scripts/kind/operator.sh [--version X.Y.Z]
 # Environment:
 #   CANYONOS_KIND_CLUSTER       The cluster's name (default canyonos).
-#   CANYONOS_API_KEY            The dashboard's API key, instead of ~/.canyonos/api_key.
 #   CANYONOS_KIND_REUSE_VALUES  1: upgrade with --reset-then-reuse-values, as the
 #                               Kubernetes guide upgrades: the settings the installed
 #                               release was given, on this chart's own defaults.
@@ -72,37 +70,20 @@ helm() {
     -e KUBECONFIG=/kube/config "${HELM_IMAGE}" "$@"
 }
 
-# The chart needs the API's key (dashboard.apiKeyHash): every signed-in user may
-# port-forward to the API. This machine's, as the CLI keeps it (canyonos/auth.py).
-key_file="${HOME}/.canyonos/api_key"
-api_key="${CANYONOS_API_KEY:-}"
-if [ -z "${api_key}" ] && [ -s "${key_file}" ]; then
-  api_key="$(tr -d '\r\n' < "${key_file}")"
-fi
-if [ -z "${api_key}" ]; then
-  mkdir -p "$(dirname "${key_file}")" && chmod 700 "$(dirname "${key_file}")"
-  api_key="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-  (umask 077 && printf '%s\n' "${api_key}" > "${key_file}")
-  echo "Made this machine's API key, in ${key_file}: the dashboard and your deploys use it"
-fi
-if command -v sha256sum >/dev/null 2>&1; then
-  api_key_hash="$(printf %s "${api_key}" | sha256sum | cut -d' ' -f1)"
-else  # macOS
-  api_key_hash="$(printf %s "${api_key}" | shasum -a 256 | cut -d' ' -f1)"
-fi
-
 # The cluster's own registry: the builder pushes to it over plain HTTP, by the name it
 # has inside the kind network.
-# The builder and the dashboard come with the chart's defaults; the API's key does not.
+# The builder and the dashboard come with the chart's defaults.
 kind_values=(
   --set "builder.insecureRegistries={kind-registry:5000}"
   --set "builder.registryAliases.localhost:5001=kind-registry:5000"
-  --set "dashboard.apiKeyHash=${api_key_hash}"
 )
 
 if [ -n "${version}" ]; then
-  # Releases up to 0.2.x leave the builder and the dashboard off unless asked.
-  kind_values+=(--set builder.enabled=true --set dashboard.enabled=true)
+  # Releases up to 0.2.x leave the builder and the dashboard off unless asked; 0.2.3.dev3
+  # and dev4 refuse to install without a chart-wide key hash, which later charts do not
+  # read: a random one, as no key of this machine opens those releases' dashboards.
+  kind_values+=(--set builder.enabled=true --set dashboard.enabled=true
+    --set "dashboard.apiKeyHash=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')")
   log "CanyonOS ${version}, as published"
   # Releases up to 0.2.x keep their CRDs in crds/, which Helm installs once and never
   # upgrades: apply those first. Later ones render them as templates, and show none.
@@ -162,4 +143,4 @@ helm upgrade --install canyonos /charts/canyonos-operator \
   --set dashboard.apiImage="${api}" \
   --set dashboard.webImage="${web}" \
   --wait --timeout 10m >/dev/null
-echo "operator, builder, CanyonOS API and dashboard installed; the dashboard takes this machine's API key"
+echo "operator, builder, CanyonOS API and dashboard installed; the dashboard takes each workflow group's own API key"

@@ -40,9 +40,6 @@ CRDS=(canyonprojects.canyonos.canyoncode.ai canyonagents.canyonos.canyoncode.ai
   canyonbuilds.canyonos.canyoncode.ai)
 # helm 3.17.3, pinned by digest, as scripts/kind/operator.sh runs it.
 HELM_IMAGE="alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895"
-# The chart refuses to install without the API's key (dashboard.apiKeyHash): the
-# refusals below pass one, so only the check each is for can refuse.
-KEY="dashboard.apiKeyHash=0000000000000000000000000000000000000000000000000000000000000000"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "${HERE}/../.." && pwd)"
 
@@ -101,7 +98,7 @@ fi
 
 log "crds.enabled=false with no CRDs in the cluster: refused"
 said="$(helm install canyonos /kube/chart/canyonos-operator --namespace "${NAMESPACE}" \
-  --create-namespace --set crds.enabled=false --set "${KEY}" 2>&1)" && fail "installed with no CRDs: ${said}"
+  --create-namespace --set crds.enabled=false 2>&1)" && fail "installed with no CRDs: ${said}"
 echo "${said}" | grep -q "crds.enabled is false, but the cluster has no CRD" \
   || fail "refused without saying why: ${said}"
 helm status canyonos -n "${NAMESPACE}" >/dev/null 2>&1 && fail "the refused install left a release"
@@ -193,7 +190,7 @@ echo "the project is back under the operator"
 
 log "A second install, in another namespace: refused before anything is applied"
 said="$(helm install canyonos-second /kube/chart/canyonos-operator --namespace "${SECOND_NS}" \
-  --create-namespace --set "${KEY}" 2>&1)" && fail "a second operator installed: ${said}"
+  --create-namespace 2>&1)" && fail "a second operator installed: ${said}"
 echo "${said}" | grep -q "already installed in this cluster: Helm release \"canyonos\" in namespace \"${NAMESPACE}\"" \
   || fail "refused without saying why: ${said}"
 helm status canyonos-second -n "${SECOND_NS}" >/dev/null 2>&1 && fail "the refused install left a release"

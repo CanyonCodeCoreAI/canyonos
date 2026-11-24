@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "CanyonOS API",
-    "description": "With CANYONOS_API_KEY_HASH set, every /v1/workflows and /v1/resources route, /v1/auth/check, and the requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups need the API key as `Authorization: Bearer <key>`, checked before the request is read: a request without it is 401 whatever it sends. Without it every route is open. Until its database is migrated and answers, every route that reads it answers 503 `database.unavailable`; /v1/readyz says when the API is ready. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route takes the API key too, and is open without it. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace.",
+    "description": "Each workflow group has its own API key, the one it was deployed with, sent as `Authorization: Bearer <key>` and checked before the request is read: a request without it is 401 whatever it sends. A workflow group deployed with no key is open. The requests, metrics, monitoring, prompts, scaling, governance, history and sample-data routes of a workflow under /v1/workflow-groups/<workflow_group_id> take that workflow group's key; a workflow group this API has no record of is 401. /v1/workflows and /v1/resources answer with the workflows of the workflow groups the key opens and of the open ones; a key that opens none of the workflow groups that have one is 401. /v1/auth/check answers 200 to a key that opens a workflow group, and to anyone while none has a key. The telemetry routes of a workflow group (POST traces, metrics and logs under /v1/workflow-groups/<workflow_group_id>) take no key: the Global Controller that sends them holds none. On Docker every other /v1/workflow-groups route takes the machine's deploy key (the sha256 of which is CANYONOS_DEPLOY_KEY_HASH) or the workflow group's own key, and is open on a workflow group with none; a workflow group this API has no record of yet takes the deploy key only, and the list shows each caller the workflow groups its key opens, the deploy key every one. On Kubernetes (CANYONOS_TARGET=kubernetes) each of those routes needs the Kubernetes login of its caller as `Authorization: Bearer <token>`, and a route on a workflow group needs the right to get (to read) or update (to change) CanyonProjects in its namespace. Until its database is migrated and answers, every route that reads it, the key checks included, answers 503 `database.unavailable`; /v1/readyz says when the API is ready.",
     "version": "0.2.3-dev4"
   },
   "tags": [
@@ -50,6 +50,7 @@
           },
           "api_key_hash": {
             "type": "string",
+            "pattern": "^(?:[0-9a-f]{64})?$",
             "nullable": true
           }
         },
@@ -761,6 +762,7 @@
               "workflow_groups.reupload_needed",
               "workflow_groups.registration_required",
               "registry.registration_failed",
+              "registry.workflow_taken",
               "database.unavailable",
               "kubernetes.error",
               "docker.disabled",
@@ -1193,7 +1195,8 @@
     "/v1/auth/status": {
       "get": {
         "tags": ["Auth"],
-        "summary": "Whether the API needs a key; asked before sign-in",
+        "summary": "Whether any workflow group needs a key; asked before sign-in",
+        "description": "True too while the database is not ready to say.",
         "responses": {
           "200": {
             "description": "Response for status 200",
@@ -1344,7 +1347,8 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Answers 200 when the request carries the API key; what sign-in checks a key with",
+        "summary": "Answers 200 when the key opens a workflow group; what sign-in checks a key with",
+        "description": "Also 200 with no key while no workflow group has one; 401 `auth.missing_key` or `auth.invalid_key` otherwise.",
         "responses": {
           "200": {
             "description": "Response for status 200",
@@ -1497,7 +1501,7 @@
           }
         ],
         "summary": "Fleet overview: per-workflow cost/requests/tokens over a time range",
-        "description": "Counts the requests that started in the range, each whole.",
+        "description": "Counts the requests that started in the range, each whole, of the workflows of the workflow groups the key opens, the open ones included.",
         "parameters": [
           {
             "name": "from",
@@ -2134,7 +2138,7 @@
         ],
         "operationId": "listWorkflowGroups",
         "summary": "List the workflow groups",
-        "description": "Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one.",
+        "description": "Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one. On Docker, the machine's deploy key lists every one; any other caller the workflow groups its key opens and the open ones.",
         "responses": {
           "200": {
             "description": "Response for status 200",
@@ -3962,7 +3966,7 @@
         ],
         "operationId": "putWorkflowGroupDashboard",
         "summary": "Register the workflow group's workflows with this dashboard",
-        "description": "Stores each workflow's name by its workflow_id with the workflow group's Redis: its container name, port and password, and a client certificate its CA signs when it takes only TLS. `canyonos deploy` sends it once the Global Controller container exists, before it starts: nothing connects to the Redis here; the status and the dashboard read it once the deploy runs. Returns the workflows as the dashboard names them; a workflow registered before keeps its name. On Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry already lists the workflow group: the body is optional and not used, and the workflows the dashboard knows of it are returned; on Docker a request without it is 422 `workflow_groups.registration_required`.",
+        "description": "Stores each workflow's name by its workflow_id with the workflow group's Redis: its container name, port and password, and a client certificate its CA signs when it takes only TLS. `canyonos deploy` sends it once the Global Controller container exists, before it starts: nothing connects to the Redis here; the status and the dashboard read it once the deploy runs. Returns the workflows as the dashboard names them; a workflow registered before keeps its name. A workflow of another workflow group moves in only when the caller opens that one too: with its key, the deploy key, or while it has no key; 409 `registry.workflow_taken` otherwise. On Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry already lists the workflow group: the body is optional and not used, and the workflows the dashboard knows of it are returned; on Docker a request without it is 422 `workflow_groups.registration_required`.",
         "parameters": [
           {
             "name": "workflow_group_id",

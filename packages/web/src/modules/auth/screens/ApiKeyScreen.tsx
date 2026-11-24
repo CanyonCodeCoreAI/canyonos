@@ -48,11 +48,11 @@ export function ApiKeyScreen() {
     <div>
       <header className={enterAt(0)}>
         <h1 className="text-foreground text-xl font-semibold tracking-tight">
-          Sign in with the API key
+          Sign in with an API key
         </h1>
         <p className="text-muted-foreground mt-1 text-[0.8125rem]">
-          The key this machine runs CanyonOS with, set by <code>--api-key</code> on{' '}
-          <code>canyonos deploy</code> or <code>canyonos serve</code>.
+          The key of a workflow group, set by <code>--api-key</code> on <code>canyonos deploy</code>
+          . It opens that group&apos;s workflows.
         </p>
       </header>
 

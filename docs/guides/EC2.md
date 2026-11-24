@@ -181,7 +181,8 @@ ec2-pool:
 canyonos deploy helloworld --api-key <your api key>    # choose 1. Deploy
 ```
 
-`--api-key` sets the key every request must carry, saved on the deploying machine; see
+`--api-key` sets the workflow group's key every request must carry, saved in its record
+on the deploying machine; see
 [API key](AUTHORIZATION.md). The deploy shows each agent's CPU, memory, GPU and replicas, with its machine type or
 the pool. It then launches the agent machines, copies the images to them, starts Redis
 on each and places the replicas. **Deploy is live** prints the endpoint and dashboard

@@ -67,21 +67,23 @@ def _parse_bool(value):
 
 
 def add_api_key_options(command):
-    """Give `command` --api-key and --no-api-key, which set, replace or remove this
-    machine's API key."""
+    """Give `command` --api-key and --no-api-key, which set, replace or remove the API
+    key of the workflow group it deploys."""
     options = command.add_mutually_exclusive_group()
     options.add_argument(
         "--api-key",
         metavar="KEY",
-        help="Set this machine's API key, any string you choose, replacing the stored "
-        "one (~/.canyonos/api_key): every endpoint and the dashboard API then need "
-        "`Authorization: Bearer <key>`. Later deploys and serves reuse it. "
-        "Default: the stored key, else none, and anyone who reaches them is answered",
+        help="Set this workflow group's API key, any string you choose, replacing the "
+        "one its record keeps (~/.canyonos/workflows/<workflow group>/api_key): its "
+        "endpoint and its dashboard routes then need `Authorization: Bearer <key>`. "
+        "Other workflow groups keep their own keys, and later deploys of this one "
+        "reuse it. Default: the recorded key, else none, and anyone who reaches them "
+        "is answered",
     )
     options.add_argument(
         "--no-api-key",
         action="store_true",
-        help="Remove this machine's API key: this deploy or serve checks no key",
+        help="Remove this workflow group's API key: its endpoint checks no key",
     )
     return command
 
@@ -119,7 +121,7 @@ def main():
 def _uses_the_selected_deployment(args):
     """True when `args` is a command that acts on one workflow group of this machine and
     names none: `stop`, `clean`, `status`, `logs`, `test`, `sync`, `curl`, `config`,
-    `doctor`, `chat` and `serve`."""
+    `doctor`, `chat`, `serve` and `dashboard`, which signs in with its key."""
     if args.command in ("stop", "clean"):
         return not args.all and not args.deployments
     return args.command in (
@@ -132,6 +134,7 @@ def _uses_the_selected_deployment(args):
         "doctor",
         "chat",
         "serve",
+        "dashboard",
     )
 
 
@@ -485,15 +488,14 @@ def _run_command(settings_at_start):
         help="Install the CanyonOS skill and exit, without launching the coding agent",
     )
     doctor = add("doctor", lambda args: sys.exit(0 if run_doctor() else 1))
-    serve = add(
+    add(
         "serve",
         lambda args: sys.exit(
             kubernetes_target.run_kubernetes_serve()
             if configured_target() == "kubernetes"
-            else run_serve(api_key=args.api_key, no_api_key=args.no_api_key)
+            else run_serve()
         ),
     )
-    add_api_key_options(serve)
     status = add(
         "status",
         lambda args: sys.exit(0 if run_status(args.json) else NoDeployError.exit_code),

@@ -193,9 +193,9 @@ export const docker_target: WorkflowGroupTarget = {
     return [...(await list_controllers()).keys()];
   },
 
-  async put_group_files(workflow_group_id, body) {
+  async put_group_files(workflow_group_id, body, api_key_hash) {
     const controller = await existing_controller(workflow_group_id);
-    const row = await workflow_groups_repo.claim(workflow_group_id, controller.id);
+    const row = await workflow_groups_repo.claim(workflow_group_id, controller.id, api_key_hash);
     core_answer(
       await run_job(controller, ['write-group-files'], {
         [GROUP_FILES]: JSON.stringify({ config: body.config, env: body.env }),
@@ -224,7 +224,7 @@ export const docker_target: WorkflowGroupTarget = {
 
   async put_workflow(workflow_group_id, name, archive) {
     const controller = await existing_controller(workflow_group_id);
-    await workflow_groups_repo.claim(workflow_group_id, controller.id);
+    await workflow_groups_repo.claim(workflow_group_id, controller.id, undefined);
     return run_job(controller, ['put-workflow', name, '--archive', `/tmp/${UPLOAD_ARCHIVE}`], {
       [UPLOAD_ARCHIVE]: new Uint8Array(await archive.arrayBuffer()),
     });
@@ -253,7 +253,7 @@ export const docker_target: WorkflowGroupTarget = {
     // An upload that went into another container's volume is not in this one's.
     const row =
       controller && found.controller_container_id !== controller.id
-        ? await workflow_groups_repo.claim(found.id, controller.id)
+        ? await workflow_groups_repo.claim(found.id, controller.id, undefined)
         : found;
     return {
       row,
@@ -357,7 +357,7 @@ export const docker_target: WorkflowGroupTarget = {
    * connects to the Redis here, the status reads it once the deploy runs. This API's container
    * joins the container's networks now, so that read finds the Redis by name. 422 without it:
    * the body is optional only for Kubernetes. */
-  async register_dashboard(workflow_group_id, row, registration) {
+  async register_dashboard(workflow_group_id, row, registration, opened) {
     if (registration === undefined) {
       throw unprocessable(
         'workflow_groups.registration_required',
@@ -366,7 +366,7 @@ export const docker_target: WorkflowGroupTarget = {
       );
     }
     const controller = await locate(workflow_group_id, row);
-    const workflows = await register_workflow_group(workflow_group_id, registration);
+    const workflows = await register_workflow_group(workflow_group_id, registration, opened);
     if (controller) await join_group_networks(workflow_group_id, { fresh: true });
     return { workflows };
   },

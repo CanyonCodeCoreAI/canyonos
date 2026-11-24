@@ -44,10 +44,10 @@ services:
     environment:
       DATABASE_URL: postgresql://canyonos:canyonos@db:5432/canyonos
       REDIS_PASSWORD_ENCRYPTION_KEY: ${CANYONOS_REDIS_PASSWORD_ENCRYPTION_KEY}
-      # The SHA-256 of this machine's API key (`--api-key`), which the
-      # `/v1/workflow-groups` routes that run each Global Controller take too; empty,
-      # the API checks nothing. Read once when the API starts.
-      CANYONOS_API_KEY_HASH: ${CANYONOS_API_KEY_HASH}
+      # The SHA-256 of this machine's deploy key, which the CLI makes once and sends
+      # on every `/v1/workflow-groups` call; only it creates a workflow group. Each
+      # workflow group's own key is in the API's database. Read once when the API starts.
+      CANYONOS_DEPLOY_KEY_HASH: ${CANYONOS_DEPLOY_KEY_HASH}
       DOCKER_SOCKET: /var/run/docker.sock
       # This container's name, as container_name above: the API connects it to each
       # workflow group's network before it reads that group's Redis by name.

@@ -120,6 +120,13 @@
       "when": 1795145256716,
       "tag": "0016_drop_files",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795530943278,
+      "tag": "0017_workflow_group_stopped_at",
+      "breakpoints": true
     }
   ]
 }

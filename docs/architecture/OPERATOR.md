@@ -58,13 +58,13 @@ CLI and the Global Controller use the same rule. Any other name is not run and r
    force-deleted so the StatefulSet can replace it. A database pod never is, since the
    node may still be writing its disk.
 
-`spec.auth.apiKeyHash` says who may call the endpoint: the sha256 of the deploying
-machine's API key, as 64 lowercase hex characters (see [Endpoint](ENDPOINT.md#api-key)).
+`spec.auth.apiKeyHash` says who may call the endpoint: the sha256 of the workflow
+group's API key, as 64 lowercase hex characters (see [Endpoint](ENDPOINT.md#api-key)).
 The flow:
 
 1. The CLI sends the API key's hash to the CanyonOS API, which writes
    `{"apiKeyHash": "<hash>"}` into the CanyonBuild's `spec.auth`, or leaves `spec.auth`
-   out when the machine has no key.
+   out when the workflow group has no key.
 2. The build pod gets it as `CANYONOS_API_KEY_HASH`, and its `apply-project` writes it into
    the CanyonProject's `spec.auth.apiKeyHash`.
 3. The operator keeps it in the project's Secret `canyonos-api-key` (key `hash`, empty
@@ -118,11 +118,11 @@ at least once a minute in case Redis lost it. For the full schema, see
   `canyonos_core.cli` commands it needs (unpacking a workflow, the deploy's plan, the
   build's upload) and gets no Kubernetes token. See
   [The CanyonOS API](../guides/KUBERNETES.md#the-canyonos-api).
-- **Dashboard key:** the chart, not the operator, sets the dashboard's key. The chart's
-  `dashboard.apiKeyHash` goes into its Secret `canyonos-dashboard` as `api-key-hash`
-  (or `dashboard.existingSecret` carries it), and the API reads it as
-  `CANYONOS_API_KEY_HASH`. The chart refuses to install without one, since every
-  signed-in user may port-forward to the API.
+- **Dashboard key:** there is none of its own. The API reads each CanyonProject's
+  `spec.auth.apiKeyHash` when it starts, and a workflow group's dashboard routes take
+  only that workflow group's key. Of two CanyonProjects claiming one workflow group id,
+  the older is the workflow group's; a later one, made by hand in another namespace,
+  sets no key.
 - **Deletion:** the finalizer `canyonos.canyoncode.ai/teardown` holds a CanyonAgent or
   CanyonProject until it is taken down in order. An agent is unrouted, then its
   StatefulSet is deleted and its pods drain. A CanyonProject deletes its endpoint and agents,

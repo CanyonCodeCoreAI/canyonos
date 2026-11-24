@@ -11,12 +11,19 @@ export function workflow_not_found(workflow_id: string) {
   return notFound('workflows.not_found', `Workflow "${workflow_id}" was not found`);
 }
 
-export async function list_workflows(): Promise<WorkflowSummary[]> {
-  return workflows_repo.list();
+/** The workflows of the workflow groups `workflow_group_ids`. */
+export async function list_workflows(
+  workflow_group_ids: readonly string[]
+): Promise<WorkflowSummary[]> {
+  return workflows_repo.list(workflow_group_ids);
 }
 
-export async function get_workflow(workflow_id: string): Promise<WorkflowSummary> {
-  const workflow = await workflows_repo.get(workflow_id);
+/** The workflow, when it is in one of the workflow groups `workflow_group_ids`; 404 otherwise. */
+export async function get_workflow(
+  workflow_id: string,
+  workflow_group_ids: readonly string[]
+): Promise<WorkflowSummary> {
+  const workflow = await workflows_repo.get(workflow_id, workflow_group_ids);
   if (!workflow) throw workflow_not_found(workflow_id);
   return workflow;
 }

@@ -29,6 +29,7 @@ export interface ObjectMeta {
   namespace?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  creationTimestamp?: string;
   deletionTimestamp?: string;
   /** The spec's version, which a status's observedGeneration says it describes. */
   generation?: number;

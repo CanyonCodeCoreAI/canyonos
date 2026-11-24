@@ -45,7 +45,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Whether the API needs a key; asked before sign-in */
+    /**
+     * Whether any workflow group needs a key; asked before sign-in
+     * @description True too while the database is not ready to say.
+     */
     get: operations['getV1AuthStatus'];
     put?: never;
     post?: never;
@@ -62,7 +65,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Answers 200 when the request carries the API key; what sign-in checks a key with */
+    /**
+     * Answers 200 when the key opens a workflow group; what sign-in checks a key with
+     * @description Also 200 with no key while no workflow group has one; 401 `auth.missing_key` or `auth.invalid_key` otherwise.
+     */
     get: operations['getV1AuthCheck'];
     put?: never;
     post?: never;
@@ -81,7 +87,7 @@ export interface paths {
     };
     /**
      * Fleet overview: per-workflow cost/requests/tokens over a time range
-     * @description Counts the requests that started in the range, each whole.
+     * @description Counts the requests that started in the range, each whole, of the workflows of the workflow groups the key opens, the open ones included.
      */
     get: operations['getV1ResourcesOverview'];
     put?: never;
@@ -133,7 +139,7 @@ export interface paths {
     };
     /**
      * List the workflow groups
-     * @description Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one.
+     * @description Every workflow group with an upload here or a deploy (a Global Controller container on Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty before one. On Docker, the machine's deploy key lists every one; any other caller the workflow groups its key opens and the open ones.
      */
     get: operations['listWorkflowGroups'];
     put?: never;
@@ -306,7 +312,7 @@ export interface paths {
     get?: never;
     /**
      * Register the workflow group's workflows with this dashboard
-     * @description Stores each workflow's name by its workflow_id with the workflow group's Redis: its container name, port and password, and a client certificate its CA signs when it takes only TLS. `canyonos deploy` sends it once the Global Controller container exists, before it starts: nothing connects to the Redis here; the status and the dashboard read it once the deploy runs. Returns the workflows as the dashboard names them; a workflow registered before keeps its name. On Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry already lists the workflow group: the body is optional and not used, and the workflows the dashboard knows of it are returned; on Docker a request without it is 422 `workflow_groups.registration_required`.
+     * @description Stores each workflow's name by its workflow_id with the workflow group's Redis: its container name, port and password, and a client certificate its CA signs when it takes only TLS. `canyonos deploy` sends it once the Global Controller container exists, before it starts: nothing connects to the Redis here; the status and the dashboard read it once the deploy runs. Returns the workflows as the dashboard names them; a workflow registered before keeps its name. A workflow of another workflow group moves in only when the caller opens that one too: with its key, the deploy key, or while it has no key; 409 `registry.workflow_taken` otherwise. On Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry already lists the workflow group: the body is optional and not used, and the workflows the dashboard knows of it are returned; on Docker a request without it is 422 `workflow_groups.registration_required`.
      */
     put: operations['putWorkflowGroupDashboard'];
     post?: never;
@@ -1075,6 +1081,7 @@ export interface components {
         | 'workflow_groups.reupload_needed'
         | 'workflow_groups.registration_required'
         | 'registry.registration_failed'
+        | 'registry.workflow_taken'
         | 'database.unavailable'
         | 'kubernetes.error'
         | 'docker.disabled'

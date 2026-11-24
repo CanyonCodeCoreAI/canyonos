@@ -6,7 +6,8 @@ The CanyonOS API's `/v1/workflow-groups` routes, so the commands that deploy, st
 read a workflow group don't each restate the same routes, payloads and failure modes.
 
 On Docker the API is the local stack's (`dashboard_stack`), on 127.0.0.1 at its host
-port, and every call sends this machine's API key, if any; the API runs each workflow
+port, and every call sends this machine's deploy key, which opens every workflow
+group's routes here and is the only key that creates one; the API runs each workflow
 group's Global Controller container through Docker. On Kubernetes it is the cluster's,
 the one the operator's chart installs, reached through a port-forward with the user's
 kubectl login (`kubernetes_target.kubernetes_state`); it runs each workflow group as a
@@ -22,7 +23,7 @@ import urllib.parse
 import urllib.request
 
 from canyonos import deployment, env
-from canyonos.auth import api_key_path, auth_header
+from canyonos.auth import api_key_path, bearer_header
 from canyonos.init import load_state
 
 REQUEST_TIMEOUT_SECONDS = 60
@@ -53,7 +54,8 @@ OLDER_CHART_ERRORS = {
     401: ("auth.control_key_unset",),
 }
 
-# What the API answers a /v1/workflow-groups call without the API key it was started with.
+# What the API answers a /v1/workflow-groups call that sends neither its deploy key nor
+# the workflow group's own key.
 API_KEY_REFUSALS = (
     "auth.missing_key",
     "auth.invalid_key",
@@ -114,13 +116,21 @@ def _on_kubernetes(state):
     return bool(state and "api_url" in state)
 
 
+def docker_api_headers():
+    """The headers every call to this machine's CanyonOS API sends: its deploy key."""
+    # Imported here: the stack's module reads ports this one has no need of.
+    from canyonos.dashboard_stack import deploy_key
+
+    return bearer_header(deploy_key())
+
+
 def _connection(state):
     """The base URL and headers a call about `state`'s workflow group goes to: the
-    cluster's API on Kubernetes, else this machine's with its API key; this
+    cluster's API on Kubernetes, else this machine's with its deploy key; this
     machine's when `state` is None."""
     if _on_kubernetes(state):
         return state["api_url"], state["api_headers"]
-    return docker_api_url(), auth_header()
+    return docker_api_url(), docker_api_headers()
 
 
 def error_detail(body, status):
@@ -170,10 +180,12 @@ def _next_step(state, code):
     if _on_kubernetes(state):
         return ""
     if code in API_KEY_REFUSALS:
-        # deploy, sync and stop restart such an API themselves (`serve.ensure_api`).
+        # deploy, sync and stop restart an API on another deploy key themselves
+        # (`serve.ensure_api`).
         return (
-            " Run `canyonos serve` to restart the CanyonOS API with this machine's "
-            f"API key, in {api_key_path()}."
+            f" This workflow group's API key is in {api_key_path()}; "
+            "`canyonos deploy --api-key <key>` sets it. `canyonos serve` restarts the "
+            "CanyonOS API with this machine's deploy key."
         )
     if code == DATABASE_UNAVAILABLE:
         return _database_hint(state)
@@ -381,8 +393,8 @@ def put_workflow_group(state, config, env_text, workflows=None, api_key_hash=Non
     and the text `env_text` of the `.env` beside it (None when there is none); with
     `workflows`, a list of workflow_ids, the API removes the uploaded workflows not
     among them; with
-    `api_key_hash`, the SHA-256 of the deploy's API key ("" for none), it keeps that as
-    the deploy's key. Return the new generation and the upload's warnings. Raises
+    `api_key_hash`, the SHA-256 of this workflow group's API key ("" for none), it keeps
+    that as its key, which only this workflow group's routes and endpoint take. Return the new generation and the upload's warnings. Raises
     ApiError on failure."""
     body = {
         "name": deployment.folder_name(),

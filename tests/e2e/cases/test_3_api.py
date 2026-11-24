@@ -14,6 +14,7 @@ import re
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlencode
 
 import pytest
@@ -37,6 +38,8 @@ from ..harness import (
 DATA_TIMEOUT = 90
 DASHBOARD_API = "canyonos-dashboard-api"
 TRUSTED_MOUNT = "/etc/canyonos/auth/trusted"
+# Where the CLI keeps this machine's deploy key (dashboard_stack.DEPLOY_KEY_FILE).
+DEPLOY_KEY_FILE = "~/.canyonos/dashboard/deploy_key"
 RETIRED_AUTH_ENV = ("AUTH_DISABLED", "AUTH_TRUSTED_KEYS_DIR", "JWT_SECRET")
 # Read when pytest collects the cases, before the deploy, so every request this run
 # sends starts after it and none of an earlier run's can.
@@ -399,12 +402,22 @@ def _refused(call, status, code):
     assert call.json()["error"] == code, call.output
 
 
-def test_the_dashboard_api_needs_the_api_key(recorder, deployed):
+def _listed_ids(call) -> set[str]:
+    assert call.code == 200, call.output
+    return {workflow["id"] for workflow in call.json()}
+
+
+def test_the_dashboard_api_needs_the_workflow_group_s_key(recorder, deployed):
+    """Without a key the dashboard lists only workflow groups that have none, so not
+    this one; a key no workflow group has, or its hash, is refused."""
     base_url = deployed.api.base_url
     status = http(recorder, "GET", f"{base_url}/v1/auth/status").json()
     assert status == {"api_key_required": True}, status
     workflows = f"{base_url}/v1/workflows"
-    _refused(http(recorder, "GET", workflows, check=False), 401, "auth.missing_key")
+    anonymous = _listed_ids(http(recorder, "GET", workflows, check=False))
+    assert deployed.workflow_id not in anonymous, anonymous
+    workflow = f"{base_url}{_workflow_path(deployed, '/scaling')}"
+    _refused(http(recorder, "GET", workflow, check=False), 401, "auth.missing_key")
     wrong = bearer(f"{recorder.api_key}x")
     refused = http(recorder, "GET", workflows, headers=wrong, check=False)
     _refused(refused, 401, "auth.invalid_key")
@@ -435,16 +448,23 @@ def test_a_write_without_the_key_changes_nothing(recorder, deployed):
 
 def test_the_dashboard_proxy_passes_the_key_on(recorder, deployed):
     url = f"http://127.0.0.1:{dashboard_port(recorder)}/api/v1/workflows"
-    http(recorder, "GET", url, headers=deployed.api.headers)
-    _refused(http(recorder, "GET", url, check=False), 401, "auth.missing_key")
+    keyed = http(recorder, "GET", url, headers=deployed.api.headers)
+    assert deployed.workflow_id in _listed_ids(keyed), keyed.output
+    anonymous = http(recorder, "GET", url, check=False)
+    assert deployed.workflow_id not in _listed_ids(anonymous), anonymous.output
 
 
-def test_the_api_holds_only_the_key_hash(recorder, deployed):
+def test_the_api_holds_only_the_deploy_key_hash(recorder, deployed):
+    """The API gets the SHA-256 of this machine's deploy key and no API key: each
+    workflow group's key hash is in its database, never in its environment."""
     container = docker(recorder, ["inspect", DASHBOARD_API]).json()[0]
     environment = container["Config"]["Env"]
-    expected = f"CANYONOS_API_KEY_HASH={hash_api_key(recorder.api_key)}"
+    deploy_key = Path(DEPLOY_KEY_FILE).expanduser().read_text().strip()
+    expected = f"CANYONOS_DEPLOY_KEY_HASH={hash_api_key(deploy_key)}"
     assert expected in environment, environment
+    assert not [e for e in environment if e.startswith("CANYONOS_API_KEY_HASH=")]
     assert not [e for e in environment if recorder.api_key in e], environment
+    assert not [e for e in environment if deploy_key in e], environment
     retired = [e for e in environment if e.split("=", 1)[0] in RETIRED_AUTH_ENV]
     assert not retired, environment
     mounts = [m for m in container["Mounts"] if m["Destination"] == TRUSTED_MOUNT]

@@ -5,22 +5,11 @@
 # through it, and it is the cluster dashboard's backend. With it, Postgres and, with
 # dashboard.enabled, the web front end, as `canyonos serve` runs them on Docker. Nothing
 # is exposed outside the cluster: every signed-in user may port-forward to the API, which
-# checks with Kubernetes what each caller may do with a workflow group, and answers the
-# dashboard's routes only with the key dashboard.apiKeyHash is the hash of.
+# checks with Kubernetes what each caller may do with a workflow group, and answers a
+# workflow group's dashboard routes only with that workflow group's own key, the hash
+# its CanyonProject carries (spec.auth.apiKeyHash).
 {{- $ns := .Values.dashboard.namespace }}
 {{- $secret := .Values.dashboard.existingSecret | default "canyonos-dashboard" }}
-{{- $apiKeyHash := .Values.dashboard.apiKeyHash | default "" }}
-{{- if and $apiKeyHash (not (regexMatch "^[0-9a-f]{64}$" $apiKeyHash)) }}
-{{- fail "dashboard.apiKeyHash must be the sha256 of the API key: 64 lowercase hex characters" }}
-{{- end }}
-{{- /* The forward rule below lets every signed-in user, every pod's service account
-included, reach the API: without a key its dashboard routes would answer each of them. */}}
-{{- if not (or $apiKeyHash .Values.dashboard.existingSecret) }}
-{{- fail "dashboard.apiKeyHash is required: the sha256 of the CanyonOS API's key, as 64 lowercase hex characters (or dashboard.existingSecret with an api-key-hash), since every signed-in user may port-forward to the API" }}
-{{- end }}
-{{- /* Rolls the API when the chart's key changes. Salted with a value of the Secret, so
-the annotation, readable by anyone who may view the Deployment, tests no key guess. */}}
-{{- $apiKeyVersion := "" }}
 {{- $apiImage := .Values.dashboard.apiImage | default (include "canyonos.releaseImage" (list . "api")) }}
 {{- $coreImage := .Values.controllerImage | default (include "canyonos.releaseImage" (list . "core")) }}
 {{- $webImage := .Values.dashboard.webImage | default (include "canyonos.releaseImage" (list . "web")) }}
@@ -44,7 +33,6 @@ they set dashboard.existingSecret instead. */}}
 {{- /* Added after the first releases: a Secret made before it gets one on upgrade. */}}
 {{- $redisPasswordKey = index $existing.data "redis-password-key" | default $redisPasswordKey }}
 {{- end }}
-{{- $apiKeyVersion = printf "%s:%s" $redisPasswordKey $apiKeyHash | sha256sum }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -61,7 +49,6 @@ data:
   db-password: {{ randAlphaNum 32 | b64enc }}
   {{- end }}
   redis-password-key: {{ $redisPasswordKey }}
-  api-key-hash: {{ $apiKeyHash | b64enc | quote }}
 ---
 {{- end }}
 apiVersion: v1
@@ -211,10 +198,6 @@ spec:
     metadata:
       labels:
         {{- include "canyonos.podLabels" (list . (dict "app.kubernetes.io/name" "canyonos-dashboard-api" "app.kubernetes.io/part-of" "canyonos")) | trim | nindent 8 }}
-      {{- if $apiKeyVersion }}
-      annotations:
-        canyonos.canyoncode.ai/api-key: {{ $apiKeyVersion }}
-      {{- end }}
     spec:
       serviceAccountName: canyonos-api
       # Only the api container gets the service account's token (kube-api-access).
@@ -268,10 +251,6 @@ spec:
             # theirs in its list, but the API refuses to start without the key.
             - name: REDIS_PASSWORD_ENCRYPTION_KEY
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: redis-password-key}}
-            # The dashboard routes' key. Every project's global controller may reach this
-            # API (for telemetry), and every signed-in user through a port-forward.
-            - name: CANYONOS_API_KEY_HASH
-              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: api-key-hash, optional: true}}
             - {name: LOG_LEVEL, value: info}
             # Workflow groups run on this cluster, never on Docker.
             - {name: CANYONOS_TARGET, value: kubernetes}

@@ -5,11 +5,13 @@ import { createHash } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
 
+import { config } from '@core/env';
+
 import { GEN_AI, RUNTIME_ATTRIBUTES } from '../modules/metrics/metrics.contract';
 import { STATUS_CODE, WORKFLOW_ID_ATTRIBUTE } from '../modules/telemetry/telemetry.contract';
 import { otelSpans } from '../modules/telemetry/telemetry.schema';
 import { db } from './client';
-import { workflows } from './schema';
+import { workflowGroups, workflows } from './schema';
 
 const DEMO_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
@@ -144,7 +146,13 @@ function seedWorkflowId(): string {
 
 async function ensureDemoWorkflow(tx: SeedTx): Promise<string> {
   const id = seedWorkflowId();
-  // Its own workflow group: no Global Controller runs the demo, and its routes need one.
+  // Its own workflow group: no Global Controller runs the demo, and its routes need one, with
+  // the key SEED_DEV_API_KEY_HASH names, set again on every seed so a changed one holds.
+  const api_key_hash = config.seed.apiKeyHash;
+  await tx
+    .insert(workflowGroups)
+    .values({ id, name: DEMO_WORKFLOW_NAME, api_key_hash })
+    .onConflictDoUpdate({ target: workflowGroups.id, set: { api_key_hash } });
   await tx
     .insert(workflows)
     .values({ id, name: DEMO_WORKFLOW_NAME, workflow_group_id: id })

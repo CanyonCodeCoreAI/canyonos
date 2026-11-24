@@ -3,8 +3,8 @@
 
 """
 Logic for `canyonos test`: send one prompt to each workflow the workflow group running
-from this folder serves, with this machine's API key when one is set, and report
-what each answered. It deploys nothing: run `canyonos deploy <workflow folder>...`
+from this folder serves, with that workflow group's API key when it has one, and
+report what each answered. It deploys nothing: run `canyonos deploy <workflow folder>...`
 first.
 """
 
@@ -18,7 +18,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from canyonos import deployment, kubernetes_target, ui
-from canyonos.auth import auth_header, machine_api_key
+from canyonos.auth import auth_header
 from canyonos.constants import existing_config_path
 from canyonos.deploy import _curl_example
 from canyonos.api import (
@@ -204,7 +204,7 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
                 f"The workflow asks {json.dumps(asked['question'])}, but `canyonos test` can "
                 "only take an answer typed in a terminal, without --json. The deploy stays "
                 f"up, so answer request {request_id} with: "
-                f"{_curl_example(answer_url, example, machine_api_key() is not None)}"
+                f"{_curl_example(answer_url, example, bool(sign()))}"
             )
         body = answer(asked["question"], schema)
         try:
@@ -227,9 +227,8 @@ def _query_route(run, base, url, body, timeout, sign, answer=_type_answer):
 
 
 def _run_test(run, timeout=REQUEST_TIMEOUT):
-    """Query each workflow of the workflow group this command acts on, with this
-    machine's API key when one is set; on Kubernetes, through a port-forward to its
-    endpoint."""
+    """Query each workflow of the workflow group this command acts on, with its API key
+    when it has one; on Kubernetes, through a port-forward to its endpoint."""
     existing_config_path()
     existing = existing_deploy()
     if existing is None:
@@ -321,8 +320,8 @@ def _payload(run):
 
 
 def run_test(prompt=None, as_json=False, timeout=REQUEST_TIMEOUT):
-    """Run `canyonos test`: query each workflow of the running workflow group with this
-    machine's API key, report the results, and return the exit code."""
+    """Run `canyonos test`: query each workflow of the running workflow group with its
+    API key, report the results, and return the exit code."""
     run = _Run(prompt)
     ui.set_quiet(as_json)
 

@@ -3,25 +3,19 @@
 
 import { expect, test } from '@playwright/test';
 
-import type { AuthStatus } from '@canyonos/api/auth';
-
 import { readStoredApiKey, setApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
 import { expectPath } from './helpers/session';
-import { apiBaseUrl, fulfillJson, noAuthApiBaseUrl } from './helpers/workflows';
+import { apiBaseUrl, openApiBaseUrl, SEEDED_WORKFLOW_NAME } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const SEEDED_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
-/** The dashboard is built against the API that needs a key; send its calls to the keyless one. */
+/** The dashboard is built against the API whose groups have a key; send its calls to the open one. */
 test.beforeEach(async ({ page }) => {
   await page.route(
     (url) => url.origin === apiOrigin,
     (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname === '/v1/auth/status') {
-        return fulfillJson(route, { api_key_required: false } satisfies AuthStatus);
-      }
-      return route.continue({ url: `${noAuthApiBaseUrl}${url.pathname}${url.search}` });
+      return route.continue({ url: `${openApiBaseUrl}${url.pathname}${url.search}` });
     }
   );
 });

@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { app } from '@api/app';
-import { API_KEY_PATHS } from '@api/modules/auth/auth.plugin';
+import { API_KEY_PATHS, DASHBOARD_PATH, TELEMETRY_PATH } from '@api/modules/auth/auth.plugin';
 import { WORKFLOW_GROUPS_PATH } from '@api/modules/workflow-groups/workflow-groups.caller';
 
 /** `METHOD path` as Elysia lists the route. */
 export type RouteName = `${string} /${string}`;
 
-/** Which key a route takes on Docker: the API key, or none. `unguarded` is a route in neither,
+/** Which key a route takes on Docker: its workflow group's (`group_key`, a dashboard route under
+ * one); the key of any workflow group (`workflows_key`, a route with no workflow group in its
+ * path, which answers with what the key opens); the deploy key or its workflow group's
+ * (`deploy_key`, the other /v1/workflow-groups routes); or none. `unguarded` is a route in none,
  * which the auth test fails on. */
-export type RouteKind = 'api_key' | 'open' | 'unguarded';
+export type RouteKind = 'group_key' | 'workflows_key' | 'deploy_key' | 'open' | 'unguarded';
 
 // Written here, not read from the guards, so a route mounted outside them shows up: every route
 // is one of these, or needs a key.
@@ -39,8 +42,10 @@ export interface SweptRoute {
 
 function kind_of(route: RouteName, path: string): RouteKind {
   if (OPEN_ROUTES.includes(route)) return 'open';
-  if (under(path, WORKFLOW_GROUPS_PATH)) return 'api_key';
-  if (API_KEY_PATHS.some((prefix) => under(path, prefix))) return 'api_key';
+  if (DASHBOARD_PATH.test(path)) return 'group_key';
+  if (TELEMETRY_PATH.test(path)) return 'unguarded';
+  if (under(path, WORKFLOW_GROUPS_PATH)) return 'deploy_key';
+  if (API_KEY_PATHS.some((prefix) => under(path, prefix))) return 'workflows_key';
   return 'unguarded';
 }
 
@@ -58,16 +63,19 @@ export interface SweepAnswer {
   readonly error: string | undefined;
 }
 
-/** `route`'s status and error code from the API at `url`, sent with `headers`, path parameters
- * no route takes, a query no route takes and, but on a GET, `body` (unparsable JSON unless
- * given): an answer that does not depend on the request was given before it was read. */
+/** `route`'s status and error code from the API at `url`, sent with `headers`, the path
+ * parameters `params` names and, for the rest, ones no route takes, a query no route takes and,
+ * but on a GET, `body` (unparsable JSON unless given): an answer that does not depend on the
+ * request was given before it was read. */
 export async function sweep_answer(
   url: string,
   { route, method, path }: SweptRoute,
   headers: Record<string, string> = {},
-  body = '{'
+  body = '{',
+  params: Record<string, string> = {}
 ): Promise<SweepAnswer> {
-  const target = `${path.replace(/:[^/]+/g, 'not-an-id')}?from=never&limit=lots&tail=lots`;
+  const filled = path.replace(/:([^/]+)/g, (_, name: string) => params[name] ?? 'not-an-id');
+  const target = `${filled}?from=never&limit=lots&tail=lots`;
   const response = await fetch(`${url}${target}`, {
     method,
     headers: { 'content-type': 'application/json', ...headers },

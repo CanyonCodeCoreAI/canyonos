@@ -81,11 +81,20 @@ export const serviceUnavailable = (code: string, message: string, opts?: AppErro
 export const gatewayTimeout = (code: string, message: string, opts?: AppErrorOptions) =>
   new AppError(504, code, message, opts);
 
+/** A 401 names the scheme it takes. */
+function name_scheme(set: { status?: number | string; headers: Record<string, unknown> }) {
+  if (set.status === 401) set.headers['www-authenticate'] = 'Bearer';
+}
+
 /** The answer to a request a request hook refuses with `error`. Elysia answers an error thrown
  * in `onRequest` with its `toResponse()` and status 200, past the error handler, so the hook
  * returns this instead. */
-export function early_refusal(set: { status?: number | string }, error: AppError) {
+export function early_refusal(
+  set: { status?: number | string; headers: Record<string, unknown> },
+  error: AppError
+) {
   set.status = error.status;
+  name_scheme(set);
   return { ...error.toResponse(), request_id: current_request()?.request_id };
 }
 
@@ -122,6 +131,13 @@ const translated = (error: unknown): unknown => {
   return error;
 };
 
+/** The AppError the error plugin answers `error` with, or null when it knows none: what a
+ * request hook, which answers past the error plugin, refuses with (`early_refusal`). */
+export function known_app_error(error: unknown): AppError | null {
+  const known = translated(error);
+  return known instanceof AppError ? known : null;
+}
+
 export const errorPlugin = new Elysia({ name: 'plugin.error' })
   .guard({
     response: {
@@ -139,13 +155,15 @@ export const errorPlugin = new Elysia({ name: 'plugin.error' })
       504: ApiErrorSchema,
     },
   })
-  .onError(({ code, error: thrown, status }) => {
+  .onError(({ code, error: thrown, status, set }) => {
     const request_id = current_request()?.request_id;
     if (code === 'NOT_FOUND') {
       return status(404, { error: 'not_found', message: 'Resource not found', request_id });
     }
     const error = translated(thrown);
     if (error instanceof AppError) {
+      set.status = error.status;
+      name_scheme(set);
       if (error.status !== 401) {
         logger.error('App error', {
           error,

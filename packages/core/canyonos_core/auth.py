@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""The machine's API key, which lets a caller query a workflow. The Global Controller
+"""A workflow group's API key, which lets a caller query its workflows. The Global Controller
 reads the key's SHA-256 hash from its environment and publishes it to Redis; the
 endpoint compares the hash of each request's bearer with it. No hash means no check."""
 

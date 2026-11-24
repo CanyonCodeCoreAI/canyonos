@@ -9,7 +9,7 @@ import postgres from 'postgres';
 import { set_database_state } from '@api/db/database';
 import { config } from '@core/env';
 
-import { TEST_API_KEY } from './api-key-test.utils';
+import { TEST_DEPLOY_KEY } from './api-key-test.utils';
 import { api, setupE2ETests } from './e2e.setup';
 import { refused_start, spawn_api } from './process-test.utils';
 import { until_answers } from './test.utils';
@@ -144,7 +144,7 @@ const admin_options = (url: URL) => ({
 describe('readyz without Docker', () => {
   const group_status = (server: SpawnedApi) =>
     fetch(`${server.url}/v1/workflow-groups/${crypto.randomUUID()}`, {
-      headers: bearer(TEST_API_KEY),
+      headers: bearer(TEST_DEPLOY_KEY),
     });
 
   test('is 200 when DOCKER_SOCKET names no socket, and says Docker is unreachable', async () => {
@@ -244,10 +244,7 @@ describe('a database lost after the API was ready', () => {
     const proxied = new URL(url);
     proxied.hostname = '127.0.0.1';
     proxied.port = String(proxy.port);
-    const server = await spawn_api({
-      DATABASE_URL: proxied.toString(),
-      CANYONOS_API_KEY_HASH: '',
-    });
+    const server = await spawn_api({ DATABASE_URL: proxied.toString() });
     try {
       expect((await fetch(`${server.url}/v1/workflows`)).status).toBe(200);
 

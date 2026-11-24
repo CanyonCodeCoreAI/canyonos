@@ -29,17 +29,17 @@ The Global Controller talks to the host's Docker engine, so the Redis, replica a
 ## What a deploy does
 
 1. CLI: finds the workflow group's record or makes one (see [below](#which-workflow-group-a-command-acts-on)), checks Docker and each workflow, writes the record's `workflow_group.yaml` and its `workflow_group_id` when missing, then picks the ports.
-   Before any of that touches Docker, it saves or removes the machine's API key for `--api-key` or `--no-api-key`, and warns when no key is set. See [API key](../guides/AUTHORIZATION.md).
-2. CLI: starts the CanyonOS API if it is down, then keeps the last Global Controller container when it runs or waits with the same image, Redis port and key, or creates a fresh one with `docker create`, handing it the key's SHA-256 in `CANYONOS_API_KEY_HASH` (empty for no key). The key itself never leaves this machine.
+   Before any of that touches Docker, it saves or removes the workflow group's API key in its record for `--api-key` or `--no-api-key`, and warns when it has no key. See [API key](../guides/AUTHORIZATION.md).
+2. CLI: starts the CanyonOS API if it is down, then keeps the last Global Controller container when it runs or waits with the same image, Redis port and key, or creates a fresh one with `docker create`, handing it the SHA-256 of the workflow group's key in `CANYONOS_API_KEY_HASH` (empty for no key). The key itself never leaves this machine.
 3. CLI: copies each workflow's `config/` into the record on its first deploy, then uploads `workflow_group.yaml` and each workflow (the code and `.env` from its folder, `config/` from the record) to the CanyonOS API, which writes them into the container's `/workspace` and starts it.
 4. Global Controller: builds the agent images, starts Redis and the agent containers, and publishes the endpoint record.
 5. CLI: polls the API's status of the deploy until the workflow is up, then reads its `endpoint` for the summary.
 
-On Kubernetes, the CLI makes the same calls to the cluster's CanyonOS API through a port-forward, sending the key's hash. The API creates a `CanyonBuild` carrying it in `spec.auth.apiKeyHash` (no `auth` for no key), uploads the workflow to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder workflow groups yet.
+On Kubernetes, the CLI makes the same calls to the cluster's CanyonOS API through a port-forward, sending the workflow group's key hash. The API creates a `CanyonBuild` carrying it in `spec.auth.apiKeyHash` (no `auth` for no key), uploads the workflow to its build pod and waits for the agents to be ready. See [Operator](OPERATOR.md). Kubernetes deploys don't support multi-folder workflow groups yet.
 
 ## Talking to the CanyonOS API
 
-The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with this machine's API key, if any (`CANYONOS_API_KEY`, else `~/.canyonos/api_key`); on Kubernetes the cluster's, through a port-forward, with the kubectl login as a bearer token: the kubeconfig's `token`, the one in its `tokenFile` (a pod's ServiceAccount), or its login plugin's, never a client certificate (`kubernetes_state` in `canyonos/kubernetes_target.py`). `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
+The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboard's API on `http://127.0.0.1:<api port>` (`3000` by default), with this machine's deploy key, `~/.canyonos/dashboard/deploy_key`, which the CLI makes once and which the API takes on every `/v1/workflow-groups` route ([The deploy key](../guides/AUTHORIZATION.md#the-deploy-key)); on Kubernetes the cluster's, through a port-forward, with the kubectl login as a bearer token: the kubeconfig's `token`, the one in its `tokenFile` (a pod's ServiceAccount), or its login plugin's, never a client certificate (`kubernetes_state` in `canyonos/kubernetes_target.py`). `deploy`, `sync`, `stop` and `clean` start the API first when it is down or runs another deploy key or image (`ensure_api` in `canyonos/serve.py`); the other commands start it only when it is down. The routes live in `packages/api/src/modules/workflow-groups/`, and every route and its shapes are on the API's `/docs` page. `G` is `/v1/workflow-groups/<workflow_group_id>`:
 
 | Request | What it does |
 | --- | --- |
@@ -57,7 +57,7 @@ The CLI calls the CanyonOS API through `canyonos/api.py`: on Docker the dashboar
 
 The workflow group is uploaded, so it is a copy, not a live mount. Edits reach the container on the next `canyonos sync` or `deploy`.
 
-`canyonos test` and `canyonos curl` skip the API for their query: they read the route from the endpoint record in `GET G`, then call the workflow endpoint directly, with the machine's API key, which they never print. `curl` sends one POST and prints the answer as it comes; `test` also polls `/status/<request_id>` and answers the workflow's questions.
+`canyonos test` and `canyonos curl` skip the API for their query: they read the route from the endpoint record in `GET G`, then call the workflow endpoint directly, with the workflow group's API key, which they never print. `curl` sends one POST and prints the answer as it comes; `test` also polls `/status/<request_id>` and answers the workflow's questions.
 
 ## Which workflow group a command acts on
 
@@ -73,12 +73,12 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | --- | --- |
 | `cli.py`, `utils/` | The parser, `--target` routing, the help screen, the arrow-key menus |
 | `canyonos/api.py`, `sdk/` | Every request to the CanyonOS API, and its answers' types (`sdk/models.py`, written by `bun run sdk:generate`) |
-| `canyonos/auth.py` | The machine's API key: saving, replacing and removing it for `deploy` and `serve`, and its hash for the Global Controller and the dashboard API |
+| `canyonos/auth.py` | Each workflow group's API key: saving, replacing and removing it in its record for `deploy`, the one-time move from `~/.canyonos/api_key`, and its hash for the Global Controller and the CanyonOS API |
 | `canyonos/init.py`, `deploy.py`, `sync.py`, `test.py`, `verify.py` | Creating the container, deploying, syncing, testing |
 | `canyonos/records.py` | Each workflow group's record: finding, making and entering it; each workflow's `config/` in it |
 | `canyonos/stop.py`, `clean.py`, `selection.py` | Stopping and cleaning; choosing which workflow groups they act on |
 | `canyonos/context.py` | `list`, `select-context`, and the selected workflow group other commands act on |
-| `canyonos/dashboard.py` | `dashboard`: opening the dashboard with the API key in the URL fragment |
+| `canyonos/dashboard.py` | `dashboard`: opening the dashboard with the workflow group's API key in the URL fragment |
 | `canyonos/curl.py` | `curl`: one POST of a JSON body to a route of the running workflow group |
 | `canyonos/logs.py`, `status.py`, `doctor.py` | Reading logs, status and checks |
 | `canyonos/config.py`, `resources.py`, `validate.py`, `convert.py` | Config edits, the resource picker, validation, `convert` |
@@ -105,16 +105,16 @@ Paths are under `packages/cli/`. `pyproject.toml` installs the `canyonos` comman
 | `~/.canyonos/workflows/<workflow group>/sync-manifest.json` | What the last sync copied |
 | `~/.canyonos/workflows/<workflow group>/ca/ca.crt`, `ca.key` | The workflow group's CA for internal mutual TLS, made on its first `provider: local` deploy and reused after (`0600`, folder `0700`); see [Internal TLS](CONTROLLER.md#internal-tls) |
 | `~/.canyonos/deployments/<folder>/convert.log` | Output of an unattended `convert`, named after the folder it ran in |
-| `~/.canyonos/api_key` | The machine's API key (`0600`); it never leaves this machine. `CANYONOS_API_KEY` overrides it for one command |
+| `~/.canyonos/workflows/<workflow group>/api_key` | The workflow group's API key (`0600`); it never leaves this machine. `CANYONOS_API_KEY` overrides it for one command |
 | `~/.canyonos/context.json` | The workflow group `select-context` picked, by name: `{"deployment": "<workflow group>"}` |
 | `~/.canyonos/ports.lock` | Lock for picking ports |
-| `~/.canyonos/dashboard/` | The dashboard stack: `.env` (with `CANYONOS_API_KEY_HASH`), `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
+| `~/.canyonos/dashboard/` | The dashboard stack: `.env` (with `CANYONOS_DEPLOY_KEY_HASH`), `deploy_key` (`0600`), `.lock`, `ports.json`, `stack.json`, `logs/serve-<time>.log` |
 | `~/.canyonos/forwards/<name>.json` | One background port-forward each |
 | `~/.canyonos/kind/` | The kind cluster's Pod Security file |
 | `~/.canyonos/usage/` | The usage choice and the events waiting to be sent |
 | `~/.canyonos/supported-versions.json` | Cached supported CLI versions |
 
-`clean` deletes a workflow group's whole record, its settings included, and the skills `convert` installed in its workflow folders; `clean --all` deletes all of `~/.canyonos`, the API key included; its confirmation says so. `stop` keeps the record. Replacing a workflow group's workflows deletes the `config/` of the ones it drops. The CLI also edits the record's `workflow_group.yaml` (`workflow_group_id`, `workflows`, `target`) and the `workflow_config.yaml` in each `<workflow>/config/` (agent resources), keeping comments and key order.
+`clean` deletes a workflow group's whole record, its settings included, and the skills `convert` installed in its workflow folders; `clean --all` deletes all of `~/.canyonos`, the keys included; its confirmation says so. `stop` keeps the record. Replacing a workflow group's workflows deletes the `config/` of the ones it drops. The CLI also edits the record's `workflow_group.yaml` (`workflow_group_id`, `workflows`, `target`) and the `workflow_config.yaml` in each `<workflow>/config/` (agent resources), keeping comments and key order.
 
 ## Developer overrides
 

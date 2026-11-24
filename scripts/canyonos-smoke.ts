@@ -4,9 +4,11 @@
 /**
  * Compose smoke for the CanyonOS API and web images.
  *
- * The controller identity is one direct Redis `HSET` and the telemetry fixture is one direct
- * PostgreSQL insert. No receiver, collector, exporter, poller, Core, controller, or agent runs:
- * the point is to prove the image reads rows that already exist.
+ * What a Global Controller publishes to its Redis, its identity and its API key's hash, is
+ * written there directly, and the telemetry fixture is a direct PostgreSQL insert. No receiver,
+ * collector, exporter, poller, Core, controller, or agent runs: the point is to prove the image
+ * finds that controller's workflow group and its key as it starts (self-host), and reads rows
+ * that already exist.
  */
 
 import { $ } from 'bun';
@@ -18,6 +20,7 @@ const API_PORT = Bun.env.SMOKE_API_PORT ?? '53000';
 const WEB_PORT = Bun.env.SMOKE_WEB_PORT ?? '58080';
 const BASE_URL = `http://127.0.0.1:${API_PORT}`;
 const API_KEY = 'canyonos-smoke-key';
+const WRONG_KEY = 'not-the-smoke-key';
 const WEB_URL = `http://127.0.0.1:${WEB_PORT}`;
 
 const compose = (...args: string[]) => $`docker compose -f ${COMPOSE_FILE} ${args}`;
@@ -55,7 +58,7 @@ const getJson = async (path: string, key?: string): Promise<{ status: number; bo
   return { status: response.status, body: await response.json().catch(() => null) };
 };
 
-/** Checks, from `apiUrl`, that the API needs a key and takes the smoke's. */
+/** Checks, from `apiUrl`, that the API needs a key and takes the smoke group's. */
 async function checkApiKey(apiUrl: string): Promise<void> {
   const status = await fetch(`${apiUrl}/v1/auth/status`);
   equal(status.status, 200, `the auth status route at ${apiUrl} answers`);
@@ -90,7 +93,40 @@ const waitForWeb = () =>
     return response.ok ? await response.text() : null;
   });
 
-/** One canonical span, inserted through the container's own psql so the host needs no driver. */
+/** Runs `statement` through the container's own psql, so the host needs no driver. */
+const psql = (statement: string) =>
+  compose(
+    'exec',
+    '-T',
+    'postgres',
+    'psql',
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-U',
+    'canyonos',
+    '-d',
+    'canyonos',
+    '-c',
+    statement
+  );
+
+/** What the Global Controller of a workflow group deployed with `--api-key` publishes to its
+ * Redis: its identity, and the key's sha256 under `auth:api_key_hash`. */
+async function publishController() {
+  const redis = (...args: string[]) => compose('exec', '-T', 'redis', 'redis-cli', ...args);
+  await redis(
+    'HSET',
+    'controller:identity',
+    'workflow_group_id',
+    WORKFLOW_ID,
+    'workflows',
+    JSON.stringify({ [WORKFLOW_ID]: 'workflow_1' })
+  );
+  const hash = new Bun.CryptoHasher('sha256').update(API_KEY).digest('hex');
+  await redis('SET', 'auth:api_key_hash', hash);
+}
+
+/** One canonical span. */
 async function seedTelemetry() {
   const start = BigInt(Date.now()) * 1_000_000n - 600_000_000_000n;
   const attributes = JSON.stringify({
@@ -107,20 +143,7 @@ async function seedTelemetry() {
       ${start}, ${start + 60_000_000_000n}, '${attributes}'::jsonb, 'asked', 'answered')
     on conflict (span_id) do nothing;`;
 
-  await compose(
-    'exec',
-    '-T',
-    'postgres',
-    'psql',
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-U',
-    'canyonos',
-    '-d',
-    'canyonos',
-    '-c',
-    statement
-  );
+  await psql(statement);
 }
 
 const findWorkflow = (body: any) => body?.find?.((row: any) => row.id === WORKFLOW_ID);
@@ -137,19 +160,8 @@ async function main() {
   log('starting postgres and redis');
   await compose('up', '-d', '--wait', 'postgres', 'redis');
 
-  log('publishing the controller identity');
-  await compose(
-    'exec',
-    '-T',
-    'redis',
-    'redis-cli',
-    'HSET',
-    'controller:identity',
-    'workflow_group_id',
-    WORKFLOW_ID,
-    'workflows',
-    JSON.stringify({ [WORKFLOW_ID]: 'workflow_1' })
-  );
+  log('publishing the controller identity and its API key hash');
+  await publishController();
 
   log('starting the api');
   await compose('up', '-d', 'api');
@@ -157,12 +169,15 @@ async function main() {
   // The compose file gives it no Docker socket: it runs no workflow group.
   equal(readiness.checks, { database: 'ok', docker: 'disabled' }, 'the API is ready');
 
-  log('checking the API key');
+  log('checking the API key the bootstrap took from the controller');
   await checkApiKey(BASE_URL);
+  const keyless = await getJson('/v1/workflows');
+  equal(keyless.status, 200, 'the workflow list answers a caller with no key');
+  check(!findWorkflow(keyless.body), 'a caller with no key sees no workflow of a keyed group');
   equal(
-    (await getJson('/v1/workflows')).status,
+    (await getJson('/v1/workflows', WRONG_KEY)).status,
     401,
-    'the workflow list refuses a caller with no key'
+    'the workflow list refuses a key that opens no workflow group'
   );
 
   log('checking the bootstrapped workflow');
@@ -209,9 +224,9 @@ async function main() {
   const proxied_health = await fetch(`${WEB_URL}/api/v1/healthz`);
   equal(proxied_health.status, 200, 'the web image proxies /api to the api service by default');
   equal(
-    (await fetch(`${WEB_URL}/api/v1/workflows`)).status,
+    (await getProxiedJson('/v1/workflows', WRONG_KEY)).status,
     401,
-    'the proxy forwards a read with no key to the real API, which refuses it as it does directly'
+    'the proxy forwards a read with a wrong key to the real API, which refuses it as it does directly'
   );
 
   log('checking the API key through the web proxy, the way the dashboard does');
@@ -237,7 +252,6 @@ async function main() {
   log('PASS');
 }
 
-process.env.CANYONOS_API_KEY_HASH = new Bun.CryptoHasher('sha256').update(API_KEY).digest('hex');
 try {
   await main();
 } catch (error) {

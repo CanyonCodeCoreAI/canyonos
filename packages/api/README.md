@@ -17,23 +17,29 @@ at `/docs`, and the OpenAPI spec at `/docs/json`; `bun run sdk:generate` writes 
 On Kubernetes (`CANYONOS_TARGET=kubernetes`, as the operator's chart runs it) the same routes
 run each workflow group on the cluster instead: a CanyonBuild, then its CanyonProject, through
 the Kubernetes API with the pod's service account. There the `/v1/workflow-groups` routes take
-the caller's Kubernetes token instead of the API key and check it with a TokenReview and a
-SubjectAccessReview; a workflow's dashboard routes still take the API key, and a workflow
+the caller's Kubernetes token instead of a key and check it with a TokenReview and a
+SubjectAccessReview; a workflow's dashboard routes still take its workflow group's key, and a workflow
 group's telemetry routes take no key. Core's commands run in the pod's `core` container, which takes them from a
 queue in the `/workspace` folder both containers share. See
 [Kubernetes](../../docs/guides/KUBERNETES.md#the-canyonos-api).
 
-With `CANYONOS_API_KEY_HASH` set to the sha256 of the API key (64 lowercase hex characters),
-every `/v1/workflows` and `/v1/resources` route needs that key as `Authorization: Bearer <key>`, and
-answers 401 without it, before it reads anything else the request sends. So do a workflow's
-`requests`, `metrics`, `monitoring`, `prompts`, `scaling`, `governance`, `history` and
-`sample-data` routes, under
-`/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/`. Unset or empty, those
-routes are open; any other value refuses the start. On Docker every other `/v1/workflow-groups`
-route takes the same key, and is open without it. The exception is
-`POST /v1/workflow-groups/<workflow_group_id>/traces`, `/metrics` and `/logs`, where the
-Global Controller sends the group's telemetry: they take no key. `GET /v1/auth/status` reports whether a key is needed, and
-`GET /v1/auth/check` answers 200 to a request that carries it. See
+Each workflow group has its own API key: the sha256 its deploy stored
+(`workflow_groups.api_key_hash`), sent as `Authorization: Bearer <key>` and checked as the
+request arrives, before anything else it sends is read. A workflow group deployed with no key is
+open. A workflow's `requests`, `metrics`, `monitoring`, `prompts`, `scaling`, `governance`,
+`history` and `sample-data` routes, under
+`/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/`, take that workflow group's
+key, and a workflow group the API has no row of is 401. `/v1/workflows` and `/v1/resources`
+answer with the workflows of the workflow groups the key opens and of the open ones, and refuse
+a key that opens none. On Docker
+every other `/v1/workflow-groups` route takes the machine's deploy key (`CANYONOS_DEPLOY_KEY_HASH`
+is its sha256, 64 lowercase hex characters) or the workflow group's own key; a new workflow group
+takes the deploy key only, and with `CANYONOS_DEPLOY_KEY_HASH` unset or empty it takes none. The
+exception is `POST /v1/workflow-groups/<workflow_group_id>/traces`, `/metrics` and `/logs`, where
+the Global Controller sends the group's telemetry: they take no key. `GET /v1/auth/status`
+reports whether any workflow group needs a key, and `GET /v1/auth/check` answers 200 to a key
+that opens one. A dashboard started beside a Global Controller (self-host) finds that
+controller's workflow group and its key in the controller's Redis as it starts. See
 [Authorization](../../docs/guides/AUTHORIZATION.md).
 
 The API stores each workflow group's Redis password encrypted with `REDIS_PASSWORD_ENCRYPTION_KEY`.

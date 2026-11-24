@@ -16,10 +16,9 @@ import type { WorkflowSummary } from '@canyonos/api/workflows';
 
 import { authenticate, TEST_API_KEY } from './helpers/auth';
 import { expectPath } from './helpers/session';
-import { apiBaseUrl, fulfillJson } from './helpers/workflows';
+import { apiBaseUrl, fulfillJson, SEEDED_WORKFLOW_NAME } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
-const SEEDED_WORKFLOW_NAME = 'Canyon Code Demo Flow';
 
 /** The workflow the API's dev seed makes, found the way the dashboard lists it. */
 async function seededWorkflow(request: APIRequestContext): Promise<WorkflowSummary> {

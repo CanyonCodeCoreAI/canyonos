@@ -28,8 +28,17 @@ export interface FleetWorkflowRow {
 }
 
 export const resources_repo = {
-  // Count span IDs so the left-join row keeps zero-activity workflows at zero.
-  async fleet_workflows(range: TimeRange): Promise<FleetWorkflowRow[]> {
+  // Count span IDs so the left-join row keeps zero-activity workflows at zero. Only the workflows
+  // of `workflow_group_ids`.
+  async fleet_workflows(
+    range: TimeRange,
+    workflow_group_ids: readonly string[]
+  ): Promise<FleetWorkflowRow[]> {
+    if (workflow_group_ids.length === 0) return [];
+    const in_groups = sql.join(
+      workflow_group_ids.map((id) => sql`${id}::uuid`),
+      sql`, `
+    );
     const rows = await db.execute(sql`
       with scoped as (${fleetRequestSpans(range)})
       select
@@ -44,6 +53,7 @@ export const resources_repo = {
         avg(${sql.raw(spanDurationMs('s'))})::float8 as avg_latency_ms
       from workflows p
       left join scoped s on ${sql.raw(spanWorkflowId('s'))} = p.id::text
+      where p.workflow_group_id in (${in_groups})
       group by p.id, p.name, p.created_at
       order by p.created_at, p.id
     `);

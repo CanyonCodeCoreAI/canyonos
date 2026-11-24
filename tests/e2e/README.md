@@ -38,9 +38,10 @@ needs `OPENAI_API_KEY`. Without the
 The CLI runs with your HOME, so a run writes to your `~/.canyonos` like any
 `canyonos` command: it has no other setting for that folder. The API key is the
 exception: each run makes a random key and passes it to every `canyonos` command as
-`CANYONOS_API_KEY`, which wins over `~/.canyonos/api_key` and is never written to it.
-The starter scenario's open deploy runs without that variable and with
-`--no-api-key`, which deletes your `~/.canyonos/api_key`.
+`CANYONOS_API_KEY`, which wins over each workflow group's recorded key and is never
+written to it. The starter scenario's open deploy runs without that variable and with
+`--no-api-key`, which deletes the key in that workflow group's record. A run makes this
+machine's deploy key, `~/.canyonos/dashboard/deploy_key`, if there is none yet.
 `CANYONOS_USAGE_URL` is set to `off`, so a run never sends usage events.
 
 With `--artifacts-dir`, the run writes `collected.json`, `junit.xml`, `calls.jsonl`

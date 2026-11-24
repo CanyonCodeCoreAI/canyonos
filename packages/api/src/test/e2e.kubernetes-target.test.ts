@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from 'postgres';
 
-import { TEST_API_KEY } from './api-key-test.utils';
+import { hashApiKey, TEST_API_KEY } from './api-key-test.utils';
 import { spawn_api } from './process-test.utils';
 import { raw_request } from './test.utils';
 import { bearer } from './workflow-test.utils';
@@ -27,7 +27,8 @@ const RESTORED_ID = crypto.randomUUID();
 const WORKFLOW_ID = crypto.randomUUID();
 const NAMESPACE = 'team-a';
 const PROJECT = 'hello';
-const API_KEY_HASH = 'a'.repeat(64);
+// The workflow group's own key, which its CanyonProject holds and the API restores.
+const API_KEY_HASH = hashApiKey(TEST_API_KEY);
 const DEPLOYED = {
   code: 'c'.repeat(64),
   config: 'd'.repeat(64),
@@ -36,13 +37,23 @@ const DEPLOYED = {
 const LEFTOVER_BUILD = 'hello-20260101-000000-abcd';
 const GC_POD = 'canyonos-gc-5f7d9';
 const STOP_TIMEOUT_MS = 30_000;
+// Another workflow group, in its own namespace, with its own key.
+const OTHER_ID = crypto.randomUUID();
+const OTHER_NAMESPACE = 'team-c';
+const OTHER_PROJECT = 'other';
+const OTHER_KEY = 'the-other-groups-key';
+// A CanyonProject someone who may edit CanyonProjects in `team-b` made by hand, claiming the
+// restored workflow group's id with a key of their own, after the real one.
+const IMPOSTOR_NAMESPACE = 'team-b';
+const IMPOSTOR_KEY = 'the-impostors-key';
 
 // Who may do what to CanyonProjects, by user, namespace and verb.
 const RIGHTS: Record<string, Record<string, string[]>> = {
   alice: { [NAMESPACE]: ['get', 'update'] },
   bob: { [NAMESPACE]: ['get'] },
+  carol: { [OTHER_NAMESPACE]: ['get', 'update'], [IMPOSTOR_NAMESPACE]: ['get', 'update'] },
 };
-const USERS: Record<string, string> = { [ALICE]: 'alice', [BOB]: 'bob' };
+const USERS: Record<string, string> = { [ALICE]: 'alice', [BOB]: 'bob', 'carol-token': 'carol' };
 
 interface AccessReview {
   user: string;
@@ -59,6 +70,7 @@ const project = () => ({
   metadata: {
     name: PROJECT,
     namespace: NAMESPACE,
+    creationTimestamp: '2026-01-01T00:00:00Z',
     labels: { 'canyonos.canyoncode.ai/project': PROJECT },
     annotations: { 'canyonos.canyoncode.ai/deployed': JSON.stringify(DEPLOYED) },
   },
@@ -97,6 +109,36 @@ const agent = {
   status: { readyReplicas: 1, conditions: [{ type: 'Ready', status: 'False', reason: 'Scaling' }] },
 };
 
+const other_project = {
+  metadata: {
+    name: OTHER_PROJECT,
+    namespace: OTHER_NAMESPACE,
+    creationTimestamp: '2026-01-02T00:00:00Z',
+    labels: { 'canyonos.canyoncode.ai/project': OTHER_PROJECT },
+  },
+  spec: {
+    projectID: OTHER_ID,
+    displayName: OTHER_PROJECT,
+    auth: { apiKeyHash: hashApiKey(OTHER_KEY) },
+  },
+  status: { conditions: [{ type: 'Ready', status: 'True' }] },
+};
+
+const impostor = {
+  metadata: {
+    name: PROJECT,
+    namespace: IMPOSTOR_NAMESPACE,
+    creationTimestamp: '2026-01-03T00:00:00Z',
+    labels: { 'canyonos.canyoncode.ai/project': PROJECT },
+  },
+  spec: {
+    projectID: RESTORED_ID,
+    displayName: PROJECT,
+    auth: { apiKeyHash: hashApiKey(IMPOSTOR_KEY) },
+  },
+  status: { conditions: [{ type: 'Ready', status: 'True' }] },
+};
+
 const items = (list: unknown[]) => Response.json({ items: list });
 
 /** The stand-in Kubernetes API: the calls the API makes, and what a cluster would answer. */
@@ -127,8 +169,18 @@ async function kubernetes(request: Request): Promise<Response> {
       (RIGHTS[user]?.[namespace] ?? []).includes(resourceAttributes.verb);
     return Response.json({ status: { allowed } });
   }
-  if (path === `${canyonos}/canyonprojects`) return items(project_present ? [project()] : []);
+  if (path === `${canyonos}/canyonprojects`) {
+    return items([...(project_present ? [project()] : []), other_project, impostor]);
+  }
   if (path === `${scoped}/canyonprojects`) return items(project_present ? [project()] : []);
+  if (path === `${canyonos}/namespaces/${OTHER_NAMESPACE}/canyonprojects`) {
+    return items([other_project]);
+  }
+  if (path === `${canyonos}/namespaces/${IMPOSTOR_NAMESPACE}/canyonprojects`) {
+    return items([impostor]);
+  }
+  if (path.startsWith(`${canyonos}/namespaces/${OTHER_NAMESPACE}/`)) return items([]);
+  if (path.startsWith(`${canyonos}/namespaces/${IMPOSTOR_NAMESPACE}/`)) return items([]);
   if (path === `${scoped}/canyonagents`) return items(project_present ? [agent] : []);
   if (path === `${scoped}/canyonbuilds`) {
     return items(builds.map((name) => ({ metadata: { name, namespace: NAMESPACE } })));
@@ -161,6 +213,19 @@ async function kubernetes(request: Request): Promise<Response> {
 const stub = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: kubernetes });
 const workspace = mkdtempSync(join(tmpdir(), 'canyonos-k8s-workspace-'));
 let kubernetes_api: SpawnedApi | null = null;
+let database_url = '';
+
+/** Starts the Kubernetes API against the stub and `database_url`, and waits until it is ready:
+ * the /v1 routes answer 503 until its database is migrated and its restore ran. */
+const start_kubernetes_api = () =>
+  spawn_api({
+    APP_ENV: 'test',
+    LOG_LEVEL: 'warn',
+    DATABASE_URL: database_url,
+    CANYONOS_TARGET: 'kubernetes',
+    CANYONOS_K8S_API: `http://127.0.0.1:${stub.port}`,
+    CANYONOS_WORKSPACE_DIR: workspace,
+  });
 
 /** A database of its own, emptied, so the second API's restore touches none of the suite's rows. */
 async function kubernetes_database(): Promise<string> {
@@ -184,15 +249,8 @@ async function kubernetes_database(): Promise<string> {
 
 beforeAll(async () => {
   await Bun.write(join(workspace, '.canyonos', 'core-version'), '9.9.9');
-  // Ready, not only listening: the /v1 routes answer 503 until its database is migrated.
-  kubernetes_api = await spawn_api({
-    APP_ENV: 'test',
-    LOG_LEVEL: 'warn',
-    DATABASE_URL: await kubernetes_database(),
-    CANYONOS_TARGET: 'kubernetes',
-    CANYONOS_K8S_API: `http://127.0.0.1:${stub.port}`,
-    CANYONOS_WORKSPACE_DIR: workspace,
-  });
+  database_url = await kubernetes_database();
+  kubernetes_api = await start_kubernetes_api();
 }, 35_000);
 
 afterAll(async () => {
@@ -220,7 +278,7 @@ const config_in = (namespace: string) =>
   `workflow_group_id: x\nkubernetes:\n  namespace: ${namespace}\n  registry: registry.example\n`;
 
 describe('the Kubernetes target', () => {
-  test("checks the caller's Kubernetes login instead of the API key, before the request is read", async () => {
+  test("checks the caller's Kubernetes login instead of a key, before the request is read", async () => {
     for (const token of [null, TEST_API_KEY, 'not-a-cluster-token']) {
       const refused = await v1('', token);
       expect(refused.status).toBe(401);
@@ -230,12 +288,85 @@ describe('the Kubernetes target', () => {
     const listed = await v1('', BOB);
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({
-      workflow_groups: [{ workflow_group_id: RESTORED_ID, name: PROJECT }],
+      workflow_groups: [
+        { workflow_group_id: RESTORED_ID, name: PROJECT },
+        { workflow_group_id: OTHER_ID, name: OTHER_PROJECT },
+      ].sort((x, y) => x.workflow_group_id.localeCompare(y.workflow_group_id)),
     });
   });
 
+  test("a key of one workflow group on another's workflow is 404 workflows.not_found, and a key of neither 401", async () => {
+    const scaling = (workflow_group_id: string, headers: Record<string, string>) =>
+      fetch(
+        `${kubernetes_api!.url}/v1/workflow-groups/${workflow_group_id}/workflows/${WORKFLOW_ID}/scaling`,
+        { headers }
+      );
+
+    const crossed = await scaling(OTHER_ID, bearer(TEST_API_KEY));
+    const crossed_back = await scaling(RESTORED_ID, bearer(OTHER_KEY));
+    const stranger = await scaling(OTHER_ID, bearer('a key of no workflow group'));
+
+    for (const refused of [crossed, crossed_back]) {
+      expect(refused.status).toBe(404);
+      expect(await refused.json()).toMatchObject({ error: 'workflows.not_found' });
+    }
+    expect(stranger.status).toBe(401);
+    expect(await stranger.json()).toMatchObject({ error: 'auth.invalid_key' });
+  });
+
+  test("a CanyonProject made by hand in another namespace, claiming a running workflow group's id, restores nothing: the first one's key and namespace hold", async () => {
+    const scaling = (headers: Record<string, string>) =>
+      fetch(
+        `${kubernetes_api!.url}/v1/workflow-groups/${RESTORED_ID}/workflows/${WORKFLOW_ID}/scaling`,
+        { headers }
+      );
+
+    expect((await scaling(bearer(TEST_API_KEY))).status).not.toBe(401);
+    const impostor_key = await scaling(bearer(IMPOSTOR_KEY));
+    expect(impostor_key.status).toBe(401);
+    expect(await impostor_key.json()).toMatchObject({ error: 'auth.invalid_key' });
+    // Its deploy stays in team-a: bob, who may read there, reads it; carol, who may edit
+    // team-b, may not.
+    expect((await v1(`/${RESTORED_ID}`, BOB)).status).toBe(200);
+    const carol = await v1(`/${RESTORED_ID}`, 'carol-token');
+    expect(carol.status).toBe(403);
+    expect(await carol.json()).toMatchObject({
+      message: `carol may not get CanyonProjects in namespace ${NAMESPACE}.`,
+    });
+  });
+
+  test('a change on a workflow group whose id is percent-encoded in the path is checked against its namespace, as the router reads the id', async () => {
+    const encoded = `%${RESTORED_ID.charCodeAt(0).toString(16)}${RESTORED_ID.slice(1)}`;
+    const before = deleted.length;
+
+    const refused = await v1(`/${encoded}`, BOB, { method: 'DELETE' });
+
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: 'auth.forbidden' });
+    expect(deleted.length).toBe(before);
+    expect((await v1(`/${encoded}`, BOB)).status).toBe(200);
+  });
+
+  test("a workflow's dashboard routes take the key its workflow group's CanyonProject holds", async () => {
+    const scaling = (headers: Record<string, string>) =>
+      fetch(
+        `${kubernetes_api!.url}/v1/workflow-groups/${RESTORED_ID}/workflows/${WORKFLOW_ID}/scaling`,
+        { headers }
+      );
+
+    const missing = await scaling({});
+    const wrong = await scaling(bearer(ALICE));
+    const keyed = await scaling(bearer(TEST_API_KEY));
+
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toMatchObject({ error: 'auth.missing_key' });
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toMatchObject({ error: 'auth.invalid_key' });
+    expect(keyed.status).not.toBe(401);
+  });
+
   // request.url reads `\` as `/` but the router does not: each reaches a workflow group's route,
-  // not the dashboard's, which would take the API key.
+  // not the dashboard's, which would take the workflow group's key.
   const group = `/v1/workflow-groups/${RESTORED_ID}`;
   const backslash_targets = [
     ['GET', `${group}\\workflows\\${WORKFLOW_ID}\\requests`],
@@ -243,7 +374,7 @@ describe('the Kubernetes target', () => {
   ] as const;
 
   for (const [method, target] of backslash_targets) {
-    test(`${method} ${target} takes the Kubernetes login, not the API key`, async () => {
+    test(`${method} ${target} takes the Kubernetes login, not the workflow group's key`, async () => {
       const { status, body } = await raw_request(
         method,
         target,
@@ -418,6 +549,29 @@ describe('the Kubernetes target', () => {
     );
     expect(reviews.length).toBe(before);
   });
+
+  test('an API started again finds the workflow groups once more, each behind its own key', async () => {
+    const scaling = (workflow_group_id: string, headers: Record<string, string>) =>
+      fetch(
+        `${kubernetes_api!.url}/v1/workflow-groups/${workflow_group_id}/workflows/${WORKFLOW_ID}/scaling`,
+        { headers }
+      );
+    await kubernetes_api!.stop();
+    kubernetes_api = await start_kubernetes_api();
+
+    const listed = (await (await v1('', BOB)).json()) as {
+      workflow_groups: { workflow_group_id: string }[];
+    };
+    expect(listed.workflow_groups.map(({ workflow_group_id }) => workflow_group_id)).toEqual(
+      expect.arrayContaining([RESTORED_ID, OTHER_ID])
+    );
+    expect((await v1(`/${RESTORED_ID}`, BOB)).status).toBe(200);
+    expect((await scaling(RESTORED_ID, bearer(TEST_API_KEY))).status).not.toBe(401);
+    expect((await scaling(RESTORED_ID, bearer(IMPOSTOR_KEY))).status).toBe(401);
+    expect((await scaling(RESTORED_ID, bearer(OTHER_KEY))).status).toBe(404);
+    expect((await scaling(OTHER_ID, bearer(OTHER_KEY))).status).not.toBe(401);
+    expect((await scaling(OTHER_ID, bearer(TEST_API_KEY))).status).toBe(404);
+  }, 40_000);
 
   test(
     'DELETE deletes the CanyonProject and its builds, then what its deploys wrote',

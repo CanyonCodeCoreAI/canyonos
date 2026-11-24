@@ -4,14 +4,13 @@
 import { describe, expect, test } from 'bun:test';
 
 import { db } from '@api/db/client';
-import { workflows } from '@api/db/schema';
 import { GEN_AI } from '@api/modules/metrics/metrics.contract';
 import { WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telemetry.contract';
 import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { api, setupE2ETests } from './e2e.setup';
 import { write_unattributed_span, write_workflow_span } from './telemetry-test.utils';
-import { bearer, TEST_API_KEY } from './workflow-test.utils';
+import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -36,15 +35,15 @@ interface SpanSeed {
   failed?: boolean;
 }
 
-async function insert_workflow(name: string, ms_ago: number): Promise<string> {
-  const id = crypto.randomUUID();
-  await db.insert(workflows).values({
-    id,
-    name,
-    created_at: at(ms_ago),
-    updated_at: at(ms_ago),
-  });
-  return id;
+/** A workflow created `ms_ago`, in a workflow group of its own that takes TEST_API_KEY, or
+ * `api_key`. */
+async function insert_workflow(
+  name: string,
+  ms_ago: number,
+  api_key: string = TEST_API_KEY
+): Promise<string> {
+  const { workflow_id } = await create_test_workflow({ name, api_key, created_at: at(ms_ago) });
+  return workflow_id;
 }
 
 async function insert_span(workflow_id: string, span: SpanSeed): Promise<void> {
@@ -84,9 +83,26 @@ const fleet_rows = (data: { workflows: FleetWorkflow[] }, ids: string[]): FleetW
   data.workflows.filter((workflow) => ids.includes(workflow.id));
 
 describe('GET /v1/resources/overview', () => {
-  test('a request without the API key is rejected with 401', async () => {
+  test('a request without a key shows no workflow of a workflow group that has one', async () => {
+    const keyed = await insert_workflow('Keyed', DAY_MS);
+
     const res = await api.v1.resources.overview.get({ $query: range(30 * DAY_MS) });
-    expect(res.error?.status as number).toBe(401);
+    expect(res.error).toBeNull();
+    expect(res.data!.workflows.map(({ id }) => id)).not.toContain(keyed);
+  });
+
+  test("a workflow group's key shows its own workflows and not another's; a key that opens none is 401", async () => {
+    const other_key = `another-group-${crypto.randomUUID()}`;
+    const mine = await insert_workflow('Shown', DAY_MS);
+    const theirs = await insert_workflow('Hidden', DAY_MS, other_key);
+
+    const shown = (await overview(TEST_API_KEY, range(30 * DAY_MS))).data!.workflows;
+    expect(shown.map(({ id }) => id)).toContain(mine);
+    expect(shown.map(({ id }) => id)).not.toContain(theirs);
+    const other = (await overview(other_key, range(30 * DAY_MS))).data!.workflows;
+    expect(other.map(({ id }) => id)).toEqual(expect.not.arrayContaining([mine]));
+    expect(other.map(({ id }) => id)).toContain(theirs);
+    expect((await overview('opens-nothing', range(30 * DAY_MS))).error?.status as number).toBe(401);
   });
 
   test('derives per-workflow cost, requests and tokens from workflow spans', async () => {

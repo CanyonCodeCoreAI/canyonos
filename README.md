@@ -145,7 +145,7 @@ The complete path, including credentials, requests, and cleanup, is in the
 |---|---|
 | `deploy` | Build Docker images, launch the workflow, start the dashboard |
 | `stop` | Stops the current local deployment |
-| `dashboard` | Open the dashboard, signed in with this machine's API key |
+| `dashboard` | Open the dashboard, signed in with this workflow group's API key |
 | `convert` | Optional: convert an existing workflow to CanyonOS format using your coding agent |
 | `feedback` | Send feedback to developers | 
 

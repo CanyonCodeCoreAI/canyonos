@@ -39,10 +39,10 @@ LOCAL_DASHBOARD_PORT = 8081
 UPGRADE_CHART = (
     "Upgrade the CanyonOS operator chart: this CLI needs the CanyonOS API it installs"
 )
-# The cluster's dashboard is every workflow group's: its key is its chart's.
+# The cluster's dashboard is every workflow group's, and each one's routes take its key.
 KUBERNETES_DASHBOARD_KEY = (
-    "The cluster's dashboard is shared by every workflow group: it checks the key its chart "
-    "sets (dashboard.apiKeyHash), not this machine's."
+    "The cluster's dashboard is shared by every workflow group: each one's workflows "
+    "open with that workflow group's own API key (`canyonos deploy --api-key` sets it)."
 )
 
 
@@ -185,8 +185,8 @@ def run_kubernetes_serve(port=None):
     """Run `canyonos serve` on Kubernetes: keep the cluster's dashboard on
     127.0.0.1 here through a port-forward in the background, on `port`, else the
     project's `dashboard_port`, else 8081 or the next free one, until `canyonos stop`.
-    Only who may port-forward into its namespace can open it, and its API key is its
-    chart's (`dashboard.apiKeyHash`), never this machine's. Returns the exit code."""
+    Only who may port-forward into its namespace can open it, and each workflow group's
+    workflows there open with that workflow group's API key. Returns the exit code."""
     ui.hint(KUBERNETES_DASHBOARD_KEY)
     port = _open_dashboard(port)
     ui.ok(f"Dashboard: http://127.0.0.1:{port} (until canyonos stop)")

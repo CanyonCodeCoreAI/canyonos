@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 
 from canyonos import deployment, internal_ca
-from canyonos.auth import auth_header
+from canyonos.auth import bearer_header, workflow_group_api_key
 from canyonos.api import ApiError, put_dashboard
 from canyonos.dashboard_stack import join_deployment_network
 from canyonos.init import controller_redis
@@ -52,12 +52,13 @@ def _error_message(error: urllib.error.HTTPError) -> str:
 def _post(
     url: str,
     payload: bytes,
+    key: str | None,
     timeout: float = TIMEOUT_SECONDS,
 ) -> dict:
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json", **auth_header()},
+        headers={"Content-Type": "application/json", **bearer_header(key)},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -126,7 +127,7 @@ def add_sample_data(
     instead of alone. The body names a workflow, never data: the only data the
     api can write here is its own.
 
-    The call sends this machine's API key, when one is set. Returns the api's
+    The call sends that workflow group's API key, when it has one. Returns the api's
     `{spans, logs, metrics}`. Raises RegistrationError with the api's message when it
     does not answer.
     """
@@ -137,7 +138,12 @@ def add_sample_data(
     )
     payload = json.dumps({"workflow": workflow}).encode()
     try:
-        return _post(url, payload, SAMPLE_DATA_TIMEOUT_SECONDS)
+        return _post(
+            url,
+            payload,
+            workflow_group_api_key(workflow_group_id),
+            SAMPLE_DATA_TIMEOUT_SECONDS,
+        )
     except urllib.error.HTTPError as e:
         raise RegistrationError(_error_message(e)) from None
     except (OSError, ValueError) as e:

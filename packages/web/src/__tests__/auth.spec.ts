@@ -6,7 +6,13 @@ import type { Page, Request } from '@playwright/test';
 
 import type { ScalingAgentsResponse, ScalingPolicy, ScalingResponse } from '@canyonos/api/scaling';
 
-import { readStoredApiKey, setApiKey, storedApiKey, TEST_API_KEY } from './helpers/auth';
+import {
+  keyRefusal,
+  readStoredApiKey,
+  setApiKey,
+  storedApiKey,
+  TEST_API_KEY,
+} from './helpers/auth';
 import {
   expectPath,
   stubFleetSpend,
@@ -15,13 +21,11 @@ import {
   WORKFLOW,
   WORKFLOW_API,
 } from './helpers/session';
-import { apiBaseUrl, fulfillJson } from './helpers/workflows';
+import { apiBaseUrl, fulfillJson, SEEDED_WORKFLOW_NAME } from './helpers/workflows';
 import type { ApiErrorBody } from './helpers/workflows';
 
 const apiOrigin = new URL(apiBaseUrl).origin;
 const WRONG_KEY = 'not-the-api-key';
-const INVALID_KEY =
-  'This API key is not the one this API was started with. Use that key, or start it with yours: `canyonos serve --api-key <key>`';
 const SCALING = `/workflows/${WORKFLOW.id}/scaling`;
 const SCALING_API = `${WORKFLOW_API}/scaling`;
 const NO_POLICY = { workflows: { app: { status: 'none' } } } satisfies ScalingResponse;
@@ -61,7 +65,7 @@ test('@smoke a signed-out visit asks for one API key, and nothing about an accou
   await expect(submit(page)).toBeDisabled();
 });
 
-test('@smoke the API key sent with Enter signs in, is stored, and survives a reload', async ({
+test("@smoke a workflow group's key sent with Enter signs in, opens its workflows, and survives a reload", async ({
   page,
 }) => {
   await page.goto('/login');
@@ -70,22 +74,26 @@ test('@smoke the API key sent with Enter signs in, is stored, and survives a rel
   await keyField(page).press('Enter');
 
   await expectPath(page, '/workflows');
-  await expect(page.getByTestId('workflows-overview')).toBeVisible();
+  await expect(page.getByTestId('workflows-overview')).toContainText(SEEDED_WORKFLOW_NAME);
   expect(await readStoredApiKey(page)).toEqual(storedApiKey(TEST_API_KEY));
   await page.reload();
   await expectPath(page, '/workflows');
   await expect(page.getByTestId('workflows-overview')).toBeVisible();
   await page.getByTestId('sidebar-user-menu').click();
-  await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with the API key');
+  await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with an API key');
 });
 
-test('a wrong key shows the refusal against the field and keeps nothing', async ({ page }) => {
+test('a key that opens no workflow group shows the refusal against the field and keeps nothing', async ({
+  page,
+  request,
+}) => {
+  const refusal = await keyRefusal(request, WRONG_KEY);
   await page.goto('/login');
 
   await keyField(page).fill(WRONG_KEY);
   await submit(page).click();
 
-  await expect(formError(page)).toHaveText(INVALID_KEY);
+  await expect(formError(page)).toHaveText(refusal);
   await expect(formError(page)).toHaveAttribute('role', 'alert');
   await expect(keyField(page)).toHaveAttribute('aria-describedby', /\bauth-error\b/);
   await expect(keyField(page)).toBeFocused();
@@ -172,7 +180,10 @@ test('a 401 in a session signs out and comes back to the page after a new sign-i
       refuse
         ? fulfillJson(
             route,
-            { error: 'auth.invalid_key', message: INVALID_KEY } satisfies ApiErrorBody,
+            {
+              error: 'auth.invalid_key',
+              message: 'This API key does not open this workflow group.',
+            } satisfies ApiErrorBody,
             401
           )
         : fulfillJson(route, [WORKFLOW])

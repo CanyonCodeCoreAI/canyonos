@@ -89,8 +89,8 @@ def _new_api_key() -> str:
 class Recorder:
     """The calls made so far in this session, in order, every workflow group folder
     `stage` made, each with the number of calls made before it, and the session's
-    own API key, which every `canyonos` it runs gets as CANYONOS_API_KEY, so a run
-    never uses the caller's `~/.canyonos/api_key` nor writes its key there."""
+    own API key, which every `canyonos` it runs gets as CANYONOS_API_KEY, so the
+    workflow groups it deploys take that key unless a case gives one its own."""
 
     calls: list[Call] = field(default_factory=list)
     staged: list[tuple[int, Path]] = field(default_factory=list)
@@ -160,8 +160,8 @@ def cli_env(api_key: str | None = None) -> dict[str, str]:
     HOME stays the caller's: the CLI keeps its state, the dashboard's settings and
     the usage outbox under `~/.canyonos` with no other setting for it, and a
     different HOME would also hide Docker's own config and uv's cache. The API key is
-    the exception: CANYONOS_API_KEY wins over `~/.canyonos/api_key` and is never
-    written to it."""
+    the exception: CANYONOS_API_KEY wins over the key a workflow group's record keeps
+    and is never written to it."""
     environment = {
         **os.environ,
         "CANYONOS_ENV": "development",
@@ -736,10 +736,13 @@ class Endpoint:
         return bearer(self.api_key) if self.api_key is not None else {}
 
 
-def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
+def cli_python(
+    recorder: Recorder, workspace: Path, script: str, *, keyed: bool = True
+) -> Call:
     """Run `script` with the checkout's CLI modules from the record of the workflow
     group of `workspace` (from `workspace` before its first deploy), the way a CLI
-    command run from `workspace` sees the workflow group. Python runs isolated (`-I`),
+    command run from `workspace` sees the workflow group, with the session's API key
+    unless `keyed` is False, when the record's key holds. Python runs isolated (`-I`),
     so a workflow file such as `json.py` never shadows a module the script imports."""
     argv = [
         "uv",
@@ -753,13 +756,22 @@ def cli_python(recorder: Recorder, workspace: Path, script: str) -> Call:
         script,
     ]
     cwd = record(workspace, missing_ok=True) or workspace
-    return run(recorder, argv, cwd=cwd, env=cli_env(recorder.api_key))
+    env = cli_env(recorder.api_key if keyed else None)
+    return run(recorder, argv, cwd=cwd, env=env)
 
 
-def cli_value(recorder: Recorder, workspace: Path, expression: str, imports: str):
-    """Evaluate `expression` with `cli_python` and return it parsed from JSON."""
+def cli_value(
+    recorder: Recorder,
+    workspace: Path,
+    expression: str,
+    imports: str,
+    *,
+    keyed: bool = True,
+):
+    """Evaluate `expression` with `cli_python`, with the session's API key unless
+    `keyed` is False, and return it parsed from JSON."""
     script = f"import json; {imports}; print(json.dumps({expression}))"
-    output = cli_python(recorder, workspace, script).stdout
+    output = cli_python(recorder, workspace, script, keyed=keyed).stdout
     return _json.loads(output.strip().splitlines()[-1])
 
 
@@ -817,13 +829,13 @@ def redis_port(recorder: Recorder, workspace: Path) -> int:
 
 
 def controller_headers(recorder: Recorder, workspace: Path) -> dict[str, str]:
-    """The headers the CLI sends the CanyonOS API's `/v1` routes, which run the
-    workflow group's Global Controller: this machine's API key."""
+    """The headers the CLI sends the CanyonOS API's `/v1/workflow-groups` routes,
+    which run the workflow group's Global Controller: this machine's deploy key."""
     return cli_value(
         recorder,
         workspace,
-        "auth_header()",
-        "from canyonos.auth import auth_header",
+        "docker_api_headers()",
+        "from canyonos.api import docker_api_headers",
     )
 
 

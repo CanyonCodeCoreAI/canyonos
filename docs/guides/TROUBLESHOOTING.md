@@ -249,12 +249,12 @@ one a crashed deploy left behind.
 
 How the key works is in [API key](AUTHORIZATION.md).
 
-### `deploy` or `serve` warns that no API key is set
+### `deploy` warns that the workflow group has no API key
 
-`No API key is set: the endpoint and the dashboard answer anyone who reaches them. Set one with --api-key <key>.`
+`This workflow group has no API key: its endpoint and its dashboard routes answer anyone who reaches them. Set one with --api-key <key>.`
 
-**Cause:** this machine has no `~/.canyonos/api_key` and no `CANYONOS_API_KEY`, or the
-run passed `--no-api-key`. Nothing is checked.
+**Cause:** the workflow group's record has no `api_key` and `CANYONOS_API_KEY` is not
+set, or the run passed `--no-api-key`. Nothing is checked for this workflow group.
 
 **Solution:** for anything others can reach, run the command again with a key:
 
@@ -267,14 +267,14 @@ canyonos deploy <workflow folder>... --api-key <your api key>
 `auth.missing_key` or `auth.invalid_key`, in the `error_name` of the reply
 
 **Cause:** the request carries no `Authorization: Bearer <your api key>` header, or a
-key that is not the one the workflow group was deployed with. After a replace, a workflow group
-you have not redeployed still takes the old key.
+key that is not the one this workflow group was deployed with. Another workflow group's
+key never opens it.
 
-**Solution:** send the key in the header, or redeploy the workflow group to give it the
-machine's current key:
+**Solution:** send this workflow group's key in the header, or redeploy it with the key
+you want it to take:
 
 ```bash
-canyonos deploy <workflow folder>...
+canyonos deploy <workflow folder>... --api-key <your api key>
 ```
 
 ### The endpoint answers `503` with `auth.not_ready`

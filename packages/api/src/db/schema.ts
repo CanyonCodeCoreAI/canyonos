@@ -93,6 +93,10 @@ export const workflowGroups = pgTable('workflow_groups', {
     .defaultNow(),
   deployed: jsonb('deployed').$type<DeployedFingerprints>(),
   last_apply: jsonb('last_apply').$type<StoredLastApply>(),
+  // When a DELETE stopped the deploy and forgot its upload. The row then holds only its id and
+  // API key hash, so the workflows it ran keep their history behind the same key; its next
+  // deploy clears it.
+  stopped_at: timestamp('stopped_at', { withTimezone: true, mode: 'date' }),
   created_at: timestamp('created_at', { withTimezone: true, mode: 'string' })
     .notNull()
     .defaultNow(),

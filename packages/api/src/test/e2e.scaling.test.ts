@@ -13,7 +13,12 @@ import {
   seed_scaling_agents,
   seed_workflows,
 } from './redis-test.utils';
-import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
+import {
+  bearer,
+  create_test_workflow,
+  create_test_workflow_group,
+  TEST_API_KEY,
+} from './workflow-test.utils';
 import type { ScalingPolicy } from '../modules/scaling/scaling.types';
 
 setupE2ETests();
@@ -170,7 +175,10 @@ describe('workflow scaling policy', () => {
   test('a workflow that does not exist is 404 workflows.not_found on every route', async () => {
     const token = TEST_API_KEY;
     const headers = bearer(token);
-    const scaling = group_workflow('11111111-1111-4111-8111-111111111111').scaling;
+    const scaling = group_workflow(
+      '11111111-1111-4111-8111-111111111111',
+      await create_test_workflow_group()
+    ).scaling;
 
     const responses = await Promise.all([
       scaling.get({ $headers: headers }),

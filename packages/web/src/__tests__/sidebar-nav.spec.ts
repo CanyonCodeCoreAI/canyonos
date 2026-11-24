@@ -15,14 +15,14 @@ import {
 } from './helpers/session';
 import { apiBaseUrl, failJson, fulfillJson } from './helpers/workflows';
 
-test('account menu says it is signed in with the API key and logs out', async ({ page }) => {
+test('account menu says it is signed in with an API key and logs out', async ({ page }) => {
   await authenticate(page);
   await page.goto('/workflows');
 
   const trigger = page.getByTestId('sidebar-user-menu');
   await trigger.click();
   await expect(page.getByTestId('sidebar-user-menu-content')).toBeVisible();
-  await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with the API key');
+  await expect(page.getByTestId('sidebar-signed-in')).toHaveText('Signed in with an API key');
   await page.getByTestId('sidebar-logout').click();
   await expect(page).toHaveURL(/\/login/);
 });

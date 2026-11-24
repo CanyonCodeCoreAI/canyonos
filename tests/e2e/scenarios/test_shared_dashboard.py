@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """Two workflow groups side by side on one machine with the shared dashboard: helloworld and
-portfolio deploy at the same time, each on its own ports, and the dashboard lists
-both to the one API key. helloworld's endpoint and Redis containers publish the ports
+portfolio deploy at the same time, each on its own ports and with its own API key,
+and the dashboard lists each one's workflow to its key alone. helloworld's endpoint and Redis containers publish the ports
 it pins, and the dashboard reads each one's Redis. Each Redis takes only its own
 workflow group's password, and no container's command shows one. helloworld's
 workflow_group.yaml has no `otel:` block, so its traces reach the dashboard by the
@@ -12,13 +12,14 @@ folder named helloworld, with nothing deployed from it, refuses rather than test
 running one. With the dashboard's database stopped, the dashboard and both workflow
 groups' status answer 503 and `status` and `sync` name the database and the fix; once
 it runs again the same API serves both. A deploy of helloworld with a new
-`--api-key` moves the dashboard and helloworld to it while portfolio keeps the old key.
+`--api-key` moves helloworld alone to it, while portfolio keeps its key and the API
+keeps running.
 Then one workflow is stopped and the other keeps running; the stopped
 one, redeployed without `endpoint.api_port` or `redis.port`, moves past the other's
 ports, keeps its machine metrics in its own Redis, and is told the running dashboard
-ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container,
-which reads the key's hash again, a redeploy keeps the dashboard, the workflow's
-id and the workflow group's CA, example runs go in with the machine's API key, and the
+ignores its `dashboard_port`. `canyonos serve` re-registers on a new api container, a
+redeploy keeps the dashboard, the workflow's id and the workflow group's CA, example
+runs go in with the workflow group's own API key, and the
 last stop stops the dashboard while keeping its containers. Last, `canyonos serve`
 refuses a taken `dashboard_port`, a deploy pinned to an `api_port` another program
 holds or the dashboard's API is on stops before anything starts, a dashboard
@@ -113,8 +114,9 @@ REDIS_CLI_TLS = [
 
 @dataclass
 class Fleet:
-    """The workflow group folders of the staged workflows by name, their Docker groups and
-    dashboard ids, the dashboard API with the session's API key, and the dashboard
+    """The workflow group folders of the staged workflows by name, their Docker groups,
+    dashboard ids and API keys (helloworld's the session's, portfolio's its own), the
+    dashboard API with each one's key (`api` with helloworld's), and the dashboard
     api's container as it was after the first deploy finished: its id and start time,
     which no deploy changes while a workflow group is left running, and as `canyonos serve`
     left it."""
@@ -122,17 +124,23 @@ class Fleet:
     dirs: dict[str, Path]
     parent: Path
     groups: dict[str, str]
-    api: Api
+    keys: dict[str, str]
+    apis: dict[str, Api]
     ids: dict[str, str]
     api_after_first_deploy: str
     api_after_both_deploys: str
     api_after_serve: str = ""
 
+    @property
+    def api(self) -> Api:
+        """The dashboard API with helloworld's key, the session's."""
+        return self.apis["helloworld"]
+
 
 def _deploy(recorder, directory: Path, name: str, *args: str, keyed: bool = True):
     """`canyonos deploy` of the workflow in `directory` with `args`, with the session's
-    API key unless `keyed` is False; fail unless it registered with the dashboard, and
-    return the call."""
+    API key unless `keyed` is False, when the workflow group's record keeps its key;
+    fail unless it registered with the dashboard, and return the call."""
     call = canyonos(
         recorder,
         ["deploy", str(workflow_dir(directory)), *args],
@@ -246,19 +254,19 @@ def _reads_own_redis(recorder, fleet: Fleet, name: str) -> None:
     directory = fleet.dirs[name]
     group_id = workflow_group_id(directory)
     base = f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids[name]}"
-    agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
+    agents = fleet.apis[name].get(f"{base}/scaling/agents").json()["agents"]
     namespace = uuid.UUID(fleet.ids[name])
     assert {(agent["name"], agent["agent_id"]) for agent in agents} == {
         (agent, str(uuid.uuid5(namespace, agent))) for agent in _agent_names(directory)
     }, agents
-    endpoint = fleet.api.get(f"{base}/monitoring/endpoint").json()["endpoint"]
+    endpoint = fleet.apis[name].get(f"{base}/monitoring/endpoint").json()["endpoint"]
     assert endpoint is not None, f"{name} records no endpoint"
     served = [(route["agent"], route["method"]) for route in endpoint["routes"]]
     routes = manifest(workflow_dir(directory))["endpoint"]["routes"]
     assert served == [(route["agent"], route["method"]) for route in routes], endpoint
     running = deployed_endpoint(recorder, directory)
     assert _port_of(endpoint["routes"][0]["url"]) == _port_of(running.url), endpoint
-    prompts = fleet.api.get(f"{base}/prompts").json()
+    prompts = fleet.apis[name].get(f"{base}/prompts").json()
     assert {prompt["name"] for prompt in prompts} == _prompt_names(directory), prompts
 
 
@@ -291,10 +299,10 @@ def _said(call) -> str:
     return " ".join(call.output.split())
 
 
-def _refused_with(call, code: str) -> bool:
-    """Whether `call` was refused with 401 and the error `code`, in the dashboard API's
-    `error` or the endpoint's `error_name`."""
-    if call.code != 401:
+def _refused_with(call, code: str, status: int = 401) -> bool:
+    """Whether `call` was refused with `status` and the error `code`, in the dashboard
+    API's `error` or the endpoint's `error_name`."""
+    if call.code != status:
         return False
     body = call.json()
     return code in (body.get("error"), body.get("error_name"))
@@ -303,22 +311,6 @@ def _refused_with(call, code: str) -> bool:
 def _status(recorder, directory: Path):
     """`canyonos status --json` from `directory`, whatever it exits with."""
     return canyonos(recorder, ["status", "--json"], cwd=directory, check=False)
-
-
-@contextmanager
-def _api_key_file_kept():
-    """Put `~/.canyonos/api_key` back as it was afterwards: a deploy with `--api-key`
-    writes the caller's own file, as for any `canyonos` command."""
-    stored = Path.home() / ".canyonos" / "api_key"
-    before = stored.read_bytes() if stored.is_file() else None
-    try:
-        yield
-    finally:
-        if before is None:
-            stored.unlink(missing_ok=True)
-        else:
-            stored.write_bytes(before)
-            stored.chmod(0o600)
 
 
 @contextmanager
@@ -373,41 +365,60 @@ def _tear_down(recorder, dirs: dict[str, Path], groups: dict[str, str]) -> None:
 def fleet(request, recorder, images, tmp_path_factory) -> Fleet:
     """Both workflows staged, helloworld on fixed ports so it can't race portfolio's
     api_port 8080 and Redis 6379 and with its `otel:` block removed, then deployed
-    at the same time. `canyonos serve` runs first, as for the `deployed` fixture: the
-    dashboard API reads the hash of the session's API key only when it starts, and a deploy
-    leaves a running dashboard as it is. Every folder a case deploys from is stopped afterwards and the
-    dashboard removed, whether the cases passed or not."""
+    at the same time, helloworld with the session's API key and portfolio with its
+    own, which its record keeps. `canyonos serve` runs first, as for the `deployed`
+    fixture, and a deploy leaves a running dashboard as it is. Every folder a case
+    deploys from is stopped afterwards and the dashboard removed, whether the cases
+    passed or not."""
     parent = tmp_path_factory.mktemp("fleet")
     dirs, groups = {}, {}
     request.addfinalizer(lambda: _tear_down(recorder, dirs, groups))
     for name in WORKFLOWS:
         workflow = load_workflow(name)
-        secrets = {
+        workflow_secrets = {
             secret: f"not-a-real-{secret.lower()}" for secret in workflow.secrets
         }
-        dirs[name] = stage(recorder, workflow, parent, secrets)
+        dirs[name] = stage(recorder, workflow, parent, workflow_secrets)
     _edit_settings(dirs["helloworld"], lambda text: _without_otel(_pinned(text)))
     pinned = _settings(dirs["helloworld"])
     assert pinned["endpoint"]["api_port"] == HELLOWORLD_API_PORT, pinned
     assert pinned["redis"]["port"] == HELLOWORLD_REDIS_PORT, pinned
+    keys = {
+        "helloworld": recorder.api_key,
+        "portfolio": f"e2e-portfolio-{secrets.token_urlsafe(16)}",
+    }
+    deploy_args = {
+        "helloworld": ((), True),
+        "portfolio": (("--api-key", keys["portfolio"]), False),
+    }
     canyonos(recorder, ["serve"], cwd=parent, timeout=600)
     api_after_first = ""
     with ThreadPoolExecutor(max_workers=len(WORKFLOWS)) as pool:
         running = [
-            pool.submit(_deploy, recorder, dirs[name], name) for name in WORKFLOWS
+            pool.submit(
+                _deploy,
+                recorder,
+                dirs[name],
+                name,
+                *deploy_args[name][0],
+                keyed=deploy_args[name][1],
+            )
+            for name in WORKFLOWS
         ]
         for done in as_completed(running):
             done.result()
             api_after_first = api_after_first or _api_container(recorder)
     for name in WORKFLOWS:
         groups[name] = deployment_group(recorder, dirs[name])
-    api = Api(recorder, api_url(recorder), dashboard_key(recorder))
+    assert dashboard_key(recorder) == recorder.api_key
+    apis = {name: Api(recorder, api_url(recorder), keys[name]) for name in WORKFLOWS}
     return Fleet(
         dirs=dirs,
         parent=parent,
         groups=groups,
-        api=api,
-        ids={name: deployed_workflow_id(api, dirs[name]) for name in WORKFLOWS},
+        keys=keys,
+        apis=apis,
+        ids={name: deployed_workflow_id(apis[name], dirs[name]) for name in WORKFLOWS},
         api_after_first_deploy=api_after_first,
         api_after_both_deploys=_api_container(recorder),
     )
@@ -420,21 +431,53 @@ def test_both_deploy_at_once_and_register(fleet):
     assert len(set(fleet.ids.values())) == len(WORKFLOWS), fleet.ids
 
 
-def test_one_api_key_lists_both_workflows(recorder, fleet):
-    """The dashboard needs the API key, and the key is for the whole machine, not
-    for one workflow."""
+def test_each_workflow_group_s_key_lists_only_its_own_workflow(recorder, fleet):
+    """The dashboard needs a key, and each workflow group's opens its own workflow
+    alone: listed, and its routes, never the other's. With no key neither is listed;
+    a key neither has is refused."""
     base_url = fleet.api.base_url
     status = http(recorder, "GET", f"{base_url}/v1/auth/status").json()
     assert status == {"api_key_required": True}, status
-    anonymous = http(recorder, "GET", f"{base_url}/v1/workflows", check=False)
-    assert anonymous.code == 401, anonymous.output
-    assert anonymous.json()["error"] == "auth.missing_key", anonymous.output
-    headers = bearer(recorder.api_key)
-    workflows = http(
-        recorder, "GET", f"{base_url}/v1/workflows", headers=headers
-    ).json()
-    listed = {workflow["id"] for workflow in workflows}
-    assert set(fleet.ids.values()) <= listed, workflows
+    workflows = f"{base_url}/v1/workflows"
+    anonymous = http(recorder, "GET", workflows, check=False)
+    assert anonymous.code == 200, anonymous.output
+    assert not set(fleet.ids.values()) & {w["id"] for w in anonymous.json()}
+    stranger = http(
+        recorder, "GET", workflows, headers=bearer("e2e-no-group-key"), check=False
+    )
+    assert _refused_with(stranger, "auth.invalid_key"), stranger.output
+    assert fleet.keys["helloworld"] != fleet.keys["portfolio"]
+    for name, other in zip(WORKFLOWS, reversed(WORKFLOWS)):
+        listed = {w["id"] for w in fleet.apis[name].get("/v1/workflows").json()}
+        assert fleet.ids[name] in listed and fleet.ids[other] not in listed, listed
+        group_id = workflow_group_id(fleet.dirs[other])
+        crossed = fleet.apis[name].get(
+            f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids[other]}/prompts",
+            check=False,
+        )
+        # A good key on another workflow group's workflow: not found, and still signed in.
+        assert _refused_with(crossed, "workflows.not_found", 404), crossed.output
+        # Nor does registering the other's workflow as one's own take it: the dashboard
+        # moves a workflow only for a caller who opens the workflow group it is in.
+        own_id = workflow_group_id(fleet.dirs[name])
+        taking = fleet.apis[name].put(
+            f"/v1/workflow-groups/{own_id}/dashboard",
+            json={
+                "workflows": {fleet.ids[other]: "taken"},
+                "redis_host": f"{fleet.groups[name]}-redis-localhost",
+                "redis_port": redis_port(recorder, fleet.dirs[name]),
+                "redis_password": "",
+                "redis_tls": None,
+            },
+            check=False,
+        )
+        assert _refused_with(taking, "registry.workflow_taken", 409), taking.output
+        listed = {w["id"] for w in fleet.apis[name].get("/v1/workflows").json()}
+        assert fleet.ids[other] not in listed, listed
+        theirs = fleet.apis[other].get(f"/v1/workflows/{fleet.ids[other]}").json()
+        assert theirs["workflow_group_id"] == group_id, theirs
+    kept = record(fleet.dirs["portfolio"]) / "api_key"
+    assert kept.read_text().strip() == fleet.keys["portfolio"]
 
 
 def test_each_workflow_group_has_its_own_docker_group_and_one_dashboard(
@@ -468,8 +511,8 @@ def test_dashboard_reads_each_workflow_groups_own_redis(recorder, fleet):
         group_id = workflow_group_id(fleet.dirs[name])
         base = f"/v1/workflow-groups/{group_id}/workflows/{fleet.ids[name]}"
 
-        def all_replicas_up(base=base):
-            agents = fleet.api.get(f"{base}/scaling/agents").json()["agents"]
+        def all_replicas_up(base=base, api=fleet.apis[name]):
+            agents = api.get(f"{base}/scaling/agents").json()["agents"]
             return all(
                 agent["replicas_running"] == agent["replicas_expected"] >= 1
                 for agent in agents
@@ -601,22 +644,25 @@ def test_a_stopped_database_is_named_until_it_runs_again(recorder, fleet):
         _reads_own_redis(recorder, fleet, name)
 
 
-def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, fleet):
+def test_a_new_api_key_moves_one_workflow_group_and_leaves_the_other(recorder, fleet):
     """`canyonos deploy --api-key` with a new key, run as a rotation is, without
-    CANYONOS_API_KEY, which would hold the old key: the dashboard API and the workflow
-    group it deployed take only the new key, the other workflow group keeps the old one
-    until it is deployed again, the dashboard lists both under the new key, and the
-    other one's status, read with the old key, is refused. Then `canyonos serve` with
-    the session's key puts the dashboard back on it, and that status reads again."""
+    CANYONOS_API_KEY, which would hold the old key: helloworld's endpoint and its
+    dashboard routes take only the new key, while portfolio keeps its own key, in its
+    record and on its endpoint and routes, and the CanyonOS API keeps running in the
+    same container. A deploy with the session's key then puts helloworld back on it."""
     new_key = f"e2e-rotated-{secrets.token_urlsafe(16)}"
     old_key = recorder.api_key
     rotated, kept = fleet.dirs["helloworld"], fleet.dirs["portfolio"]
-    with _api_key_file_kept():
-        _deploy(recorder, rotated, "helloworld", "--api-key", new_key, keyed=False)
-
-    endpoint = replace(
-        deployed_endpoint(recorder, rotated, status_key=new_key), api_key=new_key
+    api_before = _api_container(recorder)
+    deployed = _deploy(
+        recorder, rotated, "helloworld", "--api-key", new_key, keyed=False
     )
+
+    assert "Only this workflow group changes" in _said(deployed), deployed.output
+    assert _api_container(recorder) == api_before, "the new key restarted the API"
+    assert (record(rotated) / "api_key").read_text().strip() == new_key
+    assert (record(kept) / "api_key").read_text().strip() == fleet.keys["portfolio"]
+    endpoint = replace(deployed_endpoint(recorder, rotated), api_key=new_key)
     _, result = result_of(recorder, endpoint, "rotated", timeout=60)
     assert result == {"greeting": "Hello, rotated! I'm the HelloAgent!"}, result
     query = {endpoint.argument: "old key"}
@@ -625,28 +671,33 @@ def test_a_new_api_key_moves_the_dashboard_and_one_workflow_group(recorder, flee
     assert _refused_with(old, "auth.invalid_key"), old.output
     # A request id nothing made: past the key check it is only not found, so the
     # other workflow's agents are never called.
-    kept_endpoint = deployed_endpoint(recorder, kept, status_key=new_key)
+    kept_endpoint = deployed_endpoint(recorder, kept)
     other = f"{kept_endpoint.url}/status/{uuid.uuid4()}"
-    still = http(recorder, "GET", other, headers=bearer(old_key), check=False)
+    still = http(
+        recorder,
+        "GET",
+        other,
+        headers=bearer(fleet.keys["portfolio"]),
+        check=False,
+    )
     assert still.code == 404, still.output
     refused = http(recorder, "GET", other, headers=bearer(new_key), check=False)
     assert _refused_with(refused, "auth.invalid_key"), refused.output
 
     workflows = f"{fleet.api.base_url}/v1/workflows"
     listed = http(recorder, "GET", workflows, headers=bearer(new_key)).json()
-    assert set(fleet.ids.values()) <= {workflow["id"] for workflow in listed}, listed
+    assert fleet.ids["helloworld"] in {workflow["id"] for workflow in listed}, listed
+    assert fleet.ids["portfolio"] not in {workflow["id"] for workflow in listed}
     stale = http(recorder, "GET", workflows, headers=bearer(old_key), check=False)
     assert _refused_with(stale, "auth.invalid_key"), stale.output
-    refused_status = _status(recorder, kept)
-    assert refused_status.code != 0, refused_status.output
-    assert (
-        "Run `canyonos serve` to restart the CanyonOS API" in refused_status.output
-    ), refused_status.output
-
-    canyonos(recorder, ["serve"], cwd=kept, timeout=600)
-    assert fleet.api.get("/v1/workflows").code == 200
+    _reads_own_redis(recorder, fleet, "portfolio")
     status = _status(recorder, kept)
     assert status.code == 0 and status.json()["running"] is True, status.output
+
+    _deploy(recorder, rotated, "helloworld", "--api-key", old_key)
+    assert _api_container(recorder) == api_before, "a redeploy restarted the API"
+    assert fleet.api.get("/v1/workflows").code == 200
+    _reads_own_redis(recorder, fleet, "helloworld")
 
 
 def test_stopping_one_leaves_the_other_and_the_dashboard(recorder, fleet):
@@ -746,7 +797,7 @@ def test_serve_registers_again_on_a_new_api(recorder, fleet):
     assert registered in call.output, call.output
     fleet.api_after_serve = _api_container(recorder)
     assert fleet.api_after_serve != fleet.api_after_both_deploys, (
-        "canyonos serve kept the api container, so it never read the key's hash again"
+        "canyonos serve kept the api container"
     )
     _reads_own_redis(recorder, fleet, "portfolio")
 
@@ -754,26 +805,27 @@ def test_serve_registers_again_on_a_new_api(recorder, fleet):
 def test_redeploy_keeps_the_dashboard_and_the_workflow_id(recorder, fleet):
     directory = fleet.dirs["portfolio"]
     ca_before = _ca_certificate(recorder, directory)
-    _deploy(recorder, directory, "portfolio")
+    _deploy(recorder, directory, "portfolio", keyed=False)
     assert _ca_certificate(recorder, directory) == ca_before, (
         "the redeploy made a new CA"
     )
     assert _api_container(recorder) == fleet.api_after_serve
     for name in WORKFLOWS:
-        listed = deployed_workflow_id(fleet.api, fleet.dirs[name])
+        listed = deployed_workflow_id(fleet.apis[name], fleet.dirs[name])
         assert listed == fleet.ids[name], (name, listed)
     _reads_own_redis(recorder, fleet, "portfolio")
 
 
 def test_the_cli_sends_the_api_key_to_add_sample_data(recorder, fleet):
-    """What quickstart's last stage calls: example runs go in with the machine's API
-    key, here the session's CANYONOS_API_KEY."""
+    """What quickstart's last stage calls: example runs go in with the API key of the
+    workflow group they are for, here the one portfolio's record keeps."""
     added = cli_value(
         recorder,
         fleet.dirs["portfolio"],
         f"add_sample_data({workflow_group_id(fleet.dirs['portfolio'])!r}, "
         f"{fleet.ids['portfolio']!r}, 'portfolio')",
         "from canyonos.dashboard_registration import add_sample_data",
+        keyed=False,
     )
     assert added["spans"] > 0, added
 

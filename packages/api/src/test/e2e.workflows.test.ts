@@ -68,8 +68,16 @@ describe('workflow list and detail', () => {
     expect((res.error?.value as { error?: string })?.error).toBe('workflows.not_found');
   });
 
-  test('rejects unauthenticated access', async () => {
-    expect((await api.v1.workflows.get()).error?.status as number).toBe(401);
+  test('shows a caller with no key no workflow of a workflow group that has one, and refuses a key that opens none', async () => {
+    const { workflow_id } = await create_test_workflow({ name: 'Keyed' });
+
+    const listed = await api.v1.workflows.get();
+    expect(listed.error).toBeNull();
+    expect(listed.data!.map(({ id }) => id)).not.toContain(workflow_id);
+    expect((await api.v1.workflows[workflow_id]!.get()).error?.status as number).toBe(404);
+    expect(
+      (await api.v1.workflows.get({ $headers: bearer('opens-nothing') })).error?.status as number
+    ).toBe(401);
   });
 });
 

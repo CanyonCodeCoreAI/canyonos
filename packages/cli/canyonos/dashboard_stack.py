@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from canyonos import deployment, env, ports
-from canyonos.auth import API_KEY_HASH_ENV
+from canyonos.auth import hash_api_key
 from canyonos.constants import (
     DEFAULT_DASHBOARD_API_PORT,
     DEFAULT_DASHBOARD_PORT,
@@ -54,6 +54,11 @@ LOCK_WAIT_MESSAGE = "waiting for another canyonos command to finish with the das
 # Made once per machine and kept in the stack's `.env`: the API encrypts each workflow's
 # Redis password in its database with it.
 SECRET_KEYS = ("CANYONOS_REDIS_PASSWORD_ENCRYPTION_KEY",)
+# The machine's deploy key, made once and kept raw beside the stack's `.env`: every
+# `/v1/workflow-groups` call the CLI makes sends it, and only it lets a call create a
+# workflow group. The API gets its SHA-256 in DEPLOY_KEY_HASH_ENV.
+DEPLOY_KEY_FILE = "deploy_key"
+DEPLOY_KEY_HASH_ENV = "CANYONOS_DEPLOY_KEY_HASH"
 # The services the dashboard publishes on the host, each with the port it listens on
 # in its container, the host port it starts from, and its name in a warning: the web
 # app (none, as the CLI prints its address itself) and the API, which the CLI reaches.
@@ -90,13 +95,11 @@ class PhaseFailure(Exception):
 
 @dataclass(frozen=True)
 class DashboardStack:
-    """Where the dashboard's files live on this machine, the host port each of its
-    services (`SERVICE_PORTS`) is published on, and the hash of the API key its API
-    checks ("" for none)."""
+    """Where the dashboard's files live on this machine, and the host port each of its
+    services (`SERVICE_PORTS`) is published on."""
 
     state_dir: Path
     host_ports: dict[str, int]
-    api_key_hash: str
 
     @property
     def env_path(self) -> Path:
@@ -385,9 +388,7 @@ def pick_service_ports(
     return picked
 
 
-def _validate(
-    configured_port: int | None, api_key_hash: str, services: tuple[str, ...]
-) -> DashboardStack:
+def _validate(configured_port: int | None, services: tuple[str, ...]) -> DashboardStack:
     """Checks docker is usable and the state dir is writable, then returns a
     DashboardStack on the running dashboard's ports, else on the ones
     `pick_service_ports` picks, with `configured_port` for the web (failing when it
@@ -433,7 +434,7 @@ def _validate(
         except RuntimeError as e:
             raise PhaseFailure("validate", str(e)) from e
 
-    return DashboardStack(state_dir, picked, api_key_hash)
+    return DashboardStack(state_dir, picked)
 
 
 def _env_value(value: str) -> str:
@@ -458,13 +459,41 @@ def _read_existing_secret(env_path: Path, key: str) -> str | None:
     return None
 
 
-def dashboard_api_key_hash() -> str | None:
-    """The hash of the API key the dashboard was last started with ("" for none), or
-    None when it was never started here."""
-    env_path = _state_dir() / ".env"
-    if not env_path.is_file():
-        return None
-    return _read_existing_secret(env_path, API_KEY_HASH_ENV) or ""
+def dashboard_deploy_key_hash() -> str | None:
+    """The hash of the deploy key the CanyonOS API was last started with, or None when
+    it was never started here or was started by a CLI before deploy keys."""
+    return _read_existing_secret(_state_dir() / ".env", DEPLOY_KEY_HASH_ENV)
+
+
+def deploy_key() -> str:
+    """This machine's deploy key, kept in the dashboard's folder under `~/.canyonos`
+    and readable only by you; made there the first time it is needed, by whichever
+    command gets there first. Raises RuntimeError when it can't be read or made."""
+    path = _state_dir() / DEPLOY_KEY_FILE
+    try:
+        if not path.exists():
+            make_private_dir(path.parent)
+            staged = path.with_name(f".{DEPLOY_KEY_FILE}-{secrets.token_hex(8)}")
+            write_private_file(staged, secrets.token_hex(32) + "\n")
+            try:
+                # A link is made whole or not at all, and never over a key another
+                # command made meanwhile.
+                os.link(staged, path)
+            except FileExistsError:
+                pass
+            finally:
+                staged.unlink(missing_ok=True)
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise RuntimeError(
+            f"Could not read or make the deploy key {path}: {error.strerror or error}"
+        ) from error
+    if not key:
+        raise RuntimeError(
+            f"The deploy key {path} is empty. Remove it, then run `canyonos serve`, "
+            "which makes a new one and restarts the CanyonOS API with it."
+        )
+    return key
 
 
 def _stack_secrets(env_path: Path) -> dict[str, str]:
@@ -492,7 +521,7 @@ def _prepare(stack: DashboardStack) -> tuple[dict[str, str], str]:
                 f"CANYONOS_{service.upper()}_PORT": str(port)
                 for service, port in stack.host_ports.items()
             },
-            API_KEY_HASH_ENV: stack.api_key_hash,
+            DEPLOY_KEY_HASH_ENV: hash_api_key(deploy_key()),
             # The API runs each workflow group's Global Controller through the same
             # engine the CLI created that container on.
             "CANYONOS_DOCKER_SOCKET": mounted_docker_socket(),
@@ -749,7 +778,9 @@ def _verify(host_ports: dict[str, int], services: tuple[str, ...]) -> None:
 
 def _secret_values(managed_env: dict[str, str]) -> list[str]:
     return [
-        managed_env[key] for key in (*SECRET_KEYS, API_KEY_HASH_ENV) if managed_env[key]
+        managed_env[key]
+        for key in (*SECRET_KEYS, DEPLOY_KEY_HASH_ENV)
+        if managed_env[key]
     ]
 
 
@@ -830,17 +861,16 @@ def teardown_dashboard() -> bool:
 def run_dashboard(
     phase_reporter: Callable[[str, str], None] | None,
     configured_port: int | None,
-    api_key_hash: str,
     renewed: tuple[str, ...] = (),
     services: tuple[str, ...] = STACK_SERVICES,
 ) -> ServeResult:
     """Start `services` of the local stack, with what they depend on, for `canyonos
     serve` and `canyonos deploy`, reporting each step; on failure, save the logs and
-    remove what this run started. Its API checks the API key whose hash is
-    `api_key_hash`, its `/v1/workflow-groups` routes included, or nothing when it is "".
-    The `renewed` services start in new containers even when they run,
-    as the api does for `canyonos serve` and for a deploy that changes a key or the
-    API's image. The result's URL is the dashboard's when `services` hold the web app.
+    remove what this run started. Its API takes this machine's deploy key, made here
+    the first time, on its `/v1/workflow-groups` routes; each workflow group's own key
+    is its Global Controller's and the API's database's, never the stack's. The
+    `renewed` services start in new containers even when they run, as the api does for
+    `canyonos serve` and for a deploy whose API runs another image or deploy key. The result's URL is the dashboard's when `services` hold the web app.
 
     The whole run holds the dashboard lock, so a concurrent serve, stop, or clean
     from another workflow folder waits for it rather than racing it.
@@ -863,7 +893,7 @@ def run_dashboard(
                     lambda: report(ServeResult(True, "validate", LOCK_WAIT_MESSAGE))
                 )
             )
-            stack = _validate(configured_port, api_key_hash, services)
+            stack = _validate(configured_port, services)
             report(ServeResult(True, "validate", "dashboard prerequisites validated"))
 
             managed_env, prepare_message = _prepare(stack)

@@ -4,30 +4,46 @@
 import { Elysia } from 'elysia';
 import type { Context } from 'elysia';
 
+import { require_database } from '@api/db/database';
 import { config } from '@core/env';
 import { AppError, early_refusal, forbidden, unauthorized } from '@core/errors';
 import * as k8s from '@core/kubernetes';
 
-import { check_api_key, DASHBOARD_PATH, is_routed_to, TELEMETRY_PATH } from '../auth/auth.plugin';
+import {
+  bearer_key,
+  DASHBOARD_PATH,
+  DEPLOY_KEY_UNSET,
+  group_key,
+  hook_refusal,
+  is_deploy_key,
+  is_routed_to,
+  key_refusal,
+  opens,
+  reach_of,
+  routed_workflow_group_id,
+  sent_key_hash,
+  TELEMETRY_PATH,
+} from '../auth/auth.plugin';
 import { deploy_namespace } from './workflow-groups.kubernetes';
 import { workflow_groups_repo } from './workflow-groups.repo';
+import type { OpenedWorkflowGroups } from '../auth/auth.plugin';
 
-// Who may call /v1/workflow-groups. On Docker, whoever holds the API key (auth/auth.plugin.ts),
-// and anyone when the API runs with none. On Kubernetes the caller sends their own Kubernetes
-// login, `Authorization: Bearer <token>`: the cluster checks the token (a TokenReview, else 401)
-// and whether they may `get` (for a read) or `update` (for a change) CanyonProjects in each
-// namespace the request acts in (a SubjectAccessReview, else 403), so a deploy reaches only the
-// namespaces its caller may edit. Before the body is read; a PUT of a workflow group's settings
-// is checked again, against the namespace its body names, before anything is written.
+// Who may call /v1/workflow-groups. On Docker, the machine's deploy key or the workflow group's
+// own key (`requireDockerCaller`). On Kubernetes the caller sends their own Kubernetes login,
+// `Authorization: Bearer <token>`: the cluster checks the token (a TokenReview, else 401) and
+// whether they may `get` (for a read) or `update` (for a change) CanyonProjects in each namespace
+// the request acts in (a SubjectAccessReview, else 403), so a deploy reaches only the namespaces
+// its caller may edit. Both run before the body is read; a PUT of a workflow group's settings is
+// checked again, against the namespace its body names, before anything is written.
 
 // These routes serve no browser: no CORS. The exceptions: the dashboard's routes under a
-// workflow's own path, which take the API key, and a workflow group's telemetry routes, which
-// take no key.
+// workflow's own path, which take the workflow group's key, and a workflow group's telemetry
+// routes, which take no key.
 export const WORKFLOW_GROUPS_PATH = '/v1/workflow-groups';
 
-const BEARER = /^bearer\s+(.+)$/i;
-const GROUP_PATH =
-  /^\/v1\/workflow-groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+const WORKFLOW_GROUP_LIST_PATH = /^\/v1\/workflow-groups\/?$/;
+
+const DEPLOY_KEY = "this machine's deploy key";
 
 interface KubernetesUser {
   username?: string;
@@ -143,30 +159,80 @@ function drop_cors_headers(set: Guarded['set']): void {
   }
 }
 
-/** On Docker, lets a /v1/workflow-groups request through only with the API key, when the API
- * runs with one. Before its body is read or checked. Answers a preflight itself, 204 with no
- * CORS grant, so the CORS plugin never answers it. */
-export function requireDockerCaller({ request, set }: Guarded) {
+/** On Docker, why the list of workflow groups refuses a caller, or null: the deploy key, and
+ * anyone while the API has none, see every one; any other key must be some workflow group's,
+ * and the list shows what it opens. */
+async function list_refusal(key_hash: Buffer | null): Promise<AppError | null> {
+  if (DEPLOY_KEY_UNSET || is_deploy_key(key_hash)) return null;
+  if (key_hash !== null && !(await reach_of(key_hash)).unlocks) {
+    return key_refusal(key_hash, `${DEPLOY_KEY} or the API key of a workflow group`);
+  }
+  return null;
+}
+
+/** On Docker, why a route on one workflow group refuses a caller, or null: the deploy key opens
+ * every one; a recorded workflow group its own key, or anyone while it has none; one this API
+ * has no row of, which a deploy is creating, the deploy key only, or anyone while the API has
+ * none. */
+async function group_refusal(request: Request, key_hash: Buffer | null): Promise<AppError | null> {
+  if (is_deploy_key(key_hash)) return null;
+  const workflow_group_id = routed_workflow_group_id(request);
+  require_database();
+  const row = workflow_group_id ? await workflow_groups_repo.api_key_hash(workflow_group_id) : null;
+  if (!row) {
+    if (DEPLOY_KEY_UNSET) return null;
+    return key_refusal(
+      key_hash,
+      `${DEPLOY_KEY}, which a workflow group this API does not know yet takes`
+    );
+  }
+  return opens(key_hash, row.api_key_hash)
+    ? null
+    : key_refusal(key_hash, group_key(workflow_group_id));
+}
+
+/** On Docker, lets a /v1/workflow-groups request through only with the key it takes, before its
+ * body is read or checked. Answers a preflight itself, 204 with no CORS grant, so the CORS plugin
+ * never answers it. */
+export async function requireDockerCaller({ request, set }: Guarded) {
   if (!is_guarded_workflow_groups_path(request)) return;
   drop_cors_headers(set);
-  const refusal = check_api_key({ request, set });
-  if (refusal || request.method !== 'OPTIONS') return refusal;
+  try {
+    const key_hash = sent_key_hash(request);
+    const refusal = WORKFLOW_GROUP_LIST_PATH.test(new URL(request.url).pathname)
+      ? await list_refusal(key_hash)
+      : await group_refusal(request, key_hash);
+    if (refusal) return early_refusal(set, refusal);
+  } catch (error) {
+    return hook_refusal(set, error);
+  }
+  if (request.method !== 'OPTIONS') return;
   set.status = 204;
   return '';
 }
 
+/** The workflow groups the caller of an accepted /v1/workflow-groups request opens, for the list
+ * to show and a registration to move workflows out of: on Kubernetes every one, to whoever the
+ * cluster signs in; on Docker every one to the deploy key, and to anyone while the API has none,
+ * else those its key opens. A route's `derive` reads it. */
+export async function opened_workflow_groups(request: Request): Promise<OpenedWorkflowGroups> {
+  if (config.workflowGroups.target === 'kubernetes') return 'every';
+  const key_hash = sent_key_hash(request);
+  if (DEPLOY_KEY_UNSET || is_deploy_key(key_hash)) return 'every';
+  return { ids: (await reach_of(key_hash)).ids };
+}
+
 function unauthenticated(set: Guarded['set'], message: string) {
-  set.headers['www-authenticate'] = 'Bearer';
   return early_refusal(set, unauthorized('auth.unauthenticated', message));
 }
 
-/** Lets a /v1/workflow-groups request through only from a user the cluster signs in with its token, who may
- * act on CanyonProjects in the namespaces the request acts in. A request naming no workflow
- * group this API knows, such as the list, needs the sign-in only. */
+/** Lets a /v1/workflow-groups request through only from a user the cluster signs in with its
+ * token, who may act on CanyonProjects in the namespaces the request acts in. A request naming
+ * no workflow group this API knows, such as the list, needs the sign-in only. */
 export async function requireKubernetesCaller({ request, set }: Guarded) {
   if (!is_guarded_workflow_groups_path(request)) return;
   drop_cors_headers(set);
-  const token = request.headers.get('authorization')?.trim().match(BEARER)?.[1]?.trim();
+  const token = bearer_key(request);
   if (!token) {
     return unauthenticated(set, 'Send your Kubernetes login: `Authorization: Bearer <token>`.');
   }
@@ -175,10 +241,10 @@ export async function requireKubernetesCaller({ request, set }: Guarded) {
     if (!user)
       return unauthenticated(set, 'The cluster does not accept this token: sign in again.');
     callers.set(request, user);
-    const workflow_group_id = GROUP_PATH.exec(new URL(request.url).pathname)?.[1];
+    const workflow_group_id = routed_workflow_group_id(request);
     if (!workflow_group_id) return;
     const verb: Verb = request.method === 'GET' || request.method === 'HEAD' ? 'get' : 'update';
-    for (const namespace of await namespaces_of(workflow_group_id.toLowerCase())) {
+    for (const namespace of await namespaces_of(workflow_group_id)) {
       if (!(await may(user, verb, namespace))) {
         return early_refusal(set, refused(user, verb, namespace));
       }
@@ -192,7 +258,7 @@ export async function requireKubernetesCaller({ request, set }: Guarded) {
 /** On Kubernetes, refuses (403) a PUT of a workflow group's settings unless its caller may
  * update CanyonProjects in the namespace `config_text` names, in every namespace when it names
  * none; checked once the body is read, before anything is written. Nothing to check on Docker,
- * whose API key may do everything. */
+ * where the key checked as the request arrived may do everything to the workflow group. */
 export async function check_settings_caller(request: Request, config_text: string): Promise<void> {
   if (config.workflowGroups.target !== 'kubernetes') return;
   const user = callers.get(request);

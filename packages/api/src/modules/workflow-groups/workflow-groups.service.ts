@@ -25,6 +25,7 @@ import { with_group_lock } from './workflow-groups.lock';
 import { workflow_groups_repo } from './workflow-groups.repo';
 import { target } from './workflow-groups.target';
 import { WorkflowGraphSchema } from './workflow-groups.types';
+import type { OpenedWorkflowGroups } from '../auth/auth.plugin';
 import type { CoreReply } from './workflow-groups.core';
 import type { ApplyFailure } from './workflow-groups.target';
 import type {
@@ -71,10 +72,11 @@ function workflow_view(workflow_id: string, workflow: StoredWorkflow): Workflow 
   };
 }
 
-export async function list_workflow_groups(): Promise<WorkflowGroups> {
+/** The workflow groups `opened` holds: with `every`, a deploy with no upload here too. */
+export async function list_workflow_groups(opened: OpenedWorkflowGroups): Promise<WorkflowGroups> {
   const [running, rows] = await Promise.all([
-    target.workflow_group_ids(),
-    workflow_groups_repo.list(),
+    opened === 'every' ? target.workflow_group_ids() : [],
+    workflow_groups_repo.list(opened === 'every' ? undefined : opened.ids),
   ]);
   const names = new Map<string, string>(rows.map(({ id, name }) => [id, name]));
   for (const workflow_group_id of running) {
@@ -87,20 +89,30 @@ export async function list_workflow_groups(): Promise<WorkflowGroups> {
   };
 }
 
+/** How a PUT changes the workflow group's API key: a hash sets it, null removes it (the body's
+ * ""), undefined keeps the one it has (the body left it out or sent null). */
+function api_key_hash_change(body: WorkflowGroupBodyInput): string | null | undefined {
+  return body.api_key_hash == null ? undefined : body.api_key_hash || null;
+}
+
 /** Writes workflow_group.yaml and its .env where the workflow group runs, removes the uploaded
  * workflows `workflows` leaves out, and keeps the rest for the apply loop. */
 export async function put_workflow_group(
   workflow_group_id: string,
   body: WorkflowGroupBodyInput
 ): Promise<Uploaded> {
+  const api_key_hash = api_key_hash_change(body);
   const generation = await with_group_lock(workflow_group_id, async () => {
-    const { removed_workflows } = await target.put_group_files(workflow_group_id, body);
+    const { removed_workflows } = await target.put_group_files(
+      workflow_group_id,
+      body,
+      api_key_hash
+    );
     return workflow_groups_repo.save_settings(workflow_group_id, {
       name: body.name,
       config: body.config,
       env_digest: env_digest(body.env),
-      // Null keeps the API key hash it has, "" removes it.
-      api_key_hash: body.api_key_hash == null ? undefined : body.api_key_hash || null,
+      api_key_hash,
       removed_workflows,
     });
   });
@@ -109,8 +121,9 @@ export async function put_workflow_group(
   return { generation, warnings: [] };
 }
 
-/** Stops the deploy, then forgets the upload: 504 when it did not stop in time, 500 when it
- * stopped with an error, and the row stays. A deploy this API holds no upload for is stopped
+/** Stops the deploy, then forgets the upload, all but the API key, which the workflows it ran
+ * keep their history behind: 504 when it did not stop in time, 500 when it stopped with an
+ * error, and the row stays. A deploy this API holds no upload for is stopped
  * all the same. */
 export async function delete_workflow_group(workflow_group_id: string): Promise<Generation> {
   const row = await workflow_groups_repo.find(workflow_group_id);
@@ -128,7 +141,7 @@ export async function delete_workflow_group(workflow_group_id: string): Promise<
   if (last_apply && !last_apply.ok) {
     throw stop_refusal({ error: last_apply.error ?? 'The stop failed', code: last_apply.code });
   }
-  await workflow_groups_repo.remove(workflow_group_id);
+  await workflow_groups_repo.stop(workflow_group_id);
   return { generation };
 }
 
@@ -292,11 +305,14 @@ export async function agent_logs(
   return target.agent_logs(workflow_group_id, row, agent?.name ?? agent_id, tail);
 }
 
-/** Registers the workflow group's workflows, which this dashboard then reads, and returns them. */
+/** Registers the workflow group's workflows, which this dashboard then reads, and returns them.
+ * A workflow of another workflow group moves in only when the caller opens that one too
+ * (`opened`): 409 `registry.workflow_taken` otherwise. */
 export async function register_dashboard(
   workflow_group_id: string,
-  registration: DashboardRegistration | undefined
+  registration: DashboardRegistration | undefined,
+  opened: OpenedWorkflowGroups
 ): Promise<DashboardWorkflows> {
   const row = await workflow_groups_repo.find(workflow_group_id);
-  return target.register_dashboard(workflow_group_id, row, registration);
+  return target.register_dashboard(workflow_group_id, row, registration, opened);
 }

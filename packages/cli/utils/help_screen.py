@@ -36,7 +36,7 @@ UTIL_COMMANDS = (
         "curl",
         "POST one JSON body to the workflow group's workflow and print the answer",
     ),
-    ("dashboard", "Open the dashboard, signed in with this machine's API key"),
+    ("dashboard", "Open the dashboard, signed in with this workflow group's API key"),
     ("doctor", "Check what deploying needs and, once deployed, every part of it"),
     ("list", "List the workflow groups on this machine and the selected one"),
     ("logs", "Follow the running workflow group's logs"),

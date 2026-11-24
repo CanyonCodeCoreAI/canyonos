@@ -15,11 +15,7 @@ from canyonos.api import (
     probe,
     workflow_group_status,
 )
-from canyonos.auth import (
-    hash_api_key,
-    machine_api_key,
-    resolve_api_key,
-)
+from canyonos.auth import hash_api_key
 from canyonos.constants import dashboard_port, deployment_config_path
 from canyonos.docker_cmd import DOCKER_QUICK_TIMEOUT, run_docker
 from canyonos.init import docker_env, load_state
@@ -30,7 +26,8 @@ from .dashboard_stack import (
     PhaseFailure,
     ServeResult,
     _dashboard_lock,
-    dashboard_api_key_hash,
+    dashboard_deploy_key_hash,
+    deploy_key,
     run_dashboard,
     running_api_image,
     running_api_port,
@@ -96,21 +93,17 @@ def _warn_if_dashboard_port_ignored() -> None:
 
 def serve_dashboard(
     report_failure: bool = True,
-    api_key_hash: str | None = None,
     renewed: tuple[str, ...] = (),
     services: tuple[str, ...] = STACK_SERVICES,
 ) -> ServeResult:
-    """Bring `services` of the local stack up, reporting progress, with its API
-    checking the API key whose hash is `api_key_hash` (by default this machine's key),
-    and the `renewed` services in new containers. Returns the stack's result.
+    """Bring `services` of the local stack up, reporting progress, with the `renewed`
+    services in new containers. Returns the stack's result.
 
     Phases drive the spinner while the stack comes up; the trace itself is
     only printed when something fails and the user needs to see how far it got.
     """
     trace = []
     configured_port = dashboard_port(deployment_config_path())
-    if api_key_hash is None:
-        api_key_hash = hash_api_key(machine_api_key())
     starting = (
         "Starting the dashboard..."
         if "web" in services
@@ -123,9 +116,7 @@ def serve_dashboard(
             trace.append((phase, message))
             spinner.update(message)
 
-        result = run_dashboard(
-            report, configured_port, api_key_hash, renewed, services=services
-        )
+        result = run_dashboard(report, configured_port, renewed, services=services)
     # It may have moved to another port.
     forget_api_url()
 
@@ -159,23 +150,20 @@ def _image_id(image: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _api_is_current(api_key_hash: str) -> bool:
-    """True when the running CanyonOS API checks the API key whose hash is
-    `api_key_hash` and runs the image this CLI uses."""
-    return (
-        dashboard_api_key_hash() == api_key_hash
-        and running_api_image() == _image_id(env.api_image)
-    )
+def _api_is_current() -> bool:
+    """True when the running CanyonOS API takes this machine's deploy key and runs the
+    image this CLI uses. A workflow group's own key never makes it stale: the API reads
+    those from its database."""
+    return dashboard_deploy_key_hash() == hash_api_key(
+        deploy_key()
+    ) and running_api_image() == _image_id(env.api_image)
 
 
-def _start_api(api_key_hash: str, renewed: tuple[str, ...]) -> None:
+def _start_api(renewed: tuple[str, ...]) -> None:
     """Bring up the database and the CanyonOS API, `renewed` in new containers; raise
     RuntimeError when they can't start."""
     result = serve_dashboard(
-        report_failure=False,
-        api_key_hash=api_key_hash,
-        renewed=renewed,
-        services=API_SERVICES,
+        report_failure=False, renewed=renewed, services=API_SERVICES
     )
     if not result.ok:
         logs = f" Its logs are in {result.log_path}." if result.log_path else ""
@@ -183,23 +171,21 @@ def _start_api(api_key_hash: str, renewed: tuple[str, ...]) -> None:
         raise RuntimeError(f"Could not start the CanyonOS API: {message}.{logs}")
 
 
-def ensure_api(api_key_hash: str | None = None) -> bool:
+def ensure_api() -> bool:
     """Bring up the database and the CanyonOS API for a command that runs or stops a
-    deploy on Docker, with the API checking the API key whose hash is `api_key_hash`
-    (by default this machine's key): one running on that key and the image this CLI
-    uses is kept, else it starts in a new container. Then
-    check it answers `/v1`. Returns whether the API was down; raises RuntimeError when
-    it can't start or answers no `/v1`."""
-    if api_key_hash is None:
-        api_key_hash = hash_api_key(machine_api_key())
+    deploy on Docker: one running on this machine's deploy key and the image this CLI
+    uses is kept, else it starts in a new container, so it restarts only after an
+    upgrade, never for a workflow group's key. Then check it answers `/v1`. Returns
+    whether the API was down; raises RuntimeError when it can't start or answers no
+    `/v1`."""
     try:
         with _dashboard_lock():
             api_up = running_api_port() is not None
-            current = api_up and _api_is_current(api_key_hash)
+            current = api_up and _api_is_current()
     except PhaseFailure as failure:
         raise RuntimeError(failure.message) from None
     if not current:
-        _start_api(api_key_hash, renewed=("api",))
+        _start_api(renewed=("api",))
     probe()
     return not api_up
 
@@ -236,24 +222,19 @@ def start_api_if_down(state: dict) -> None:
         with _dashboard_lock():
             if running_api_port() is not None or not _controller_exists(state):
                 return
-            api_key_hash = dashboard_api_key_hash()
     except PhaseFailure:
         return
-    if api_key_hash is None:
-        api_key_hash = hash_api_key(machine_api_key())
     try:
-        _start_api(api_key_hash, renewed=())
+        _start_api(renewed=())
     except RuntimeError as e:
         ui.warn(str(e))
 
 
-def run_serve(api_key: str | None = None, no_api_key: bool = False) -> int:
+def run_serve() -> int:
     """Run `canyonos serve`: start the dashboard, with the database and the CanyonOS
-    API, its API in a new container that checks this machine's API key, which
-    `api_key` sets or replaces and `no_api_key` removes, register this folder's running
-    deploy, and show the dashboard's URL in the terminal. Returns 0 or 1."""
-    key = resolve_api_key(api_key, no_api_key)
-    result = serve_dashboard(api_key_hash=hash_api_key(key), renewed=("api",))
+    API, its API in a new container, register this folder's running deploy, and show
+    the dashboard's URL in the terminal. Returns 0 or 1."""
+    result = serve_dashboard(renewed=("api",))
     if not result.ok:
         return 1
 

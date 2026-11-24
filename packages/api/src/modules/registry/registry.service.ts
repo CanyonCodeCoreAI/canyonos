@@ -11,7 +11,8 @@ import { with_redis_target } from '@core/redis';
 
 import { publish_spend, PUBLISH_SPEND_FAILED } from '../governance/governance.publisher';
 import { reconcile_live_prompts, RECONCILE_PROMPTS_FAILED } from '../prompts/prompts.service';
-import { CONTROLLER_IDENTITY_KEY } from './registry.contract';
+import { workflow_groups_repo } from '../workflow-groups/workflow-groups.repo';
+import { API_KEY_HASH_KEY, CONTROLLER_IDENTITY_KEY } from './registry.contract';
 import { listed_workflow_groups } from './registry.listed';
 import {
   listed_workflow_group,
@@ -20,8 +21,9 @@ import {
   with_redis,
 } from './registry.redis';
 import { registry_repo } from './registry.repo';
+import type { OpenedWorkflowGroups } from '../auth/auth.plugin';
 import type { ListedWorkflowGroup } from './registry.listed';
-import type { WorkflowGroupRegistration } from './registry.repo';
+import type { MayTake, WorkflowGroupRegistration } from './registry.repo';
 import type { RegisteredWorkflow } from './registry.types';
 
 // Which workflows the dashboard reads, and where their Redis is. On Docker `canyonos deploy`
@@ -29,7 +31,9 @@ import type { RegisteredWorkflow } from './registry.types';
 // Controller starts, and a dashboard started next to one controller registers that one's
 // workflows itself (bootstrap_registry). On Kubernetes the operator lists the workflow groups
 // (registry.listed.ts) and the dashboard stores the workflows each group's Redis names. A tick
-// then runs the background jobs on every registered workflow that runs.
+// then runs the background jobs on every registered workflow that runs. A workflow stays in its
+// workflow group: each of these moves one into another workflow group only out of one it may
+// take from, so a workflow group's key never reads another's history (registry.repo.ts).
 
 /** How often the operator's list (Kubernetes) is brought into the dashboard. */
 const SYNC_MS = 10_000;
@@ -37,11 +41,15 @@ const SYNC_MS = 10_000;
 const registry_logger = logger.child({ domain: LOG_DOMAINS.DB });
 const jobs_logger = logger.child({ domain: LOG_DOMAINS.WORKER });
 
-/** What a controller published as its identity, before it is checked. */
+/** What a controller published as its identity and its API key hash, before it is checked:
+ * the hash "" for a workflow group with no key, null while it published none yet. */
 interface PublishedIdentity {
   readonly workflow_group_id: string | null;
   readonly workflows: Record<string, string>;
+  readonly api_key_hash: string | null;
 }
+
+const PublishedKeyHashSchema = z.string().regex(/^(?:[0-9a-f]{64})?$/);
 
 /** How the api reaches and signs in to a workflow group's Redis, as the registration has it. */
 type RegisteredRedis = Omit<WorkflowGroupRegistration, 'workflow_group_id' | 'workflows'>;
@@ -50,20 +58,25 @@ async function read_identity(redis: RedisClient): Promise<PublishedIdentity> {
   return {
     workflow_group_id: await redis.hget(CONTROLLER_IDENTITY_KEY, 'workflow_group_id'),
     workflows: await running_workflows(redis),
+    api_key_hash: await redis.get(API_KEY_HASH_KEY),
   };
 }
 
 /** Registers the workflows `canyonos deploy` sends for a Docker workflow group, with the
- * group's Redis, before its Global Controller starts: nothing connects to that Redis here. */
+ * group's Redis, before its Global Controller starts: nothing connects to that Redis here. A
+ * workflow of another workflow group moves in only when the caller opens that one (`opened`). */
 export async function register_workflow_group(
   workflow_group_id: string,
-  registration: Omit<WorkflowGroupRegistration, 'workflow_group_id'>
+  registration: Omit<WorkflowGroupRegistration, 'workflow_group_id'>,
+  opened: OpenedWorkflowGroups
 ): Promise<RegisteredWorkflow[]> {
-  return registry_repo.save_registration({ workflow_group_id, ...registration });
+  const may_take: MayTake = (held_by) => opened === 'every' || opened.ids.includes(held_by);
+  return registry_repo.save_registration({ workflow_group_id, ...registration }, may_take);
 }
 
 /** Stores each workflow of the identity, or gives an existing one the workflow group and the
- * new Redis, its password and its client certificate. */
+ * new Redis, its password and its client certificate: the controller on the configured Redis is
+ * this machine's own, so it takes a workflow from any workflow group, as the deploy key does. */
 export async function save_controller_workflows(
   { workflow_group_id, workflows }: PublishedIdentity,
   redis: RegisteredRedis
@@ -75,14 +88,37 @@ export async function save_controller_workflows(
       `The controller on Redis port ${redis.redis_port} published no usable workflow group id`
     );
   }
-  return registry_repo.save_registration({ workflow_group_id: group.data, workflows, ...redis });
+  return registry_repo.save_registration(
+    { workflow_group_id: group.data, workflows, ...redis },
+    () => true
+  );
+}
+
+/** The row of the workflow group the configured controller runs, with the key hash it published
+ * (`auth:api_key_hash`, "" for none), so the dashboard lists its workflows and its key signs in;
+ * nothing while the controller has not published its hash yet, or published one that is no
+ * sha256, which the next start reads again. */
+async function adopt_controller_workflow_group(
+  workflow_group_id: string,
+  api_key_hash: string | null
+): Promise<void> {
+  const published = PublishedKeyHashSchema.safeParse(api_key_hash);
+  if (!published.success) {
+    registry_logger.warn(
+      'The configured controller published no usable API key hash; its workflow group is ' +
+        'not listed until it does',
+      { workflow_group_id }
+    );
+    return;
+  }
+  await workflow_groups_repo.adopt(workflow_group_id, published.data || null);
 }
 
 /** Registers the workflows of a controller on the configured Redis (CANYONOS_REDIS_HOST and
  * CANYONOS_REDIS_PORT), for a dashboard run beside one that no `canyonos deploy` registers, as
- * self-host does. Docker deploys register themselves (register_workflow_group), so no controller
- * there, or none that published its identity, is the usual case and only logged at debug; the
- * dashboard starts either way. */
+ * self-host does, and its workflow group with the API key hash it published. Docker deploys
+ * register themselves (register_workflow_group), so no controller there, or none that published
+ * its identity, is the usual case and only logged at debug; the dashboard starts either way. */
 export async function bootstrap_registry(): Promise<void> {
   const redis: RegisteredRedis = {
     redis_host: config.canyonos.redisHost,
@@ -99,7 +135,10 @@ export async function bootstrap_registry(): Promise<void> {
       registry_logger.debug('No controller identity on the configured Redis to register');
       return;
     }
-    await save_controller_workflows(identity, redis);
+    const registered = await save_controller_workflows(identity, redis);
+    if (registered.length > 0) {
+      await adopt_controller_workflow_group(identity.workflow_group_id, identity.api_key_hash);
+    }
   } catch (error) {
     if (error instanceof AppError && error.code === 'registry.controller_unreachable') {
       registry_logger.debug('No controller on the configured Redis to register', { error });
@@ -118,8 +157,10 @@ export async function bootstrap_registry(): Promise<void> {
 const stored = new Map<string, string>();
 
 /** Stores each workflow the listed workflow group's Redis names, and removes the row an older
- * dashboard stored for the group itself. */
-async function sync_listed_group(entry: ListedWorkflowGroup): Promise<void> {
+ * dashboard stored for the group itself. A workflow another listed workflow group holds stays
+ * its own, and is logged: a Redis may name any id, and the one that runs it had it first; one a
+ * workflow group the operator no longer lists held moves in. */
+async function sync_listed_group(entry: ListedWorkflowGroup, listed: Set<string>): Promise<void> {
   const workflows = await with_redis_target(entry.redis, running_workflows);
   if (!stored.has(entry.project_id)) {
     await registry_repo.remove_group_row(entry.project_id);
@@ -128,11 +169,18 @@ async function sync_listed_group(entry: ListedWorkflowGroup): Promise<void> {
   for (const [workflow_id, name] of Object.entries(workflows)) {
     const record = `${entry.project_id}/${name}`;
     if (stored.get(workflow_id) === record) continue;
-    await registry_repo.save_listed_workflow({
-      workflow_id,
-      name,
-      workflow_group_id: entry.project_id,
-    });
+    const kept_by = await registry_repo.save_listed_workflow(
+      { workflow_id, name, workflow_group_id: entry.project_id },
+      (held_by) => !listed.has(held_by)
+    );
+    if (kept_by) {
+      registry_logger.warn('A listed workflow group names a workflow another one runs', {
+        workflow_group_id: entry.project_id,
+        workflow_id,
+        held_by: kept_by,
+      });
+      continue;
+    }
     stored.set(workflow_id, record);
   }
 }
@@ -143,8 +191,10 @@ async function sync_listed_group(entry: ListedWorkflowGroup): Promise<void> {
 export async function sync_listed_workflows(
   path: string | null = config.canyonos.workflowsFile
 ): Promise<void> {
-  for (const entry of (await listed_workflow_groups(path)).values()) {
-    await sync_listed_group(entry).catch((error: unknown) =>
+  const entries = await listed_workflow_groups(path);
+  const listed = new Set(entries.keys());
+  for (const entry of entries.values()) {
+    await sync_listed_group(entry, listed).catch((error: unknown) =>
       registry_logger.warn("Could not store a listed workflow group's workflows", {
         error,
         workflow_group_id: entry.project_id,

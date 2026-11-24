@@ -24,15 +24,14 @@ export function resolveConfiguredEnvironment(
 
 const environment = resolveConfiguredEnvironment(env.APP_ENV, env.NODE_ENV);
 
-const API_KEY_HASH = /^[0-9a-f]{64}$/;
+const KEY_HASH = /^[0-9a-f]{64}$/;
 
-/** `CANYONOS_API_KEY_HASH`: the sha256 of the API key in lowercase hex, or null to need no key. */
-export function resolveApiKeyHash(value: string | undefined): string | null {
+/** A key's hash read from the variable `name`: its sha256 in lowercase hex, or null for none. */
+export function resolveKeyHash(name: string, value: string | undefined): string | null {
   if (value === undefined || value === '') return null;
-  if (API_KEY_HASH.test(value)) return value;
+  if (KEY_HASH.test(value)) return value;
   throw new Error(
-    'CANYONOS_API_KEY_HASH must be the sha256 of the API key as 64 lowercase hex characters, ' +
-      'or empty for no key'
+    `${name} must be the sha256 of the key as 64 lowercase hex characters, or empty for none`
   );
 }
 
@@ -172,9 +171,14 @@ export const config = {
   },
   seed: {
     devData: parseBoolean(env.SEED_DEV_DATA, false),
+    // `SEED_DEV_API_KEY_HASH`: the key hash of every workflow group the dev seed makes; unset,
+    // they are open.
+    apiKeyHash: resolveKeyHash('SEED_DEV_API_KEY_HASH', env.SEED_DEV_API_KEY_HASH),
   },
   auth: {
-    apiKeyHash: resolveApiKeyHash(env.CANYONOS_API_KEY_HASH),
+    // `CANYONOS_DEPLOY_KEY_HASH`: the hash of this machine's deploy key, which creating a workflow
+    // group on Docker takes; unset, creating one takes no key.
+    deployKeyHash: resolveKeyHash('CANYONOS_DEPLOY_KEY_HASH', env.CANYONOS_DEPLOY_KEY_HASH),
   },
 };
 

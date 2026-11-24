@@ -39,7 +39,12 @@ import {
   post_otlp,
   write_workflow_span,
 } from './telemetry-test.utils';
-import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
+import {
+  bearer,
+  create_test_workflow,
+  create_test_workflow_group,
+  TEST_API_KEY,
+} from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -1857,11 +1862,12 @@ describe('GET /v1/workflow-groups/:workflow_group_id/workflows/:workflow_id/moni
 });
 
 describe('monitoring access', () => {
-  test('every monitoring route rejects a caller without the API key and an unknown workflow', async () => {
+  test("every monitoring route rejects a caller without its workflow group's key, and an unknown workflow", async () => {
     const { workflow_id } = await create_workflow(token, 'Access Monitoring');
     const unknown = '00000000-0000-4000-8000-000000000000';
+    const workflow_group_id = await create_test_workflow_group();
     const routes = (id: string, headers: Record<string, string> = {}) => {
-      const monitoring = group_workflow(id).monitoring;
+      const monitoring = group_workflow(id, id === unknown ? workflow_group_id : id).monitoring;
       const read = { $headers: headers, $query: ONE_DAY_RANGE };
       const list = { ...read, $query: { ...read.$query, limit: 200 } };
       return Promise.all([

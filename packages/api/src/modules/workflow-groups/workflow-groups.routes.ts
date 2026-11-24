@@ -18,7 +18,7 @@ import { telemetryRoutes } from '../telemetry/telemetry.routes';
 import { workflowHistoryRoutes } from '../workflows/workflows.routes';
 import { GroupWorkflowParams } from '../workflows/workflows.types';
 import { upload_started } from './workflow-groups.apply';
-import { check_settings_caller } from './workflow-groups.caller';
+import { check_settings_caller, opened_workflow_groups } from './workflow-groups.caller';
 import {
   agent_logs,
   check_health,
@@ -50,7 +50,8 @@ const PREFIX = '/v1/workflow-groups';
 // The PUTs that change an upload, counted from before their body is read.
 const UPLOAD_PATH = /^\/v1\/workflow-groups\/([^/]+)(?:\/workflows\/[^/]+)?$/;
 
-// The API key on Docker, the caller's own Kubernetes login on Kubernetes.
+// The deploy key or the workflow group's key on Docker, the caller's own Kubernetes login on
+// Kubernetes.
 const security: Record<string, string[]>[] = [{ bearerAuth: [] }, { kubernetesToken: [] }];
 const doc = { tags: ['WorkflowGroups'], security };
 
@@ -98,7 +99,10 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
     request.signal.addEventListener('abort', release, { once: true });
   })
   .onAfterResponse(({ request }) => upload_releases.get(request)?.())
-  .get('', () => list_workflow_groups(), {
+  // After the caller check: the workflow groups an accepted caller opens, which the list shows
+  // and a registration may move workflows out of.
+  .derive(async ({ request }) => ({ opened: await opened_workflow_groups(request) }))
+  .get('', ({ opened }) => list_workflow_groups(opened), {
     response: { 200: 'WorkflowGroups', 401: refused, 502: refused, 503: refused },
     detail: {
       ...doc,
@@ -107,7 +111,8 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
       description:
         'Every workflow group with an upload here or a deploy (a Global Controller container on ' +
         'Docker, a CanyonProject on Kubernetes), with the name its last PUT gave it, empty ' +
-        'before one.',
+        "before one. On Docker, the machine's deploy key lists every one; any other caller the " +
+        'workflow groups its key opens and the open ones.',
     },
   })
   .put(
@@ -320,12 +325,18 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
   )
   .put(
     '/:workflow_group_id/dashboard',
-    ({ params, body }) => register_dashboard(params.workflow_group_id, body),
+    ({ params, body, opened }) => register_dashboard(params.workflow_group_id, body, opened),
     {
       params: WorkflowGroupParams,
       // Optional: Docker needs it (422 without), Kubernetes has the operator's registry instead.
       body: DashboardRegistrationSchema.optional(),
-      response: { 200: 'DashboardWorkflows', ...refusals, 404: refused, 500: refused },
+      response: {
+        200: 'DashboardWorkflows',
+        ...refusals,
+        404: refused,
+        409: refused,
+        500: refused,
+      },
       detail: {
         ...doc,
         operationId: 'putWorkflowGroupDashboard',
@@ -336,8 +347,10 @@ export const workflowGroupsRoutes = new Elysia({ prefix: PREFIX, name: 'workflow
           'takes only TLS. `canyonos deploy` sends it once the Global Controller container ' +
           'exists, before it starts: nothing connects to the Redis here; the status and the ' +
           'dashboard read it once the deploy runs. Returns the workflows as the dashboard ' +
-          'names them; a workflow registered before keeps its name. On Docker, 404 without ' +
-          "the workflow group's container or upload. On Kubernetes the operator's registry " +
+          'names them; a workflow registered before keeps its name. A workflow of another ' +
+          'workflow group moves in only when the caller opens that one too: with its key, the ' +
+          'deploy key, or while it has no key; 409 `registry.workflow_taken` otherwise. On ' +
+          "Docker, 404 without the workflow group's container or upload. On Kubernetes the operator's registry " +
           'already lists the workflow group: the body is optional and not used, and the ' +
           'workflows the dashboard knows of it are returned; on Docker a request without it is ' +
           '422 `workflow_groups.registration_required`.',

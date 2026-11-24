@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import { db } from '@api/db/client';
 import { workflows } from '@api/db/schema';
@@ -18,31 +18,40 @@ import {
 
 import type { WorkflowSummary } from './workflows.types';
 
+const summary_columns = {
+  id: workflows.id,
+  name: workflows.name,
+  workflow_group_id: workflows.workflow_group_id,
+  created_at: workflows.created_at,
+  updated_at: workflows.updated_at,
+};
+
+// A workflow is listed only under a workflow group the caller's key opens, which has a row: one
+// with no workflow group, or whose workflow group has no row, is nobody's.
 export const workflows_repo = {
-  async list(): Promise<WorkflowSummary[]> {
+  async list(workflow_group_ids: readonly string[]): Promise<WorkflowSummary[]> {
+    if (workflow_group_ids.length === 0) return [];
     return db
-      .select({
-        id: workflows.id,
-        name: workflows.name,
-        workflow_group_id: workflows.workflow_group_id,
-        created_at: workflows.created_at,
-        updated_at: workflows.updated_at,
-      })
+      .select(summary_columns)
       .from(workflows)
+      .where(inArray(workflows.workflow_group_id, [...workflow_group_ids]))
       .orderBy(workflows.created_at);
   },
 
-  async get(workflow_id: string): Promise<WorkflowSummary | undefined> {
+  async get(
+    workflow_id: string,
+    workflow_group_ids: readonly string[]
+  ): Promise<WorkflowSummary | undefined> {
+    if (workflow_group_ids.length === 0) return undefined;
     const [row] = await db
-      .select({
-        id: workflows.id,
-        name: workflows.name,
-        workflow_group_id: workflows.workflow_group_id,
-        created_at: workflows.created_at,
-        updated_at: workflows.updated_at,
-      })
+      .select(summary_columns)
       .from(workflows)
-      .where(eq(workflows.id, workflow_id))
+      .where(
+        and(
+          eq(workflows.id, workflow_id),
+          inArray(workflows.workflow_group_id, [...workflow_group_ids])
+        )
+      )
       .limit(1);
     return row;
   },

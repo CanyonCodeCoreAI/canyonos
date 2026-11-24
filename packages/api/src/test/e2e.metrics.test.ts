@@ -9,7 +9,12 @@ import { STATUS_CODE, WORKFLOW_ID_ATTRIBUTE } from '@api/modules/telemetry/telem
 import { otelSpans } from '@api/modules/telemetry/telemetry.schema';
 
 import { group_workflow, setupE2ETests } from './e2e.setup';
-import { bearer, create_test_workflow, TEST_API_KEY } from './workflow-test.utils';
+import {
+  bearer,
+  create_test_workflow,
+  create_test_workflow_group,
+  TEST_API_KEY,
+} from './workflow-test.utils';
 
 setupE2ETests();
 
@@ -1440,7 +1445,7 @@ describe('metrics auth & access', () => {
     const token = TEST_API_KEY;
     const unknown = '00000000-0000-4000-8000-000000000000';
 
-    const res = await group_workflow(unknown).metrics.kpis.get({
+    const res = await group_workflow(unknown, await create_test_workflow_group()).metrics.kpis.get({
       $query: range(30),
       $headers: bearer(token),
     });

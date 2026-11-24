@@ -6,6 +6,7 @@ import { config } from '@core/env';
 
 import { docker_target } from './workflow-groups.docker';
 import { kubernetes_target } from './workflow-groups.kubernetes';
+import type { OpenedWorkflowGroups } from '../auth/auth.plugin';
 import type { CoreReply } from './workflow-groups.core';
 import type { WorkflowGroupRow } from './workflow-groups.repo';
 import type {
@@ -71,12 +72,14 @@ export interface WorkflowGroupTarget {
   /** The workflow groups the target runs, those with no row here too. */
   workflow_group_ids(): Promise<string[]>;
   /** Takes a PUT of the workflow group's settings where it runs, making its row when it has
-   * none: writes workflow_group.yaml and its `.env`, and removes the uploaded workflows
+   * none, with the API key hash the PUT sets (`api_key_hash`; undefined keeps, null removes):
+   * writes workflow_group.yaml and its `.env`, and removes the uploaded workflows
    * `body.workflows` leaves out, whose workflow_ids it returns. Runs holding the workflow
    * group's lock. */
   put_group_files(
     workflow_group_id: string,
-    body: WorkflowGroupBodyInput
+    body: WorkflowGroupBodyInput,
+    api_key_hash: string | null | undefined
   ): Promise<{ removed_workflows: string[] }>;
   /** Reads an upload's body, before the workflow group's lock is taken. */
   receive_archive(body: ReadableStream<Uint8Array>): Promise<Blob>;
@@ -118,11 +121,13 @@ export interface WorkflowGroupTarget {
     tail: string
   ): Promise<ReplicaLogs>;
   /** Registers the workflow group's workflows with this dashboard, before its deploy starts;
-   * `registration` is what the caller sent, which only Docker needs. */
+   * `registration` is what the caller sent, which only Docker needs, and `opened` the workflow
+   * groups the caller opens, out of which alone a workflow may move. */
   register_dashboard(
     workflow_group_id: string,
     row: WorkflowGroupRow | null,
-    registration: DashboardRegistration | undefined
+    registration: DashboardRegistration | undefined,
+    opened: OpenedWorkflowGroups
   ): Promise<DashboardWorkflows>;
 }
 

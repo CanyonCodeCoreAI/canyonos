@@ -22,6 +22,20 @@ services:
       timeout: 5s
       retries: 10
 
+  # The Redis a development API reads at start, as a self-hosted dashboard reads the Global
+  # Controller's beside it; the API and dashboard E2E suites publish a controller there.
+  redis:
+    image: redis:7-alpine
+    container_name: canyonos-redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_HOST_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:
     name: ${POSTGRES_VOLUME:-canyonos-postgres-data}

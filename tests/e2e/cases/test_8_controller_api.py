@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 """The CanyonOS API's `/v1/workflow-groups` routes, which run the workflow group's
-Global Controller, as the CLI calls them, with this machine's API key: its OpenAPI
+Global Controller, as the CLI calls them, with this machine's deploy key: its OpenAPI
 spec at `/docs/json` lists every route, each answer has the fields and types the spec
 gives it, each error carries its `workflow_groups.*` code (`validation_error` for a
 request it can't read), a call without the API key is refused, a rejected upload

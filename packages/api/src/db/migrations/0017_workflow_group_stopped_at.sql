@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_groups" ADD COLUMN "stopped_at" timestamp with time zone;

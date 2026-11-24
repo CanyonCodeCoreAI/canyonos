@@ -22,7 +22,7 @@ import urllib.request
 
 from canyonos import ui
 from canyonos.clean import run_clean
-from canyonos.auth import BEARER_PLACEHOLDER, auth_header, machine_api_key
+from canyonos.auth import BEARER_PLACEHOLDER, bearer_header, group_api_key
 from canyonos.constants import (
     CANYON_DIR,
     workflow_config_path,
@@ -334,7 +334,7 @@ def _prepare_workflow(folder):
 
 def _deploy(folder):
     """Run stage 4: deploy the starter's workflow from its workflow group folder
-    `folder`, the current one, with this machine's API key when one is set, then check
+    `folder`, the current one, with its API key when it has one, then check
     it and show the dashboard address. Returns True when it is up and healthy."""
     _step(4)
     name = os.path.basename(folder)
@@ -459,7 +459,7 @@ def _await_result(endpoint, request_id, key, timeout=REQUEST_TIMEOUT):
     errors, showing a spinner in the terminal meanwhile. Returns what it answered with,
     or `{"status": "timeout"}`."""
     url = f"http://{endpoint['public_host']}:{endpoint['api_port']}/status/{request_id}"
-    request = urllib.request.Request(url, headers=auth_header(key))
+    request = urllib.request.Request(url, headers=bearer_header(key))
     deadline = time.time() + timeout
     with ui.status("Waiting for the workflow..."):
         while time.time() < deadline:
@@ -615,7 +615,7 @@ def _add_sample_data(workflow):
 
 def _send_first_request(folder):
     """Show the `curl` for the deployed endpoint, with the query of the starter in
-    `folder` and the API key's placeholder when this machine has a key, wait for the
+    `folder` and the API key's placeholder when the workflow group has a key, wait for the
     user to type it, send it with the key and wait for the answer. True when the
     workflow answered."""
     try:
@@ -626,12 +626,12 @@ def _send_first_request(folder):
         ui.warn("Could not read the endpoint -- `canyonos status` prints it.")
         return False
 
-    key = machine_api_key()
+    key = group_api_key()
     command, query_path = _curl_for(endpoint, folder, key is not None)
     if key:
         ui.hint(
-            "  type <your api key> as shown: quickstart sends this machine's key in "
-            "its place"
+            "  type <your api key> as shown: quickstart sends this workflow group's "
+            "key in its place"
         )
     if query_path:
         ui.hint(f"  query from {query_path}")

@@ -16,10 +16,10 @@ agent.
 The same deploy carries the endpoint's API key checks that need a real runtime: a
 query without the key or with another is refused, a new key refuses the old one,
 `--no-api-key` opens the deploy until a key is set again, a later deploy reuses the
-stored key, and a paused Redis is a quick 503 rather than a hang. What a deploy does
-with the CanyonOS API, and what each command does when it is gone, is
-`test_api_lifecycle.py`'s. Each case has its own HOME, so its `~/.canyonos/api_key`
-touches nobody's.
+key the workflow group's record keeps, and a paused Redis is a quick 503 rather than a
+hang. What a deploy does with the CanyonOS API, and what each command does when it is
+gone, is `test_api_lifecycle.py`'s. Each case has its own HOME, so its records under
+`~/.canyonos/workflows` touch nobody's.
 
 Unlike the rest of this suite it owns the shared Docker names, ports and daemon,
 so it tears the deploy down whether or not it passed.
@@ -56,8 +56,8 @@ NOT_READY_WITHIN = 10
 API_KEY = "quickstart-e2e-key-7f3a"
 NEXT_API_KEY = "quickstart-e2e-key-9c1d"
 OPEN_WARNING = (
-    "No API key is set: the endpoint and the dashboard answer anyone who reaches "
-    "them. Set one with --api-key <key>."
+    "This workflow group has no API key: its endpoint and its dashboard routes answer "
+    "anyone who reaches them. Set one with --api-key <key>."
 )
 
 
@@ -102,8 +102,8 @@ def _answer(endpoint: str, query: str, api_key: str | None) -> dict:
     return {"status": "timeout"}
 
 
-def _store_api_key(case: CliCase, api_key: str) -> Path:
-    """Write `api_key` where a deploy with `--api-key` keeps it, as one would have."""
+def _store_machine_key(case: CliCase, api_key: str) -> Path:
+    """Write `api_key` where an older CLI kept one key for the whole machine."""
     stored = case.home / ".canyonos" / "api_key"
     stored.parent.mkdir(parents=True, exist_ok=True)
     stored.write_text(f"{api_key}\n")
@@ -162,9 +162,7 @@ def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
 
     endpoint, output = deploy_starter(case, folder, "--api-key", NEXT_API_KEY)
 
-    assert "other running workflow groups keep the old one" in " ".join(
-        output.split()
-    ), output
+    assert "Only this workflow group changes" in " ".join(output.split()), output
     _assert_refused(_post(endpoint, "CanyonOS", API_KEY), 401, "auth.invalid_key")
     answered = _answer(endpoint, "CanyonOS", NEXT_API_KEY)
     assert answered.get("status") == "done", answered
@@ -173,10 +171,10 @@ def test_a_new_api_key_refuses_the_old_one(deployed_workflow):
 @needs_a_runtime
 def test_no_api_key_opens_the_deploy_until_a_key_is_set_again(deployed_workflow):
     case, folder = deployed_workflow
-    _store_api_key(case, API_KEY)
+    deploy_starter(case, folder, "--api-key", API_KEY)
 
     endpoint, output = deploy_starter(case, folder, "--no-api-key")
-    assert "Removed this machine's API key." in output, output
+    assert "Removed this workflow group's API key." in output, output
     assert OPEN_WARNING in " ".join(output.split()), output
     answered = _answer(endpoint, "CanyonOS", None)
     assert answered.get("status") == "done", answered
@@ -256,12 +254,13 @@ def test_quickstart_makes_no_key_on_a_machine_with_none(cli_case: CliCase):
     assert DEPLOY_STEP in shown, shown
     assert "canyonos keys" not in shown, shown
     assert not (cli_case.home / ".canyonos" / "api_key").exists()
+    assert not list((cli_case.home / ".canyonos").glob("workflows/*/api_key"))
     assert not (cli_case.home / ".canyonos" / "auth").exists()
 
 
 @needs_docker
-def test_quickstart_leaves_a_stored_key_as_it_is(cli_case: CliCase):
-    stored = _store_api_key(cli_case, API_KEY)
+def test_quickstart_leaves_an_older_machine_key_until_a_deploy(cli_case: CliCase):
+    stored = _store_machine_key(cli_case, API_KEY)
 
     shown, _status = _quickstart_until_the_deploy(cli_case)
 

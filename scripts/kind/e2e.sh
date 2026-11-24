@@ -36,10 +36,11 @@
 #     and .env Secret out, and nothing else;
 #   - the CanyonOS API, restarted, still knows the running workflow group;
 #   - the dashboard lists the project's workflow by its own id, never the workflow
-#     group's, reads its Redis and receives its telemetry; its API takes the key whose
-#     hash is in the chart's Secret (api-key-hash), refuses a request with no key or
-#     another one, and reads and changes with it; its /v1/readyz reports the database ok
-#     and Docker disabled;
+#     group's, reads its Redis and receives its telemetry; its API holds no chart-wide
+#     key: the workflow group's routes take its own key, the hash its CanyonProject
+#     carries, also after the API restarts, refuse a request with no key or another
+#     one, and read and change with it; /v1/workflows with no key leaves the workflow
+#     out; its /v1/readyz reports the database ok and Docker disabled;
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
 #     leaves the namespace;
@@ -341,7 +342,7 @@ EOF
   [ "$(first)" = "${before}" ] || fail "the first workflow group changed: ${before} -> $(first)"
   requests || fail "requests after another workflow group was refused"
 
-  log "canyonos test sends this machine's API key and never shows it"
+  log "canyonos test sends the workflow group's API key and never shows it"
   said="$(canyonos test 2>&1)" || fail "canyonos test: ${said}"
   echo "${said}" | grep -qF "${api_key}" && fail "canyonos test showed the API key: ${said}"
 
@@ -351,14 +352,14 @@ EOF
       -o jsonpath='{.data.projects\.json}' 2>/dev/null | base64 -d | grep -q "${project_id}" && break
     sleep 2
   done
-  # operator.sh installs the chart with --set dashboard.apiKeyHash, this machine's key's
-  # sha256 (/kube/dashboard-key), which the chart keeps in its Secret.
-  dashboard_key="$(cat /kube/dashboard-key)"
-  chart_hash="$(as_admin kubectl -n canyonos-dashboard get secret canyonos-dashboard -o jsonpath='{.data.api-key-hash}' | base64 -d)"
-  [ "${chart_hash}" = "$(sha256 "${dashboard_key}")" ] \
-    || fail "the chart's Secret holds ${chart_hash:-no api-key-hash}, not the dashboard key's sha256"
-  # The API takes the key from that Secret when it starts, and finds the workflow groups
-  # running on the cluster again from their CanyonProjects.
+  # No chart-wide key: the workflow group's dashboard routes take its own key.
+  dashboard_key="${api_key}"
+  chart_hash="$(as_admin kubectl -n canyonos-dashboard get secret canyonos-dashboard -o jsonpath='{.data.api-key-hash}')"
+  [ -z "${chart_hash}" ] || fail "the chart's Secret still holds an api-key-hash"
+  api_spec="$(as_admin kubectl -n canyonos-dashboard get deploy canyonos-dashboard-api -o yaml)"
+  [[ "${api_spec}" == *CANYONOS_API_KEY_HASH* ]] && fail "the CanyonOS API still gets CANYONOS_API_KEY_HASH"
+  # The API finds the workflow groups running on the cluster again from their
+  # CanyonProjects, each with its key's hash (spec.auth.apiKeyHash).
   as_admin kubectl -n canyonos-dashboard rollout restart deploy/canyonos-dashboard-api >/dev/null
   as_admin kubectl -n canyonos-dashboard rollout status deploy/canyonos-dashboard-api --timeout=5m >/dev/null \
     || fail "the CanyonOS API did not restart"
@@ -396,18 +397,22 @@ EOF
     echo "${code}"
   }
 
-  log "The dashboard's API verifies the key"
+  log "The dashboard's API verifies the workflow group's key"
   code="$(api_call GET /v1/auth/status "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json")) != {"api_key_required": True})' \
     || fail "/v1/auth/status answered ${code}: $(cat /tmp/api.json)"
-  code="$(api_call GET /v1/workflows "")"
-  [ "${code}" = 401 ] && grep -q auth.missing_key /tmp/api.json \
-    || fail "/v1/workflows with no key answered ${code}: $(cat /tmp/api.json)"
   code="$(api_call GET /v1/workflows "not-${dashboard_key}")"
   [ "${code}" = 401 ] && grep -q auth.invalid_key /tmp/api.json \
     || fail "/v1/workflows with another key answered ${code}: $(cat /tmp/api.json)"
   code="$(api_call GET /v1/auth/check "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "/v1/auth/check with the key answered ${code}: $(cat /tmp/api.json)"
+  scaling="/v1/workflow-groups/${project_id}/workflows/${workflow_id}/scaling"
+  code="$(api_call GET "${scaling}" "")"
+  [ "${code}" = 401 ] && grep -q auth.missing_key /tmp/api.json \
+    || fail "the workflow group's route with no key answered ${code}: $(cat /tmp/api.json)"
+  code="$(api_call GET "${scaling}" "not-${dashboard_key}")"
+  [ "${code}" = 401 ] && grep -q auth.invalid_key /tmp/api.json \
+    || fail "the workflow group's route with another key answered ${code}: $(cat /tmp/api.json)"
   # The chart runs the API without Docker: ready means its database is, and Docker is off.
   code="$(api_call GET /v1/readyz "")"
   [ "${code}" = 200 ] && python -c 'import json, sys; sys.exit(json.load(open("/tmp/api.json"))["checks"] != {"database": "ok", "docker": "disabled"})' \
@@ -420,6 +425,9 @@ EOF
   until_found /v1/workflows "${workflow_id}" "the dashboard does not list the project's workflow"
   get /v1/workflows | python -c 'import sys, json; sys.exit(sys.argv[1] in {w["id"] for w in json.load(sys.stdin)})' \
     "${project_id}" || fail "the dashboard lists the workflow group ${project_id} as a workflow: $(get /v1/workflows)"
+  code="$(api_call GET /v1/workflows "")"
+  [ "${code}" = 200 ] && ! grep -q "${workflow_id}" /tmp/api.json \
+    || fail "/v1/workflows with no key answered ${code} with the keyed workflow: $(cat /tmp/api.json)"
   code="$(api_call GET "/v1/workflow-groups/${project_id}/workflows/${workflow_id}/scaling" "${dashboard_key}")"
   [ "${code}" = 200 ] || fail "reading scaling answered ${code}: $(cat /tmp/api.json)"
   # One replica, as helloworld runs: the policy changes nothing, and goes right after.
@@ -691,12 +699,6 @@ CANYONOS_KIND_CLUSTER="${CLUSTER_NAME}" "$(dirname "${BASH_SOURCE[0]}")/operator
 kube="$(mktemp -d)"
 trap 'rm -rf "${kube}"' EXIT
 kind get kubeconfig --internal --name "${CLUSTER_NAME}" > "${kube}/admin"
-# The key operator.sh installed the dashboard with: this machine's.
-if [ -n "${CANYONOS_API_KEY:-}" ]; then
-  printf %s "${CANYONOS_API_KEY}" > "${kube}/dashboard-key"
-else
-  tr -d '\r\n' < "${HOME}/.canyonos/api_key" > "${kube}/dashboard-key"
-fi
 git -C "${REPO}" ls-files -co --exclude-standard -z > "${kube}/files"
 docker run --rm --network kind \
   -v "${REPO}:/src:ro" -v "$(cd "${kube}" && { pwd -W 2>/dev/null || pwd; }):/kube:ro" \

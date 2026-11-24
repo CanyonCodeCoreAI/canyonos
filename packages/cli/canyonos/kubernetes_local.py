@@ -20,7 +20,6 @@ from pathlib import Path
 import yaml
 
 from canyonos import env, ui
-from canyonos.auth import api_key_path, ensure_machine_api_key, hash_api_key
 from canyonos.forwards import close_forwards_to
 from canyonos.kubernetes_target import kubectl
 
@@ -338,12 +337,10 @@ def _install_networking():
     )
 
 
-def _install_canyonos(name, version, api_key_hash):
+def _install_canyonos(name, version):
     """This release's chart, its CRDs with it, and Helm waiting until the operator, the
     builder and the dashboard are ready. --take-ownership: a cluster made by a CLI up to
-    0.2.x has the CRDs already, outside the Helm release. The dashboard takes the API
-    key whose hash is `api_key_hash`: the chart lets users port-forward to the cluster's
-    CanyonOS API only when its dashboard has a key."""
+    0.2.x has the CRDs already, outside the Helm release."""
     with tempfile.TemporaryDirectory() as tmp:
         kubeconfig = Path(tmp) / "config"
         kubeconfig.write_text(
@@ -355,8 +352,7 @@ def _install_canyonos(name, version, api_key_hash):
         _run(
             [*helm, "upgrade", "--install", "canyonos", CHART, "--version", version,
              "--namespace", NAMESPACE, "--create-namespace", "--take-ownership",
-             *KIND_VALUES, "--set", f"dashboard.apiKeyHash={api_key_hash}",
-             "--wait", "--timeout", "10m"],
+             *KIND_VALUES, "--wait", "--timeout", "10m"],
             timeout=900,
             what=f"Installing CanyonOS {version}",
         )  # fmt: skip
@@ -375,7 +371,6 @@ def run_cluster_up(workers=None):
         raise RuntimeError("--workers takes 1 or more")
     name, version = cluster_name(), env.VERSION
     _require_tools()
-    api_key_hash = hash_api_key(ensure_machine_api_key())
     with ui.status(f"Starting the local registry on localhost:{REGISTRY_PORT}..."):
         _ensure_registry()
     if name in _clusters():
@@ -392,11 +387,11 @@ def run_cluster_up(workers=None):
     with ui.status(
         f"Installing CanyonOS {version} (the operator, builder and dashboard)..."
     ):
-        _install_canyonos(name, env.PROD_CHART_VERSION, api_key_hash)
+        _install_canyonos(name, env.PROD_CHART_VERSION)
     ui.ok(f"Cluster {name} is ready, with CanyonOS {version}; kubectl now points at it")
     ui.hint(
-        f"Its dashboard takes this machine's API key ({api_key_path()}, or "
-        "CANYONOS_API_KEY); after changing the key, run canyonos cluster up again."
+        "Its dashboard opens each workflow group's workflows with that workflow "
+        "group's API key, which `canyonos deploy --api-key` sets."
     )
     ui.say(
         "Deploy to it: set `target: kubernetes` and a `kubernetes:` section in the "

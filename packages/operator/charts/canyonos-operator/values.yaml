@@ -84,18 +84,12 @@ dashboard:
   pullPolicy: IfNotPresent
   storage: 1Gi
   storageClassName: ""
-  # A Secret of your own with db-password, redis-password-key (at least 32 characters)
-  # and api-key-hash; empty: the chart makes one on install. Set it when the chart is
+  # A Secret of your own with db-password and redis-password-key (at least 32
+  # characters); empty: the chart makes one on install. Set it when the chart is
   # rendered without the cluster (helm template, Argo CD), which cannot keep a generated
-  # password.
+  # password. There is no chart-wide API key: each workflow group's dashboard routes
+  # answer only its own key, the one `canyonos deploy --api-key` set on its project.
   existingSecret: ""
-  # Required unless existingSecret is set: the sha256 of the API key, as 64 lowercase hex
-  # characters (`printf %s "$KEY" | sha256sum`). The chart keeps it in its Secret
-  # (api-key-hash), and the API's dashboard routes then answer only `Authorization:
-  # Bearer <key>`. Every signed-in user may port-forward to the API, and every project's
-  # global controller reaches it, so the chart refuses to install it with no key. Ignored
-  # with existingSecret, whose api-key-hash is used instead.
-  apiKeyHash: ""
   # The API's working space: every workflow group's uploaded workflows, while it runs.
   workspaceSize: 4Gi
   # Run its images as their own users (postgres 70, bun and caddy 1000; the API's core

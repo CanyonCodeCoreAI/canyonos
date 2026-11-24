@@ -3,8 +3,8 @@
 
 """
 Logic for `canyonos curl`: POST one JSON body to a workflow of the running workflow group,
-this folder's or the selected one, with this machine's API key, and print what the
-endpoint answers. It sends that one request and waits for nothing else: the answer to
+this folder's or the selected one, with that workflow group's API key, and print what
+the endpoint answers. It sends that one request and waits for nothing else: the answer to
 a queued request is its `request_id`, whose result `/status/<request_id>` gives.
 """
 
@@ -16,7 +16,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from canyonos import ui
-from canyonos.auth import auth_header, machine_api_key
+from canyonos.auth import bearer_header, group_api_key
 from canyonos.constants import deployment_config_path
 from canyonos.deploy import _curl_example
 from canyonos.api import deployed_endpoint, existing_deploy
@@ -82,7 +82,7 @@ def _send(url, body, key):
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", **auth_header(key)},
+        headers={"Content-Type": "application/json", **bearer_header(key)},
         method="POST",
     )
     try:
@@ -131,7 +131,7 @@ def run_curl(body_text, route=None, show_command=False):
     picked = _pick_route(deployed_endpoint(state)["routes"], route)
     if picked is None:
         return 1
-    key = machine_api_key()
+    key = group_api_key()
     if show_command:
         ui.result(_curl_example(picked["url"], body, key is not None))
         return 0

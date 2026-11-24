@@ -27,8 +27,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from canyonos import ui
-from canyonos.auth import auth_header
+from canyonos import deployment, records, ui
+from canyonos.auth import bearer_header, group_api_key
 from canyonos.deploy import is_workflow_id
 from canyonos.api import ApiError, deployed_endpoint, existing_deploy
 from canyonos.os_support import is_terminal, write_private_file
@@ -61,7 +61,7 @@ def _load_workflows():
 def _from_curl(text):
     """Read the workflow a pasted `curl ... <url> ... -d '<json>'` command calls: its
     URL and the type name of each argument in its body, by name. Its headers are left
-    out: every call sends this machine's API key."""
+    out: every call sends the API key of the workflow group it belongs to."""
     # A curl split over lines ends each with a backslash.
     words = shlex.split(text.replace("\\\n", " "))
     url = next(word for word in words if word.startswith(("http://", "https://")))
@@ -80,7 +80,7 @@ def _from_curl(text):
 
 def _deployed_workflows():
     """Return the workflows of the deploy running from this folder, each argument read
-    as text, or none when no deploy runs here."""
+    as text and its workflow group named, or none when no deploy runs here."""
     existing = existing_deploy()
     if existing is None:
         return []
@@ -89,9 +89,31 @@ def _deployed_workflows():
             "url": route["url"],
             "name": f"{route['workflow']}: {route['agent']}.{route['method']}",
             "arguments": {name: "str" for name in route["arguments"]},
+            "workflow_group": deployment.deployment_name(),
         }
         for route in deployed_endpoint(existing)["routes"]
     ]
+
+
+def _workflow_group_at(url):
+    """The workflow group recorded here whose endpoint was last on `url`'s port, for a
+    workflow added with /add, or None."""
+    port = urlsplit(url).port
+    for name in records.names():
+        try:
+            with open(deployment.state_path(name), encoding="utf-8") as f:
+                if json.load(f).get("api_port") == port:
+                    return name
+        except (OSError, ValueError, AttributeError):
+            continue
+    return None
+
+
+def _signer(workflow):
+    """What gives the header each call to `workflow` sends: the API key of the workflow
+    group it belongs to, none when it belongs to none recorded here."""
+    name = workflow.get("workflow_group") or _workflow_group_at(workflow["url"])
+    return lambda: bearer_header(group_api_key(name) if name else None)
 
 
 def _save(workflows):
@@ -301,8 +323,8 @@ def _open(workflow):
 
 def run_chat():
     """Run `canyonos chat`, starting on the newest remembered workflow, until /quit,
-    Ctrl-C or Ctrl-D in its boxes, each call sending this machine's API key; return
-    the exit code."""
+    Ctrl-C or Ctrl-D in its boxes, each call sending the API key of the workflow's
+    workflow group; return the exit code."""
     if not is_terminal(sys.stdin):
         ui.fail("`canyonos chat` needs a terminal to type in.")
         return 1
@@ -352,10 +374,10 @@ def run_chat():
             elif workflow is None:
                 error = "Add a workflow first: /add <its curl command>"
             elif values[0] == "/recent":
-                _show_recent(workflow, auth_header)
+                _show_recent(workflow, _signer(workflow))
             else:
                 sent.append(values)
-                _call(workflow, values, auth_header)
+                _call(workflow, values, _signer(workflow))
     finally:
         # Give the whole screen back to the shell, with its prompt under the boxes.
         sys.stderr.write(f"\x1b[r\x1b[{shutil.get_terminal_size().lines};1H\n")
