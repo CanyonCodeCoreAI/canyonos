@@ -157,6 +157,16 @@ canyonos clean    # also delete the agents' images and the workflow group's reco
 `convert` normally adds `.canyon/` to `.gitignore`, so git won't keep a copy: remove
 that line and commit `.canyon` if you want to keep it.
 
+## Estimated time
+
+| Step                    | Your time                          | Waiting                                                       |
+| ----------------------- | ---------------------------------- | ------------------------------------------------------------- |
+| 1. Convert              | Two answers                        | 2 to 10 minutes while your coding agent works                 |
+| 2. Check what it wrote  | A few minutes of reading           | None                                                          |
+| 3. Add your keys        | About a minute                     | None                                                          |
+| 4. Choose where it runs | Nothing for Docker on this machine | None                                                          |
+| 5. Deploy               | One command, then `canyonos test`  | The image builds, which grow with each agent's `requirements` |
+
 ## Next
 
 - [Configure your workflow](CONFIGURE.md): change settings and apply them to a running

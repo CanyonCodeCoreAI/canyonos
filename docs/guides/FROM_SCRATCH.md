@@ -226,6 +226,19 @@ canyonos stop     # remove the containers, keep the images for a quick redeploy
 canyonos clean    # also remove the agents' images
 ```
 
+## Estimated time
+
+Most of the time goes into your agents' code. The CanyonOS part is short:
+
+| Step                     | Your time                                  | Waiting                                                                                                |
+| ------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| 1. Create the layout     | One command                                | None                                                                                                   |
+| 3. List your agents      | One entry per agent in the workflow config | None                                                                                                   |
+| 4. Turn on what you need | A few minutes per file                     | None                                                                                                   |
+| 5. Add your keys         | About a minute                             | None                                                                                                   |
+| 6. Choose where it runs  | Nothing for Docker on this machine         | None                                                                                                   |
+| 7. Run it                | Three commands                             | Under a minute for a small workflow once the CanyonOS images are on the machine; longer the first time |
+
 ## Next
 
 - [Configure your workflow](CONFIGURE.md): change settings and apply them to a running

@@ -14,12 +14,12 @@ describe how your workflow runs in a [workflow config](guides/CONFIGURE.md) file
 
 <div class="compare-table" markdown>
 
-|                 | With CanyonOS                                                                                           | Without CanyonOS                          |
-| --------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Orchestration   | One-Click deploy                                                                                        | Set up Kubernetes or other infrastructure |
-| Observability   | [Built in](guides/DASHBOARD.md), exports to [OpenTelemetry](guides/WORKFLOW_CONFIG.md#oteldestinations) | Add and wire up an observability platform |
-| Async execution | Built in, [each agent scales alone](guides/SCALING.md)                                                  | Add Ray or another scaling framework      |
-| Cost            | Per workflow and per agent, within [the limits you set](guides/LLM_GATEWAY.md)                          | Calculations and spreadsheets             |
+|                 | With CanyonOS                                                                                           | What you do with CanyonOS                                    | Without CanyonOS                          |
+| --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------- |
+| Orchestration   | One-Click deploy                                                                                        | Run `canyonos deploy`                                        | Set up Kubernetes or other infrastructure |
+| Observability   | [Built in](guides/DASHBOARD.md), exports to [OpenTelemetry](guides/WORKFLOW_CONFIG.md#oteldestinations) | Nothing                                                      | Add and wire up an observability platform |
+| Async execution | Built in, [each agent scales alone](guides/SCALING.md)                                                  | A five-line `scaling.yaml`, about 2 minutes                  | Add Ray or another scaling framework      |
+| Cost            | Per workflow and per agent, within [the limits you set](guides/LLM_GATEWAY.md)                          | Nothing to see it; one `llms.yaml` entry per model to cap it | Calculations and spreadsheets             |
 
 </div>
 
@@ -50,6 +50,10 @@ mkdir my-app && cd my-app
 canyonos new-app                                # writes a starter workflow with two small agents
 canyonos deploy . --api-key <your api key>      # runs it
 ```
+
+**Estimated time:** a few minutes with Docker running. The deploy is live in under a
+minute for a small workflow once the CanyonOS images are on the machine; the first
+deploy takes longer while Docker downloads them.
 
 [Start from scratch](guides/FROM_SCRATCH.md) takes it from there, step by step.
 

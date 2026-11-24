@@ -74,6 +74,9 @@ canyonos doctor
 It checks that Docker is installed, that it's running, and that it has Compose v2. If a
 check fails, it tells you how to fix it.
 
+**Estimated time:** about 2 minutes for the install and `canyonos doctor`, with Docker
+already installed.
+
 ## Next
 
 Once `canyonos doctor` passes, [Start from scratch](guides/FROM_SCRATCH.md) builds and

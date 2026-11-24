@@ -4,6 +4,10 @@ CanyonOS can keep each agent function's system prompt outside your code, with ev
 version of it, and switch versions while the workflow runs, without a redeploy. The LLM
 Gateway sends the live version with each model call the function makes.
 
+**Estimated time:** a few minutes per prompt to move it into `prompts.yaml`. Switching
+the live version on the dashboard takes a few clicks, and agents use it within about 10
+seconds.
+
 ## Define prompts in a file
 
 Create `prompts.yaml` in the workflow's `config` folder, or in its copy in the workflow

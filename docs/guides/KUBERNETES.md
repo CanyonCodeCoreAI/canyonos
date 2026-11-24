@@ -185,6 +185,11 @@ canyonos doctor      # check the cluster, the operator and the deployed workflow
 answers anyone who reaches it. The deploy prints the endpoint's URL and the `curl`
 commands to call it. Every command uses the workflow's `target`.
 
+**Estimated time:** on a cluster that already runs CanyonOS, pointing a workflow at it
+is two keys in `workflow_group.yaml` and the deploy is one command; the cluster then
+builds each agent's image. A local cluster from `canyonos cluster up` takes about 10
+minutes the first time.
+
 ### What a deploy does
 
 The CLI needs no Docker for this. `canyonos deploy` uploads `workflow_group.yaml`, its

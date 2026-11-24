@@ -21,12 +21,12 @@ Maintained by [CanyonCode](https://canyoncode.ai/).
 
 ## Why CanyonOS is Better
 
-| | *Without* CanyonOS | *With* CanyonOS |
-|---|---|---|
-| Orchestration | Set up Kubernetes or other infrastructure | `canyonos deploy` does this automatically |
-| Observability | Add Langfuse or other observability platforms | Built in, exports OTel anywhere |
-| Async Execution | Add Ray or other scaling frameworks | Built in, no code changes |
-| Cost Transparency | Difficult calculations and spreadsheets | Out of the box insights per workflow and per agent |
+| | *Without* CanyonOS | *With* CanyonOS | What you do with CanyonOS |
+|---|---|---|---|
+| Orchestration | Set up Kubernetes or other infrastructure | `canyonos deploy` does this automatically | Run one command |
+| Observability | Add Langfuse or other observability platforms | Built in, exports OTel anywhere | Nothing: open the dashboard the deploy starts |
+| Async Execution | Add Ray or other scaling frameworks | Built in, no code changes | Nothing for parallel calls. To autoscale, a five-line `scaling.yaml`, about 2 minutes |
+| Cost Transparency | Difficult calculations and spreadsheets | Out of the box insights per workflow and per agent | Nothing to see cost. To cap it, one `llms.yaml` entry per model, a few minutes |
 
 ## Requirements
 - Python 3+
@@ -109,6 +109,10 @@ Deploy it from its folder:
 ```bash
 canyonos deploy .
 ```
+
+**Estimated time:** a few minutes with Docker running. The deploy is live in under a
+minute for a small workflow once the CanyonOS images are on the machine; the first
+deploy takes longer while Docker downloads them.
 
 For details on new workflows, read: [building a new workflow](docs/guides/FROM_SCRATCH.md).
 

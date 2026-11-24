@@ -32,6 +32,9 @@ path.
 | A file in the record's `config/` | `canyonos sync <workflow folder>...`                         |
 | Your code or `.env`              | `canyonos deploy <workflow folder>...`                       |
 
+**Estimated time:** each change on this page is one file edit and one command, a few
+minutes at most.
+
 `canyonos config` and `canyonos sync` apply to a deploy on Docker; on Kubernetes, run
 `canyonos deploy` again. With nothing deployed, every change applies on the next
 `canyonos deploy`. Prompts, scaling and spend rules can also be changed on the

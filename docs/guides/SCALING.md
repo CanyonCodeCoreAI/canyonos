@@ -4,6 +4,9 @@ CanyonOS can add and remove replicas of each agent as its load changes, followin
 scaling policy you can change while the workflow runs. Without a policy, every agent
 runs the `replicas` count set in the workflow config.
 
+**Estimated time:** about 2 minutes. A policy is a five-line file or one API request,
+and the Global Controller applies it on its next poll, 5 seconds by default.
+
 ## Define the policy in a file
 
 Create `scaling.yaml` in the workflow's `config` folder, or in its copy in the workflow
@@ -71,11 +74,30 @@ stored policy is invalid, the page says why.
 | **Delete policy**             | Removes the policy. Its agents then keep their current replica count until the next reload, and the count in the workflow config after that. |
 | **Agents now**                | Shows each agent's replicas and its current Throughput and Queue, updated every 5 seconds, so you can watch a change take effect             |
 
+## Change the policy through the API
+
+The dashboard's **Scaling** page uses the dashboard API, and a script can call it too.
+On a Docker deploy it listens on port `3000` and takes the [API key](AUTHORIZATION.md).
+`<workflow_group_id>` and `<workflow_id>` are in the record's `workflow_group.yaml`.
+
+```bash
+curl -X PUT \
+  http://127.0.0.1:3000/v1/workflow-groups/<workflow_group_id>/workflows/<workflow_id>/scaling \
+  -H "Authorization: Bearer <your api key>" \
+  -H "Content-Type: application/json" \
+  -d '{"min_replicas": 1, "max_replicas": 6, "metric": "queue_length_total",
+       "scale_up_above": 10, "scale_down_below": 1}'
+```
+
+It answers with the saved policy, which applies on the next poll. `GET` on the same path
+returns the workflow's policy, `DELETE` removes it, and `GET .../scaling/agents` lists
+each agent's replicas and load.
+
 ## Limits
 
-- Dashboard edits are not written back to `scaling.yaml`. On the next reload, from
-  `canyonos sync` (Docker only) or a deploy, the Global Controller publishes the file again and
-  dashboard edits are lost. Copy any change you want to keep into the record's
+- Dashboard and API edits are not written back to `scaling.yaml`. On the next reload,
+  from `canyonos sync` (Docker only) or a deploy, the Global Controller publishes the file
+  again and those edits are lost. Copy any change you want to keep into the record's
   `scaling.yaml`.
 - On Docker and EC2, a reload or deploy also sets every agent back to the `replicas`
   count in the workflow config, and scaling starts again from there. On Kubernetes, a

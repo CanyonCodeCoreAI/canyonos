@@ -13,6 +13,9 @@ the dashboard. CanyonOS checks one API key per machine, as vLLM does:
   dashboard can use it. `deploy` and `serve` warn about it.
 - One key per workflow group is planned, not there yet.
 
+**Estimated time:** under a minute. Setting the key is one flag on a deploy; see
+[Set the key](#set-the-key).
+
 ```mermaid
 flowchart LR
     K["canyonos deploy --api-key"] --> F["~/.canyonos/api_key"]

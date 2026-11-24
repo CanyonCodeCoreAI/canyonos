@@ -103,6 +103,10 @@ canyonos doctor          # check the Global Controller, Redis, agents, endpoint 
 
 The [dashboard](DASHBOARD.md) shows each request, its traces, logs, errors and cost.
 
+**Estimated time:** one command. A small workflow is live in under a minute once the
+CanyonOS images are on the machine. The first deploy on a machine takes longer while
+Docker downloads them, and so do agents with large `requirements`.
+
 ## Change it
 
 The deploy runs from a copy of the workflow, so an edit changes nothing until you apply

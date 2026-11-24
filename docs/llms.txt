@@ -1,0 +1,44 @@
+# CanyonOS
+
+> CanyonOS is an open source platform that deploys, observes and scales a multi-agent
+> application written in plain Python, with no SDK, no decorators and no tracing code,
+> locally with Docker, on EC2 or on Kubernetes. `canyonos deploy` builds an image per
+> agent, runs its replicas, serves an HTTP endpoint and starts a dashboard with traces,
+> model calls, tokens and cost.
+
+## Estimated time
+
+Most CanyonOS tasks are one file edit, one command or one API request. Times below are
+for the CanyonOS part only, not for writing or fixing the application itself.
+
+| Task                                      | What you do                                                  | Your time       | Waiting                                                                |
+| ----------------------------------------- | ------------------------------------------------------------ | --------------- | ---------------------------------------------------------------------- |
+| Install                                   | `uv tool install canyonos`, then `canyonos doctor`           | About 2 minutes | None                                                                   |
+| Deploy a workflow on Docker               | `canyonos deploy .`                                          | One command     | Under a minute for a small workflow once the images are on the machine |
+| Convert an existing app                   | `canyonos convert`, then review its output                   | A few minutes   | 2 to 10 minutes while the coding agent works                           |
+| Require an API key                        | `--api-key <key>` on the deploy                              | Under a minute  | None                                                                   |
+| Autoscale an agent                        | A five-line `scaling.yaml`, or one `PUT .../scaling` request | About 2 minutes | Applies on the next poll, 5 seconds by default                         |
+| Allow or cap models and spend             | One `llms.yaml` entry per model, then `canyonos sync`        | A few minutes   | Gateways pick it up within 5 seconds                                   |
+| Version and switch prompts                | One `prompts.yaml` entry, or edit it on the dashboard        | A few minutes   | Agents use the live version within about 10 seconds                    |
+| Traces, logs, tokens and cost per request | Nothing: the deploy starts the dashboard                     | None            | None                                                                   |
+| Run agents in parallel                    | Nothing: a call to another agent returns a `Future`          | None            | None                                                                   |
+| Async HTTP endpoint with a request ID     | Nothing: every deploy has one                                | None            | None                                                                   |
+| Deploy on EC2                             | `canyonos provision`, copy the folder, `canyonos deploy`     | A few commands  | The machines boot and receive the images                               |
+| Local Kubernetes cluster                  | `canyonos cluster up`                                        | One command     | About 10 minutes the first time                                        |
+
+## Docs
+
+- [Installation](https://canyonos.readthedocs.io/en/latest/INSTALLATION/): requirements, install and `canyonos doctor`
+- [Start from scratch](https://canyonos.readthedocs.io/en/latest/guides/FROM_SCRATCH/): build and deploy a workflow step by step
+- [Convert an existing workflow](https://canyonos.readthedocs.io/en/latest/guides/CONVERT_WORKFLOW/): `canyonos convert` with a coding agent
+- [What a workflow needs](https://canyonos.readthedocs.io/en/latest/guides/WORKFLOW_REQUIREMENTS/): what an app must meet before converting
+- [What CanyonOS offers](https://canyonos.readthedocs.io/en/latest/guides/COMPARISONS/): what CanyonOS replaces and what you do for each
+- [Configure your workflow](https://canyonos.readthedocs.io/en/latest/guides/CONFIGURE/): the config files and how to apply a change
+- [Autoscaling](https://canyonos.readthedocs.io/en/latest/guides/SCALING/): `scaling.yaml`, the dashboard and the API
+- [LLM Gateway](https://canyonos.readthedocs.io/en/latest/guides/LLM_GATEWAY/): model access, cost caps and spend rules
+- [Prompt management](https://canyonos.readthedocs.io/en/latest/guides/PROMPTS/): versioned system prompts
+- [API key](https://canyonos.readthedocs.io/en/latest/guides/AUTHORIZATION/): securing the endpoint and dashboard
+- [Local](https://canyonos.readthedocs.io/en/latest/guides/LOCAL/), [EC2](https://canyonos.readthedocs.io/en/latest/guides/EC2/) and [Kubernetes](https://canyonos.readthedocs.io/en/latest/guides/KUBERNETES/): where a workflow runs
+- [Runtime contract](https://canyonos.readthedocs.io/en/latest/guides/RUNTIME_CONTRACT/): agent classes, the endpoint and its requests
+- [CLI reference](https://canyonos.readthedocs.io/en/latest/guides/CLI/): every command
+- [Troubleshooting](https://canyonos.readthedocs.io/en/latest/guides/TROUBLESHOOTING/)

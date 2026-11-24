@@ -7,6 +7,10 @@ needs calls sent with httpx, as the OpenAI and Anthropic SDKs do, or boto3; see
 [Code that bypasses the gateway](#code-that-bypasses-the-gateway). How the gateway
 is built is in [LLM Gateway architecture](../architecture/LLM_GATEWAY.md).
 
+**Estimated time:** a few minutes. Allowing or capping a model is one entry in
+`llms.yaml` and one `canyonos sync`; see
+[Change the limits while the workflow runs](#change-the-limits-while-the-workflow-runs).
+
 On each call, the gateway also applies these settings:
 
 | Set in                | What the gateway does                                                        | See                                                   |

@@ -53,6 +53,15 @@ Back on your own computer:
 canyonos provision                    # choose Tear down AWS
 ```
 
+## Estimated time
+
+| Step                         | Your time                                | Waiting                                                                                                   |
+| ---------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Create the deploying machine | `canyonos provision` and six choices     | The machine's boot script installs Docker and CanyonOS; `cloud-init status --wait` returns when it's done |
+| Copy the workflow and deploy | `scp`, `ssh`, then one `canyonos deploy` | The agent machines start and receive the images                                                           |
+| Stop                         | One command                              | Up to four minutes                                                                                        |
+| Tear down                    | `canyonos provision` again               | None                                                                                                      |
+
 ## Create the deploying machine
 
 On your own computer, with CanyonOS [installed](../INSTALLATION.md), run
