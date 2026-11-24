@@ -50,6 +50,23 @@ const UNMEASURED_PATHS = new Set(['/v1/healthz', '/v1/readyz']);
 // The API reference page /docs loads; pinned, so it does not change under a running API.
 const SCALAR_VERSION = '1.76.4';
 
+// The API reference at /docs. It reads the spec from docs/json, relative so it also works behind
+// a proxy's prefix. The plugin's own page writes the spec into a single-quoted HTML attribute
+// without escaping it, so any ' in a description cut it short and the page rendered empty.
+const API_REFERENCE_PAGE = `<!doctype html>
+<html>
+  <head>
+    <title>CanyonOS API</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <script id="api-reference" data-configuration='${JSON.stringify({ url: 'docs/json' })}'></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@${SCALAR_VERSION}/dist/browser/standalone.min.js" crossorigin></script>
+  </body>
+</html>
+`;
+
 // The error every route answers: one component, which each error answer refers to.
 const ERROR_COMPONENT = 'ApiError';
 // Each registered model, by its schema, so a model nested in another is a reference to its
@@ -115,11 +132,8 @@ export const app = new Elysia({ name: 'canyonos.api' })
   .use(
     openapi({
       path: '/docs',
-      // Renders /docs per request, with the spec in it; the static page the plugin makes
-      // otherwise keeps `bun test` from seeing any test finish.
-      embedSpec: true,
+      provider: null,
       mapJsonSchema: { zod: to_openapi_schema },
-      scalar: { version: SCALAR_VERSION },
       documentation: {
         info: {
           title: 'CanyonOS API',
@@ -150,6 +164,15 @@ export const app = new Elysia({ name: 'canyonos.api' })
         },
       },
     })
+  )
+  // A handler, not a static Response: a static one keeps `bun test` from seeing any test finish.
+  .get(
+    '/docs',
+    () =>
+      new Response(API_REFERENCE_PAGE, {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      }),
+    { detail: { hide: true } }
   )
   .use(healthRoutes)
   .use(authRoutes)
