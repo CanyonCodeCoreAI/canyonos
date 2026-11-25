@@ -30,7 +30,10 @@ UTIL_COMMANDS = (
         "clean",
         "Stop the workflow group, then delete its agents' images and its records",
     ),
-    ("cluster", "Make or delete a local Kubernetes cluster with CanyonOS (kind)"),
+    (
+        "cluster",
+        "Make or delete a local Kubernetes cluster with CanyonOS (kind, or k3d with --k3d)",
+    ),
     ("convert", "Optional: convert an existing workflow with a coding agent"),
     (
         "curl",

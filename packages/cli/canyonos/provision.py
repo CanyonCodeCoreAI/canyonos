@@ -18,6 +18,8 @@ from utils.tui import input_line, select_menu
 
 PROVISION = "provision"
 TEAR_DOWN = "teardown"
+# The action as `canyonos provision <action>` names it, for the AWS EC2 machine.
+ACTIONS = {"aws": PROVISION, "teardown": TEAR_DOWN}
 # The tags on everything provisioning makes: what made it, and the provision ID of the
 # run, so teardown removes exactly what that run made.
 CREATED_BY = "canyonos provision"
@@ -81,14 +83,15 @@ def _rosa_provision():
     return rosa_provision
 
 
+AWS_EC2 = Provisioner(
+    "AWS EC2 machine",
+    "Launch an EC2 machine to deploy from. Agents then run on EC2 too.",
+    "Remove a machine you provisioned, with the security group and key pair made "
+    "for it.",
+    _aws_provision,
+)
 PROVISIONERS = (
-    Provisioner(
-        "AWS EC2 machine",
-        "Launch an EC2 machine to deploy from. Agents then run on EC2 too.",
-        "Remove a machine you provisioned, with the security group and key pair made "
-        "for it.",
-        _aws_provision,
-    ),
+    AWS_EC2,
     Provisioner(
         "Red Hat OpenShift on AWS (ROSA) cluster",
         "Make a ROSA cluster with CanyonOS on it, in a VPC of its own, and point "
@@ -143,17 +146,76 @@ def _choose(provisioners):
     return action, provisioner
 
 
-def run_provision():
-    """Run `canyonos provision`: ask whether to provision or tear down, and what, then
-    walk through it in the terminal. Returns True once that is done, False if it
-    stopped."""
-    if not is_interactive():
-        ui.fail("`canyonos provision` asks questions, so it needs a terminal.")
+@dataclass(frozen=True)
+class Answers:
+    """Answers given as flags, so their questions aren't asked. With `yes`, every
+    question without one takes its default (see `canyonos provision --help`) and
+    nothing is confirmed, so provisioning runs without a terminal: the desktop app
+    runs it this way."""
+
+    region: str | None = None
+    vpc: str | None = None
+    subnet: str | None = None
+    # A security group's ID, or "new".
+    security_group: str | None = None
+    machine_type: str | None = None
+    # A key pair's name, or "new".
+    key_pair: str | None = None
+    # An instance profile's name, "new" for the canyonos-controller role, or "none".
+    role: str | None = None
+    # Teardown: the Global Controller machine to remove.
+    machine: str | None = None
+    # Teardown, and a run that stops partway: remove the key pairs made for the machine.
+    remove_key_pair: bool = False
+    yes: bool = False
+
+    @classmethod
+    def from_args(cls, args):
+        return cls(
+            **{
+                name: getattr(args, name, None)
+                for name in (
+                    "region",
+                    "vpc",
+                    "subnet",
+                    "security_group",
+                    "machine_type",
+                    "key_pair",
+                    "role",
+                    "machine",
+                )
+            },
+            remove_key_pair=bool(getattr(args, "remove_key_pair", False)),
+            yes=bool(getattr(args, "yes", False) or getattr(args, "json", False)),
+        )
+
+
+def run_provision(args=None):
+    """Run `canyonos provision`: provision or tear down. Without an action, asks which,
+    and what, in the terminal; `aws` and `teardown` are the AWS EC2 machine's. Questions
+    answered by flags are skipped, and with --yes (or --json) none are asked. Returns
+    True once that is done, False if it stopped."""
+    answers = Answers.from_args(args)
+    action = ACTIONS.get(getattr(args, "action", None) or "")
+    if answers.yes and action is None:
+        ui.fail(
+            "Say what to provision: `canyonos provision aws --yes` or "
+            "`canyonos provision teardown --yes`."
+        )
         return False
-    try:
-        action, provisioner = _choose(PROVISIONERS)
-    except Cancelled:
-        ui.say("Nothing provisioned.")
+    if not answers.yes and not is_interactive():
+        ui.fail(
+            "`canyonos provision` asks questions, so it needs a terminal. To run it "
+            "without one, pass `aws` or `teardown` and --yes."
+        )
         return False
+    provisioner = AWS_EC2
+    if action is None:
+        try:
+            action, provisioner = _choose(PROVISIONERS)
+        except Cancelled:
+            ui.say("Nothing provisioned.")
+            return False
     module = provisioner.load()
-    return module.provision() if action == PROVISION else module.teardown()
+    run = module.provision if action == PROVISION else module.teardown
+    return run(answers) if provisioner is AWS_EC2 else run()

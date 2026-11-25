@@ -32,7 +32,7 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 | `quickstart` | Guided first run: picks a sample workflow, deploys it and sends a first request |
 | `new-app`    | Create a starter workflow with two agents in an empty folder                    |
 | `convert`    | Convert an existing workflow to the CanyonOS format with your coding agent      |
-| `validate`   | Check the workflow folder against the CanyonOS contract                          |
+| `validate`   | Check the workflow folder against the CanyonOS contract                         |
 | `doctor`     | Check that this machine can deploy and, once deployed, every part of the deploy |
 
 - `convert --agent <name>` picks the coding agent instead of asking: `claude`, `codex`,
@@ -48,17 +48,17 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 
 ## Deploy and run
 
-| Command     | What it does                                                         |
-| ----------- | -------------------------------------------------------------------- |
-| `deploy`    | Build an image per agent, start the workflow, and open the dashboard |
-| `test`      | Send one query end to end and show the answer                        |
-| `curl`      | POST one JSON body to the workflow and print what it answers         |
-| `status`    | Show whether a workflow group is running, its endpoint, and how to query it |
-| `logs`      | Stream the Global Controller's logs until Ctrl-C                     |
-| `config`    | View or edit `workflow_group.yaml`; `sync` applies the changes           |
+| Command     | What it does                                                                           |
+| ----------- | -------------------------------------------------------------------------------------- |
+| `deploy`    | Build an image per agent, start the workflow, and open the dashboard                   |
+| `test`      | Send one query end to end and show the answer                                          |
+| `curl`      | POST one JSON body to the workflow and print what it answers                           |
+| `status`    | Show whether a workflow group is running, its endpoint, and how to query it            |
+| `logs`      | Stream the Global Controller's logs until Ctrl-C                                       |
+| `config`    | View or edit `workflow_group.yaml`; `sync` applies the changes                         |
 | `sync`      | Apply changes you made by hand in the record's `config/` to the running workflow group |
-| `serve`     | Start the local dashboard on its own                                 |
-| `dashboard` | Open the running dashboard, signed in with the workflow group's key  |
+| `serve`     | Start the local dashboard on its own                                                   |
+| `dashboard` | Open the running dashboard, signed in with the workflow group's key                    |
 
 - `deploy <folder>...` deploys the workflow folders it names as one workflow group: the
   recorded one that has exactly those folders, by absolute path, else a new one. Two
@@ -121,7 +121,11 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
   `<your api key>` in place of the key.
 - `status --json` prints one JSON object: the workflow group, its target, the deploy's
   `phase` (`starting`, `up`, `failed` or `stopped`, on Docker), the address of the
-  CanyonOS API it read them from (`controller_url`) and each agent's replica counts.
+  CanyonOS API it read them from (`controller_url`) and each agent's replica counts. On
+  Kubernetes, `kubernetes` names the cluster's kubectl `context` and the `namespace`.
+  When the status couldn't be read, `errors` says why and `failure_code` names it as
+  `--json` names a failure, such as `version_mismatch`: the deploy, or on Kubernetes the
+  cluster's CanyonOS API, runs another release than the CLI.
 - `logs <agent>` prints that agent's logs instead of the Global Controller's, the agent
   named `<workflow>.<agent>` on Docker. A replica ID prints one replica:
   `my-workflow.MyAgent-1a2b3c4d` on Docker, `MyAgent-0` on Kubernetes. An agent's logs
@@ -137,13 +141,17 @@ group those commands act on; see [Pick a workflow group](#pick-a-workflow-group)
 - `dashboard` opens the dashboard signed in, with the workflow group's API key in the
   link's `#key=` fragment, which the browser never sends to a server; the sign-in screen saves it and
   drops the fragment. For a workflow group with no key, it opens the dashboard as it is.
-- `deploy`, `sync`, `stop`, `clean`, `logs` and `doctor` take `--json`: they
+- `deploy`, `sync`, `stop`, `clean`, `logs`, `doctor` and `provision` take `--json`: they
   print one JSON object, `ok`, the `errors` they hit, a `code` and their result, and
   nothing else. `code` is null on success, else why it failed, such as `no_deploy`,
-  `docker_unavailable`, `workflow_invalid`, `deploy_failed` or `version_mismatch`.
+  `docker_unavailable`, `workflow_invalid`, `deploy_failed`, `version_mismatch` or, on
+  Kubernetes, `canyonos_missing`: the cluster has no CanyonOS API (`cluster up` sets it up
+  on a local cluster).
   `deploy` adds what `status --json` prints under `status`, `stop` and `clean` the
   `workflow_groups` they acted on, `logs` the lines it read under `logs`, `doctor` its
-  `checks`, `sync` the `reload` it applied, and `target` the `target`.
+  `checks`, `sync` the `reload` it applied, `target` the `target`, `provision aws` the
+  `machine` it launched (ID, address, region, SSH user and key) and `provision teardown`
+  what it `removed`.
 - After upgrading the CLI, run `deploy` again: `status`, `sync`, `test`, `logs` and
   `doctor` refuse a deploy started by another release (`stop` still works).
 - Exit code: 3 when no deploy is running, for `status`, `logs` and `test`, or when
@@ -158,11 +166,17 @@ canyonos select-context my-workflow-1a2b3c4d  # act on it from any other folder
 canyonos select-context --clear               # forget it
 ```
 
-| Command          | What it does                                                         |
-| ---------------- | -------------------------------------------------------------------- |
-| `list`           | One line per workflow group: name, `workflow_group_id`, whether it runs      |
-| `select-context` | Pick the workflow group commands act on outside its workflow folders         |
+| Command          | What it does                                                            |
+| ---------------- | ----------------------------------------------------------------------- |
+| `list`           | One line per workflow group: name, `workflow_group_id`, whether it runs |
+| `select-context` | Pick the workflow group commands act on outside its workflow folders    |
 
+- `list --json` prints one JSON object: each workflow group under `workflow_groups`, with
+  its name, `workflow_group_id`, its `record` folder, whether it is `deployed` and
+  `running` (`"unknown"` when the CanyonOS API can't say), its `target` and its
+  `workflows` with each one's folder; the `selected` one; and `records_dir`, the folder
+  holding every record. `--no-status` doesn't ask the API whether each deploy runs (on
+  Kubernetes, a port-forward each): a deployed one's `running` is `"unchecked"`.
 - `list` marks a workflow group deployed without an API key `(unauthenticated)`, one
   recorded but not deployed `not deployed`, and the selected one `(selected)`. It lists
   the workflow groups recorded in `~/.canyonos/workflows/`, the Docker ones on this
@@ -184,10 +198,10 @@ canyonos stop my-workflow-1a2b3c4d  # a workflow group by name or ID, from any f
 canyonos stop --all                 # every workflow group on this machine
 ```
 
-| Command | What it does                                                                                                                     |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `stop`  | Remove the workflow group's containers, workspace and network, keeping its images and `.canyon`                                          |
-| `clean` | Stop the workflow group, then remove the agents' images and the workflow group's record, its settings included                    |
+| Command | What it does                                                                                                   |
+| ------- | -------------------------------------------------------------------------------------------------------------- |
+| `stop`  | Remove the workflow group's containers, workspace and network, keeping its images and `.canyon`                |
+| `clean` | Stop the workflow group, then remove the agents' images and the workflow group's record, its settings included |
 
 - Both work from any folder. Name workflow groups by name (with or without the start of
   its ID), ID or the start of an ID; a name two workflow groups share is refused, so use
@@ -199,7 +213,7 @@ canyonos stop --all                 # every workflow group on this machine
   ones.
 - `stop` also stops the dashboard, keeping its history, when no other workflow group runs.
 - `clean` removes the workflow group's record, `~/.canyonos/workflows/<workflow
-  group>/`, its `workflow_group.yaml`, each workflow's `config/` and Redis password
+group>/`, its `workflow_group.yaml`, each workflow's `config/` and Redis password
   among them, and the skills `convert` installed in its workflow folders, keeping their
   `.canyon`. Run from a folder
   that is not deployed, it also offers to remove that folder's `.canyon` and the skills

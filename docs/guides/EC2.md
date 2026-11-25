@@ -3,10 +3,10 @@
 An EC2 deploy runs your agents on EC2 machines that CanyonOS launches, while the rest of
 the workflow stays on the machine that runs `canyonos deploy`. You need an AWS account.
 
-| Machine               | What runs on it                                                                            | Lifetime                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| The deploying machine | `canyonos deploy`, the Global Controller, the endpoint and the dashboard                   | Keep it running while the workflow is live. `canyonos provision` creates one |
-| Agent machines        | Your agents' replicas, and a Redis of their own that requires the workflow group's password    | Launched by `canyonos deploy`, terminated by `canyonos stop`                 |
+| Machine               | What runs on it                                                                             | Lifetime                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| The deploying machine | `canyonos deploy`, the Global Controller, the endpoint and the dashboard                    | Keep it running while the workflow is live. `canyonos provision` creates one |
+| Agent machines        | Your agents' replicas, and a Redis of their own that requires the workflow group's password | Launched by `canyonos deploy`, terminated by `canyonos stop`                 |
 
 The top-level `provider` in `workflow_group.yaml` decides how agents get machines:
 
@@ -99,6 +99,28 @@ provisioning:
 If a run fails, or you back out after confirming, provisioning removes what that run
 created. It keeps the `canyonos-controller` role and any default VPC it made, which are
 free and reused next time, and asks before removing a key pair it created.
+
+### Without a terminal
+
+`canyonos provision aws --yes` asks nothing, for scripts and the desktop app. Each
+question has a flag, and `--yes` gives the ones left out their default:
+
+| Flag               | Default with `--yes`                                       |
+| ------------------ | ---------------------------------------------------------- |
+| credentials        | your default AWS credentials (no flag)                     |
+| `--region`         | your AWS settings' region                                  |
+| `--vpc`            | the region's default VPC, created when the region has none |
+| `--subnet`         | the VPC's first subnet with a route to an internet gateway |
+| `--security-group` | `new`; an existing group gets the rules it lacks           |
+| `--machine-type`   | `t3.large`                                                 |
+| `--key-pair`       | `new`, saved to `~/.ssh/<name>.pem`                        |
+| `--role`           | `new` (`canyonos-controller`); `none` launches without one |
+
+`--json` implies `--yes` and prints one JSON object, with the `machine` launched. A run
+that fails keeps a key pair it created unless `--remove-key-pair` is given.
+`canyonos provision teardown --yes --region <region> [--machine <id>]` removes a machine
+(the only one in the region when `--machine` is left out), keeping its key pair unless
+`--remove-key-pair` is given. Flags also answer their questions in the terminal.
 
 Agent machines launch into the deploying machine's region, subnet and security group,
 so `workflow_group.yaml` only needs their machine types. Outside `us-east-1`, they also

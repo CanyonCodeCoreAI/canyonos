@@ -76,6 +76,31 @@ def workflow_paths(name):
     }
 
 
+def workflows(name):
+    """Each workflow record `name` lists: its name, workflow_id and absolute folder."""
+    entries = _config(name).get("workflows") or {}
+    return [
+        {
+            "name": workflow,
+            "workflow_id": entry.get("workflow_id"),
+            "path": os.path.abspath(entry["path"]),
+        }
+        for workflow, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("path")
+    ]
+
+
+def target(name):
+    """The `target` record `name` deploys to: docker without one, None when its config
+    names no target CanyonOS knows or can't be read."""
+    try:
+        return deployment.configured_target(
+            os.path.join(deployment.deployments_dir(), name, DEPLOYMENT_CONFIG)
+        )
+    except RuntimeError:
+        return None
+
+
 def _by_id(workflow_group_id):
     """The record of the workflow group `workflow_group_id`, or None."""
     for name in names():

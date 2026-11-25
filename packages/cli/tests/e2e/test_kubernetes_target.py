@@ -63,6 +63,11 @@ if args[:2] == ["config", "view"]:
     print(json.dumps({"users": [{"user": user}]}))
 elif args[:2] == ["config", "current-context"]:
     print("kind-e2e")
+elif "port-forward" in args and os.path.exists(os.path.join(here, "no-api")):
+    # A cluster without CanyonOS: the API's namespace isn't there.
+    print('Error from server (NotFound): namespaces "canyonos-dashboard" not found',
+          file=sys.stderr)
+    sys.exit(1)
 elif "port-forward" in args:
     local, remote = args[-1].split(":")
     answers = json.load(open(os.path.join(here, "answers.json")))
@@ -112,6 +117,8 @@ elif "port-forward" in args:
     server = ThreadingHTTPServer(("127.0.0.1", int(local)), Api)
     print(f"Forwarding from 127.0.0.1:{local} -> {remote}", flush=True)
     server.serve_forever()
+elif args[:2] == ["get", "svc/canyonos-dashboard-web"]:
+    print("canyonos-dashboard-web   ClusterIP   10.0.0.9   <none>   8080/TCP")
 else:
     print(f"error: the stand-in kubectl does not know {args}", file=sys.stderr)
     sys.exit(1)
@@ -219,6 +226,10 @@ def test_status_reaches_the_cluster_api_through_the_dashboard_api_forward(
     assert result.returncode == 3, _said(result)
     report = json.loads(result.stdout)
     assert report["target"] == "kubernetes" and not report["running"], report
+    # Where it deploys: the cluster kubectl reaches, and the group's namespace.
+    assert report["kubernetes"] == {"context": "kind-e2e", "namespace": NAMESPACE}, (
+        report
+    )
     assert report["errors"] == [], report
     _assert_forwarded_to_the_dashboard_api(records)
     assert _lines(records / "requests.jsonl") == [
@@ -256,6 +267,64 @@ def test_a_token_file_signs_in_with_the_token_in_it(cli_case: CliCase, close_for
     assert [r["authorization"] for r in _lines(records / "requests.jsonl")] == [
         "Bearer e2e-file-token"
     ]
+
+
+def test_dashboard_forwards_the_clusters_and_status_reports_it(
+    cli_case: CliCase, close_forwards
+):
+    """`canyonos dashboard` on Kubernetes forwards the cluster's dashboard here, as
+    `serve` does, and prints its URL (no terminal, so no browser): then `status --json`
+    reports that forward as the deploy's `dashboard_url`."""
+    environment, records = _kubernetes_group(cli_case, {"GET": [200, APPLIED]})
+
+    opened = cli_case.run_cli(["dashboard"], env=environment, timeout=60)
+
+    assert opened.returncode == 0, _said(opened)
+    [url] = [w for w in opened.stdout.split() if w.startswith("http://127.0.0.1:")]
+    assert any("svc/canyonos-dashboard-web" in a for a in _port_forwards(records)), (
+        _lines(records / "kubectl.jsonl")
+    )
+    status = cli_case.run_cli(["status", "--json"], env=environment, timeout=60)
+    assert json.loads(status.stdout)["dashboard_url"] == url.split("/login")[0], (
+        status.stdout
+    )
+
+
+def test_status_names_a_cluster_on_another_release_by_its_code(
+    cli_case: CliCase, close_forwards
+):
+    """A cluster whose CanyonOS API runs another release than this CLI: `status --json`
+    says how to fix it and names the failure `version_mismatch`, so the desktop app can
+    offer the upgrade."""
+    environment, _ = _kubernetes_group(
+        cli_case, {"GET": [200, {**APPLIED, "version": "0.0.1"}]}
+    )
+
+    result = cli_case.run_cli(["status", "--json"], env=environment, timeout=60)
+
+    assert result.returncode == 1, _said(result)
+    report = json.loads(result.stdout)
+    assert report["failure_code"] == "version_mismatch", report
+    assert "Upgrade the CanyonOS operator chart" in report["errors"][0], report
+
+
+def test_status_names_a_cluster_without_canyonos_by_its_code(
+    cli_case: CliCase, close_forwards
+):
+    """A cluster CanyonOS isn't installed on (made, but `cluster up` stopped before
+    installing it): `status --json` says so and names the failure `canyonos_missing`, so
+    the desktop app can set it up."""
+    environment, records = _kubernetes_group(cli_case, {"GET": [200, APPLIED]})
+    (records / "no-api").write_text("")
+
+    result = cli_case.run_cli(["status", "--json"], env=environment, timeout=60)
+
+    assert result.returncode == 1, _said(result)
+    report = json.loads(result.stdout)
+    assert report["failure_code"] == "canyonos_missing", report
+    assert "CanyonOS isn't installed on the cluster kind-e2e" in report["errors"][0], (
+        report
+    )
 
 
 def test_a_context_without_a_token_fails_and_says_so(cli_case: CliCase):

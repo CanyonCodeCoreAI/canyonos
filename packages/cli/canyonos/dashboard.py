@@ -18,19 +18,17 @@ from urllib.parse import quote
 from canyonos import ui
 from canyonos.auth import group_api_key
 from canyonos.dashboard_stack import dashboard_url, running_api_port, running_web_port
+from canyonos.deployment import configured_target
 from canyonos.os_support import is_terminal
 
 
-def _requires_key():
-    """False when the dashboard's API answers that it checks no API key; True
-    otherwise, also when it can't say."""
-    port = running_api_port()
-    if port is None:
+def _requires_key(api_url):
+    """False when the dashboard's API at `api_url` answers that it checks no API key;
+    True otherwise, also when it can't say or there is none."""
+    if api_url is None:
         return True
     try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/v1/auth/status", timeout=5
-        ) as response:
+        with urllib.request.urlopen(f"{api_url}/v1/auth/status", timeout=5) as response:
             return (
                 json.loads(response.read()).get("api_key_required", True) is not False
             )
@@ -52,17 +50,26 @@ def _open(url, shown):
 def run_open_dashboard():
     """Run `canyonos dashboard`: open the dashboard on this machine signed in with
     the API key of the workflow group this command acts on, or show its URL and how to
-    sign in when it has no key. Returns False when no dashboard runs."""
-    port = running_web_port()
-    if port is None:
-        ui.fail(
-            "The dashboard is not running. Start it with `canyonos serve`, or deploy "
-            "with `canyonos deploy`."
-        )
-        return False
-    url = dashboard_url(port)
+    sign in when it has no key. On Kubernetes it is the cluster's dashboard, forwarded
+    to this machine as `canyonos serve` does. Returns False when no dashboard runs."""
+    if configured_target() == "kubernetes":
+        # Imported here: Docker's dashboard needs none of the cluster's modules.
+        from canyonos.kubernetes_target import _open_dashboard
+
+        url, api_url = f"http://127.0.0.1:{_open_dashboard()}", None
+    else:
+        port = running_web_port()
+        if port is None:
+            ui.fail(
+                "The dashboard is not running. Start it with `canyonos serve`, or deploy "
+                "with `canyonos deploy`."
+            )
+            return False
+        url = dashboard_url(port)
+        api_port = running_api_port()
+        api_url = f"http://127.0.0.1:{api_port}" if api_port else None
     key = group_api_key()
-    if not _requires_key():
+    if not _requires_key(api_url):
         with ui.to_stderr():
             _open(url, url)
         return True

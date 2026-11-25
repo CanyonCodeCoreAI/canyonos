@@ -386,3 +386,33 @@ def test_serve_without_a_docker_engine_stops(cli_case: CliCase):
     assert result.returncode == 1, output
     assert OPEN_WARNING not in output
     assert "docker daemon or socket is unavailable" in output
+
+
+def test_deploy_target_is_kept_as_the_workflow_group_target(cli_case: CliCase):
+    _workflow(cli_case.cwd / "echo")
+    (cli_case.cwd / "workflow_group.yaml").write_text("target: kubernetes\n")
+
+    _deployed_up_to_docker(cli_case, "echo", "--target", "docker", "--yes")
+
+    [name] = _records(cli_case)
+    record = cli_case.home / ".canyonos" / "workflows" / name
+    assert _settings(record)["target"] == "docker"
+    listed = json.loads(cli_case.run_cli(["list", "--json"]).stdout)
+    assert listed["workflow_groups"][0]["target"] == "docker"
+
+
+def test_deploy_target_kubernetes_gets_the_local_cluster_block(cli_case: CliCase):
+    _workflow(cli_case.cwd / "echo")
+
+    result = _deploy(
+        cli_case, "echo", "--target", "kubernetes", "--yes", "--json", docker=False
+    )
+
+    assert result.returncode != 0, _said(result)
+    [name] = _records(cli_case)
+    settings = _settings(cli_case.home / ".canyonos" / "workflows" / name)
+    assert settings["target"] == "kubernetes"
+    assert settings["kubernetes"] == {
+        "namespace": "canyonos-local-dev",
+        "registry": "localhost:5001",
+    }

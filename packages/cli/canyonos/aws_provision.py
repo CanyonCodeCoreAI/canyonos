@@ -26,10 +26,11 @@ from collections import Counter
 from pathlib import Path
 
 from canyonos import dev_machine, env, ui
-from canyonos.aws_account import choose_region, sign_in
+from canyonos.aws_account import STS_REGION, choose_region, sign_in
 from canyonos.provision import (
     CREATED_BY,
     PROVISION_ID_TAG,
+    Answers,
     Cancelled,
     ask,
     numbered,
@@ -65,6 +66,12 @@ UV_INSTALL_URL = "https://astral.sh/uv/0.12.15/install.sh"
 # A new instance profile takes a few seconds before EC2 accepts it.
 PROFILE_READY_SECONDS = 60
 # x86 only: agent images are built for linux/amd64.
+# What `--yes` launches when no --machine-type is given.
+DEFAULT_MACHINE_TYPE = "t3.large"
+# What --security-group, --key-pair and --role take to make one, and --role for none.
+NEW = "new"
+NONE = "none"
+
 MACHINE_TYPES = (
     ("t3.micro", "2 vCPU, 1 GiB. Cheap for trying it out; tight for building images"),
     ("t3.large", "2 vCPU, 8 GiB. Enough for most workflows"),
@@ -628,7 +635,8 @@ def remove_resources(ec2, plan, ssh_dir=None, group_release_seconds=None):
 class _AwsProvision:
     """One run of AWS provisioning: the choices made so far and what was created."""
 
-    def __init__(self):
+    def __init__(self, answers=None):
+        self.answers = answers or Answers()
         self.provision_id = secrets.token_hex(3)
         self.ec2 = None
         self.machine_id = None
@@ -638,8 +646,13 @@ class _AwsProvision:
         # Created but left in place if the run stops: they are free and reusable.
         self.kept = []
 
+    def _stop(self, message):
+        """Say why the run can't go on, then stop it (and roll back)."""
+        ui.fail(message)
+        raise Cancelled
+
     def run(self):
-        self.session = sign_in()
+        self.session = self._sign_in()
         self.region = self._choose_region()
         self.ec2 = self.session.client("ec2", region_name=self.region)
         self._choose_version()
@@ -698,12 +711,25 @@ class _AwsProvision:
                 "The machine runs this checkout's CLI, Global Controller and CanyonOS "
                 "API images"
             )
+        ui.json_result["machine"] = {
+            "machine_id": machine["InstanceId"],
+            "address": machine.get("PublicIpAddress") or machine["PrivateIpAddress"],
+            "private_address": machine["PrivateIpAddress"],
+            "region": self.region,
+            "machine_type": machine_type,
+            "ssh_user": SSH_USER,
+            "key_pair": key_name,
+            "key_path": str(key_path) if key_path else None,
+            "provision_id": self.provision_id,
+            "version": "this checkout" if self.dev else release_tag(env.VERSION),
+            "role": None if profile == NO_ROLE else profile,
+        }
         self._show_next_steps(machine, key_name, key_path, profile)
 
     def _choose_version(self):
         """From a development CLI, ask whether the machine gets this checkout or the
         official release; a released CLI always installs its own release."""
-        if env.is_production:
+        if env.is_production or self.answers.yes:
             self._check_release()
             return
         choice = pick(
@@ -776,12 +802,13 @@ class _AwsProvision:
         """Run `canyonos provision` → Tear down: sign in, pick a region and one of
         the Global Controller machines provisioned there, then remove it with what
         provisioning made for it and the agent machines it deployed."""
-        self.session = sign_in()
-        self.region = choose_region(self.session, "Which region is the machine in?")
+        self.session = self._sign_in()
+        self.region = self._choose_region(warn_about_ami=False)
         self.ec2 = self.session.client("ec2", region_name=self.region)
         machines = provision_machines(self.ec2)
         if not machines:
             ui.say(f"No provisioned Global Controller machines in {self.region}.")
+            ui.json_result["removed"] = []
             return
         self._remove(machines)
 
@@ -811,7 +838,7 @@ class _AwsProvision:
             )
             for machine in machines
         ]
-        machine_id = pick(
+        machine_id = self._chosen_machine(machines) or pick(
             entries,
             "Which Global Controller machine should be removed? "
             "Its agent machines are removed with it.",
@@ -845,14 +872,34 @@ class _AwsProvision:
         ui.say("This removes:")
         for line in describe_plan(plan, with_tags=True):
             ui.say(f"  {line}")
-        pick([(REMOVE, "Remove them", None)], "Remove?")
+        if not self.answers.yes:
+            pick([(REMOVE, "Remove them", None)], "Remove?")
         with ui.status("Removing"):
             removed = remove_resources(self.ec2, plan)
+        ui.json_result["removed"] = removed
         ui.ok(f"Removed {', '.join(removed)}")
         ui.hint(
             f"The {ROLE_NAME} IAM role is kept for other machines; delete it in the "
             "IAM console if nothing uses it."
         )
+
+    def _chosen_machine(self, machines):
+        """The machine --machine names, or with --yes the only one there is; None to
+        ask."""
+        ids = [machine["InstanceId"] for machine in machines]
+        if self.answers.machine:
+            if self.answers.machine not in ids:
+                self._stop(
+                    f"{self.answers.machine} isn't a Global Controller machine "
+                    f"`canyonos provision` launched in {self.region}. Those are: "
+                    f"{', '.join(ids)}."
+                )
+            return self.answers.machine
+        if not self.answers.yes:
+            return None
+        if len(ids) == 1:
+            return ids[0]
+        self._stop(f"Name the machine to remove with --machine: {', '.join(ids)}.")
 
     def _confirm_key_removal(self, key_names):
         """Ask whether to remove key pairs provisioning made, keeping them unless you choose
@@ -871,6 +918,8 @@ class _AwsProvision:
         private keys saved for them, or keep them: a key may be in use somewhere AWS
         can't see, such as GitHub."""
         names = ", ".join(key_names)
+        if self.answers.yes:
+            return self.answers.remove_key_pair
         return pick(
             [
                 (
@@ -906,26 +955,75 @@ class _AwsProvision:
             removed = remove_resources(self.ec2, plan)
         ui.ok(f"Removed {', '.join(removed)}")
 
-    def _choose_region(self):
-        region = choose_region(self.session, "Which region should the machine run in?")
-        if region != CANYONOS_AMI_REGION:
+    def _sign_in(self):
+        if not self.answers.yes:
+            return sign_in()
+        import boto3
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        session = boto3.Session()
+        try:
+            identity = session.client(
+                "sts", region_name=session.region_name or STS_REGION
+            ).get_caller_identity()
+        except (BotoCoreError, ClientError) as e:
+            self._stop(
+                "AWS did not accept your default credentials (environment "
+                f"variables, AWS_PROFILE, ~/.aws or SSO): {e}"
+            )
+        ui.ok(f"Signed in to AWS account {identity['Account']} as {identity['Arn']}")
+        return session
+
+    def _choose_region(self, warn_about_ami=True):
+        region = self.answers.region or (self.answers.yes and self.session.region_name)
+        if self.answers.yes and not region:
+            self._stop("Your AWS settings name no region: pass --region.")
+        if region:
+            self._warn_about_ami(region, warn_about_ami)
+            return region
+        region = choose_region(
+            self.session,
+            "Which region should the machine run in?"
+            if warn_about_ami
+            else "Which region is the machine in?",
+        )
+        self._warn_about_ami(region, warn_about_ami)
+        return region
+
+    def _warn_about_ami(self, region, warn):
+        if warn and region != CANYONOS_AMI_REGION:
             ui.warn(
                 f"Agent machines outside {CANYONOS_AMI_REGION} need an AMI with Docker "
                 "and zstd: set ami_id under ec2-assign: or ec2-pool: in "
                 "workflow_config.yaml."
             )
-        return region
 
     def _choose_vpc(self):
         vpcs = sorted(
             _all(self.ec2, "describe_vpcs", "Vpcs"),
             key=lambda vpc: not vpc.get("IsDefault"),
         )
+        if self.answers.vpc:
+            if self.answers.vpc not in {vpc["VpcId"] for vpc in vpcs}:
+                self._stop(f"{self.region} has no VPC {self.answers.vpc}.")
+            return self.answers.vpc
+        if self.answers.yes and vpcs:
+            default = next((vpc for vpc in vpcs if vpc.get("IsDefault")), None)
+            if default is None:
+                self._stop(f"{self.region} has no default VPC: pass --vpc.")
+            return default["VpcId"]
         if not vpcs:
-            pick(
-                [(CREATE, "Create the default VPC", "A public subnet in each zone.")],
-                f"{self.region} has no VPC.",
-            )
+            if not self.answers.yes:
+                pick(
+                    [
+                        (
+                            CREATE,
+                            "Create the default VPC",
+                            "A public subnet in each zone.",
+                        )
+                    ],
+                    f"{self.region} has no VPC.",
+                )
             vpc_id = self.ec2.create_default_vpc()["Vpc"]["VpcId"]
             self.kept.append(f"default VPC {vpc_id}")
             ui.ok(f"Created the default VPC {vpc_id}")
@@ -960,6 +1058,18 @@ class _AwsProvision:
             )
             raise Cancelled
         public = self._subnets_with_internet_route(vpc_id, subnets)
+        if self.answers.subnet:
+            if self.answers.subnet not in {subnet["SubnetId"] for subnet in subnets}:
+                self._stop(f"{vpc_id} has no subnet {self.answers.subnet}.")
+            return self.answers.subnet
+        if self.answers.yes:
+            reachable = [s["SubnetId"] for s in subnets if s["SubnetId"] in public]
+            if not reachable:
+                self._stop(
+                    f"No subnet of {vpc_id} routes to an internet gateway, so the "
+                    "machine couldn't install CanyonOS: pass --subnet."
+                )
+            return reachable[0]
         entries = [
             (
                 subnet["SubnetId"],
@@ -1025,6 +1135,14 @@ class _AwsProvision:
             "SecurityGroups",
             Filters=[{"Name": "vpc-id", "Values": [vpc_id]}],
         )
+        wanted = self.answers.security_group or (self.answers.yes and NEW)
+        if wanted == NEW:
+            return CREATE
+        if wanted:
+            group = next((g for g in groups if g["GroupId"] == wanted), None)
+            if group is None:
+                self._stop(f"{vpc_id} has no security group {wanted}.")
+            return group
         entries = [
             (
                 CREATE,
@@ -1045,6 +1163,8 @@ class _AwsProvision:
         return next(group for group in groups if group["GroupId"] == choice)
 
     def _choose_machine_type(self):
+        if self.answers.machine_type or self.answers.yes:
+            return self.answers.machine_type or DEFAULT_MACHINE_TYPE
         entries = [(name, name, detail) for name, detail in MACHINE_TYPES]
         entries.append((OTHER, "Another machine type", "Must be x86 (amd64)."))
         choice = pick(
@@ -1055,6 +1175,13 @@ class _AwsProvision:
 
     def _choose_key_pair(self):
         pairs = self.ec2.describe_key_pairs()["KeyPairs"]
+        wanted = self.answers.key_pair or (self.answers.yes and NEW)
+        if wanted == NEW:
+            return CREATE
+        if wanted:
+            if wanted not in {pair["KeyName"] for pair in pairs}:
+                self._stop(f"{self.region} has no key pair {wanted}.")
+            return wanted
         entries = [
             (
                 CREATE,
@@ -1076,6 +1203,10 @@ class _AwsProvision:
 
     def _choose_role(self):
         from botocore.exceptions import BotoCoreError, ClientError
+
+        wanted = self.answers.role or (self.answers.yes and NEW)
+        if wanted:
+            return {NEW: CREATE, NONE: NO_ROLE}.get(wanted, wanted)
 
         try:
             profiles = _all(
@@ -1139,6 +1270,8 @@ class _AwsProvision:
         for label, value in rows:
             ui.say(f"{label + ':':<16}{value}")
         ui.blank()
+        if self.answers.yes:
+            return
         pick(
             [(LAUNCH, "Launch the machine", "EC2 charges apply while it runs.")],
             "Launch?",
@@ -1163,14 +1296,18 @@ class _AwsProvision:
                 ui.say(f"{group_id} doesn't allow:")
                 for rule in rules:
                     ui.say(f"  {_describe_rule(rule)}")
-                answer = select_menu(
-                    numbered(
-                        [
-                            (True, "Add these rules", None),
-                            (False, "Leave the group as it is", None),
-                        ]
-                    ),
-                    "Add them?",
+                answer = (
+                    True
+                    if self.answers.yes
+                    else select_menu(
+                        numbered(
+                            [
+                                (True, "Add these rules", None),
+                                (False, "Leave the group as it is", None),
+                            ]
+                        ),
+                        "Add them?",
+                    )
                 )
                 if answer is None:
                     raise Cancelled
@@ -1248,12 +1385,12 @@ def _aws_errors():
     )
 
 
-def provision():
+def provision(answers=None):
     """Walk through EC2 provisioning in the terminal and launch a controller machine. Returns
     True once it is running. If you back out or a step fails, removes what this run
     created and returns False."""
     aws_errors = _aws_errors()
-    run = _AwsProvision()
+    run = _AwsProvision(answers)
     try:
         run.run()
         return True
@@ -1273,12 +1410,12 @@ def provision():
     return False
 
 
-def teardown():
+def teardown(answers=None):
     """Walk through tearing down a machine `canyonos provision` launched, in the terminal.
     Returns True once it is removed or there was nothing to remove, False if you backed
     out or AWS refused a step."""
     try:
-        _AwsProvision().teardown()
+        _AwsProvision(answers).teardown()
         return True
     except (Cancelled, KeyboardInterrupt):
         ui.say("Nothing removed.")

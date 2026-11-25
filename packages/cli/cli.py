@@ -14,7 +14,7 @@ import os
 import signal
 import sys
 
-from canyonos import context, env, records, ui
+from canyonos import context, deployment, env, records, ui
 from canyonos.chat import run_chat
 from canyonos.clean import run_clean
 from canyonos.config import run_config
@@ -191,13 +191,56 @@ def _run_command(settings_at_start):
 
     add("quickstart", lambda args: sys.exit(0 if run_quickstart() else 1))
     add("new-app", lambda args: sys.exit(0 if run_new_app() else 1))
-    add("provision", lambda args: sys.exit(0 if run_provision() else 1))
+    provision = add("provision", lambda args: sys.exit(0 if run_provision(args) else 1))
+    provision.add_argument(
+        "action",
+        nargs="?",
+        choices=("aws", "teardown"),
+        help="aws: launch an EC2 machine to deploy from; teardown: remove one "
+        "(default: ask)",
+    )
+    for flag, help_text in (
+        ("--region", "The AWS region (--yes: your AWS settings' region)"),
+        ("--vpc", "The VPC's ID (--yes: the region's default VPC)"),
+        (
+            "--subnet",
+            "The subnet's ID (--yes: the VPC's first subnet that reaches the internet)",
+        ),
+        (
+            "--security-group",
+            "A security group's ID, or `new` (--yes: new; reachable from your IP)",
+        ),
+        ("--machine-type", "The machine type (--yes: t3.large)"),
+        ("--key-pair", "A key pair's name, or `new` (--yes: new, saved under ~/.ssh)"),
+        (
+            "--role",
+            "An instance profile, `new` for canyonos-controller, or `none` (--yes: new)",
+        ),
+        ("--machine", "teardown: the machine's ID (--yes: the only one there is)"),
+    ):
+        provision.add_argument(flag, metavar="VALUE", help=help_text)
+    provision.add_argument(
+        "--remove-key-pair",
+        action="store_true",
+        help="teardown: also remove the key pair made for the machine, and its private "
+        "key under ~/.ssh (default: keep it)",
+    )
+    provision.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Ask nothing: what no flag answers takes its default, and nothing is "
+        "confirmed. Uses your default AWS credentials",
+    )
     cluster = add(
         "cluster",
         lambda args: sys.exit(
             0
             if (
-                kubernetes_local.run_cluster_up(args.workers)
+                kubernetes_local.run_cluster_up(
+                    args.workers,
+                    engine=kubernetes_local.K3D if args.k3d else kubernetes_local.KIND,
+                )
                 if args.action == "up"
                 else kubernetes_local.run_cluster_down(args.all)
             )
@@ -215,6 +258,11 @@ def _run_command(settings_at_start):
         help="Worker nodes of a new cluster (default 1)",
     )
     cluster.add_argument(
+        "--k3d",
+        action="store_true",
+        help="up: make the cluster with k3d instead of kind (down deletes either)",
+    )
+    cluster.add_argument(
         "--all",
         action="store_true",
         help="down: also remove the local registry and the images in it",
@@ -228,6 +276,8 @@ def _run_command(settings_at_start):
         if folders is False:
             ui.say("Deploy cancelled.")
             return False
+        if args.target:
+            deployment.set_target(args.target)
         deployed = run_deploy(
             folders,
             serve=args.serve,
@@ -280,6 +330,14 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Deploy the resources the config sets, without the resource picker, and "
         "replace a workflow group's workflows without asking",
+    )
+    deploy.add_argument(
+        "--target",
+        choices=("docker", "kubernetes"),
+        help="Deploy to Docker on this machine, or to the Kubernetes cluster kubectl "
+        "points at, and keep it as the workflow group's target (default: the one its "
+        "workflow_group.yaml sets, else docker). Kubernetes without a `kubernetes:` "
+        "block gets the local cluster's (canyonos cluster up)",
     )
     deploy.add_argument(
         "--detach",
@@ -505,7 +563,7 @@ def _run_command(settings_at_start):
         action="store_true",
         help="Print a single JSON object with each agent's replica counts and nothing else",
     )
-    for command in (deploy, clean, stop, sync, logs, doctor):
+    for command in (deploy, clean, stop, sync, logs, doctor, provision):
         command.add_argument(
             "--json",
             action="store_true",
@@ -514,7 +572,22 @@ def _run_command(settings_at_start):
         )
         command.set_defaults(func=printing_json(command.get_default("func")))
     add("upgrade", lambda args: sys.exit(run_upgrade()))
-    add("list", lambda args: sys.exit(0 if run_list() else 1))
+    listing = add(
+        "list",
+        lambda args: sys.exit(0 if run_list(args.json, not args.no_status) else 1),
+    )
+    listing.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a single JSON object with each workflow group, whether it runs, its "
+        "target and its workflows' folders, and nothing else",
+    )
+    listing.add_argument(
+        "--no-status",
+        action="store_true",
+        help="Don't ask the CanyonOS API whether each deploy runs (on Kubernetes, a "
+        "port-forward each): a deployed one is listed as `unchecked`",
+    )
     select_context = add(
         "select-context",
         lambda args: sys.exit(

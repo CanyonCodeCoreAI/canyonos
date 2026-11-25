@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: 2026 Canyon Code, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""`canyonos provision` on a terminal, through its menus up to the AWS sign-in every
-AWS provisioner starts with, where it is cancelled: nothing reaches AWS."""
+"""`canyonos provision` through the installed command. On a terminal, through its menus
+up to the AWS sign-in every AWS provisioner starts with, where it is cancelled. Without
+one, as the desktop app runs it: an action and --yes (or --json) ask nothing, and AWS is
+an endpoint that answers nothing. Either way no case can create anything in an AWS
+account."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import socket
+import subprocess
 from pathlib import Path
 
 import pexpect
@@ -105,3 +111,70 @@ def test_provision_without_a_terminal_fails(cli_case: CliCase):
 
     assert result.returncode == 1, result.stdout
     assert "needs a terminal" in result.stdout + result.stderr, result.stdout
+
+
+def _closed_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _no_aws() -> dict[str, str]:
+    """Credentials AWS would refuse, sent to an endpoint that answers nothing."""
+    return {
+        "AWS_ACCESS_KEY_ID": "e2e",
+        "AWS_SECRET_ACCESS_KEY": "e2e",
+        "AWS_DEFAULT_REGION": "us-east-1",
+        "AWS_ENDPOINT_URL": f"http://127.0.0.1:{_closed_port()}",
+        "AWS_MAX_ATTEMPTS": "1",
+    }
+
+
+def _said(result: subprocess.CompletedProcess[str]) -> str:
+    return " ".join((result.stdout + result.stderr).split())
+
+
+def test_provision_without_a_terminal_says_how_to_run_it_without_one(
+    cli_case: CliCase,
+):
+    result = cli_case.run_cli(["provision", "aws"])
+
+    assert result.returncode != 0, _said(result)
+    assert "pass `aws` or `teardown` and --yes" in _said(result)
+
+
+def test_provision_json_without_an_action_fails_and_names_both(cli_case: CliCase):
+    result = cli_case.run_cli(["provision", "--json"])
+
+    assert result.returncode != 0, _said(result)
+    answer = json.loads(result.stdout)
+    assert answer["ok"] is False
+    assert "provision aws --yes" in answer["errors"][0]
+    assert "provision teardown --yes" in answer["errors"][0]
+
+
+def test_provision_json_asks_nothing_and_reports_refused_credentials(
+    cli_case: CliCase,
+):
+    result = cli_case.run_cli(["provision", "aws", "--json"], env=_no_aws(), timeout=60)
+
+    assert result.returncode != 0, _said(result)
+    answer = json.loads(result.stdout)
+    assert answer["ok"] is False
+    assert "AWS did not accept your default credentials" in answer["errors"][0]
+    assert not (cli_case.home / ".ssh").exists()
+
+
+def test_teardown_json_asks_nothing_and_reports_refused_credentials(
+    cli_case: CliCase,
+):
+    result = cli_case.run_cli(
+        ["provision", "teardown", "--yes", "--json", "--region", "us-east-1"],
+        env=_no_aws(),
+        timeout=60,
+    )
+
+    assert result.returncode != 0, _said(result)
+    answer = json.loads(result.stdout)
+    assert answer["ok"] is False
+    assert "AWS did not accept your default credentials" in answer["errors"][0]

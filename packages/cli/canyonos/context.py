@@ -14,7 +14,8 @@ records.py); a name or the current folder always wins.
 import json
 from pathlib import Path
 
-from canyonos import selection, ui
+from canyonos import records, selection, ui
+from canyonos.deployment import deployments_dir
 from canyonos.api import ApiError, is_running, start_api_for, workflow_group_status
 
 CONTEXT_FILE = Path.home() / ".canyonos" / "context.json"
@@ -53,24 +54,54 @@ def selected_deployment():
     )
 
 
+def _running(recorded):
+    """Whether the deploy of `recorded` runs: None when it isn't deployed, "unknown"
+    when the CanyonOS API can't say."""
+    if recorded.state is None:
+        return None
+    try:
+        start_api_for(recorded.state)
+        return is_running(workflow_group_status(recorded.state))
+    except ApiError:
+        return "unknown"
+
+
 def _describe(recorded, selected_name):
     """One line of `canyonos list`: its name, ID, whether its deploy runs, unknown when
     the CanyonOS API can't say, and marks for a deploy with no API key and for the
     selected workflow group."""
-    if recorded.state is None:
-        marks = ["not deployed"]
-    else:
-        try:
-            start_api_for(recorded.state)
-            running = is_running(workflow_group_status(recorded.state))
-            marks = ["running" if running else "not running"]
-        except ApiError:
-            marks = ["unknown (API down)"]
+    running = _running(recorded)
+    marks = [
+        {None: "not deployed", True: "running", False: "not running"}.get(
+            running, "unknown (API down)"
+        )
+    ]
     if (recorded.state or {}).get("auth_disabled"):
         marks.append("(unauthenticated)")
     if recorded.name == selected_name:
         marks.append("(selected)")
     return [recorded.name, recorded.id or "no ID recorded", " ".join(marks)]
+
+
+def _entry(recorded, selected_name, status=True):
+    """What `canyonos list --json` says of one workflow group: `running` is true, false,
+    "unknown" when the CanyonOS API can't say, or null when it isn't deployed; without
+    `status`, "unchecked" for a deployed one, as the API isn't asked."""
+    if status:
+        running = _running(recorded)
+    else:
+        running = None if recorded.state is None else "unchecked"
+    return {
+        "name": recorded.name,
+        "workflow_group_id": recorded.id,
+        "record": recorded.folder,
+        "deployed": recorded.state is not None,
+        "running": running,
+        "unauthenticated": bool((recorded.state or {}).get("auth_disabled")),
+        "selected": recorded.name == selected_name,
+        "target": records.target(recorded.name),
+        "workflows": records.workflows(recorded.name),
+    }
 
 
 def _show(recorded, selected_name):
@@ -88,11 +119,28 @@ def _show(recorded, selected_name):
         ui.say(f"* {name:<{widths[0]}}  {deployment_id:<{widths[1]}}  {marks}")
 
 
-def run_list():
+def run_list(as_json=False, status=True):
     """Run `canyonos list`: show every workflow group recorded on this machine, one line
-    each, and warn when the selected one is gone."""
+    each, and warn when the selected one is gone. With `as_json`, print them as one
+    JSON object instead, for scripts and the desktop app, with the folder that holds
+    the records; without `status`, without asking the CanyonOS API whether each deploy
+    runs (on Kubernetes, a port-forward each)."""
     recorded = selection.recorded_deployments()
     selected_name = _selected_name()
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "workflow_groups": [
+                        _entry(d, selected_name, status) for d in recorded
+                    ],
+                    "selected": selected_name,
+                    "records_dir": deployments_dir(),
+                },
+                indent=2,
+            )
+        )
+        return True
     _show(recorded, selected_name)
     if selected_name and selected_name not in {d.name for d in recorded}:
         ui.warn(

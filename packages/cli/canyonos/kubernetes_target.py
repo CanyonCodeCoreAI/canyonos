@@ -43,6 +43,35 @@ ADMIN_ACCOUNT = "canyonos-admin"
 UPGRADE_CHART = (
     "Upgrade the CanyonOS operator chart: this CLI needs the CanyonOS API it installs"
 )
+# kubectl's options that take the next argument as their value, left out of the step a
+# failure names.
+_VALUED_OPTIONS = {
+    "--context", "-n", "--namespace", "-o", "--output", "-p", "--patch", "-f",
+    "--filename", "--type", "-l", "--selector", "-c", "--container", "--kubeconfig",
+}  # fmt: skip
+
+
+class CanyonOSMissingError(RuntimeError):
+    """The cluster has no CanyonOS API: CanyonOS isn't installed there, or an older chart
+    without it is. `--json` names it `canyonos_missing`."""
+
+    error_code = "canyonos_missing"
+
+
+def describe_kubectl(args):
+    """The kubectl step `args` take, as a failure names it: its words without the options,
+    such as `rollout status deployment/metrics-server`."""
+    words, value_next = [], False
+    for arg in args:
+        if value_next:
+            value_next = False
+        elif arg in _VALUED_OPTIONS:
+            value_next = True
+        elif not arg.startswith("-"):
+            words.append(arg)
+    return " ".join(words[:3]) or " ".join(args[:3])
+
+
 # The cluster's dashboard is every workflow group's, and each one's routes take its key.
 KUBERNETES_DASHBOARD_KEY = (
     "The cluster's dashboard is shared by every workflow group: each one's workflows "
@@ -75,7 +104,8 @@ def kubectl(args, *, input_text=None, check=True, timeout=120):
         ) from None
     if check and result.returncode:
         raise RuntimeError(
-            f"kubectl {' '.join(args[:3])} failed: {(result.stderr or result.stdout).strip()}"
+            f"kubectl {describe_kubectl(args)} failed: "
+            f"{(result.stderr or result.stdout).strip()}"
         )
     return result
 
@@ -191,7 +221,11 @@ def kubernetes_state():
         # An older chart has no CanyonOS API there, unless its dashboard was installed.
         if "(NotFound)" not in str(error):
             raise
-        raise RuntimeError(f"{error}. {UPGRADE_CHART}.") from None
+        raise CanyonOSMissingError(
+            f"CanyonOS isn't installed on the cluster {current_context() or ''}: it has "
+            f"no {API_SERVICE} in {DASHBOARD_NAMESPACE}. {UPGRADE_CHART} (canyonos "
+            f"cluster up, on a local cluster). ({error})"
+        ) from None
     return {
         "api_url": f"http://127.0.0.1:{port}",
         "workflow_group_id": read_config(deployment_config_path()).get(

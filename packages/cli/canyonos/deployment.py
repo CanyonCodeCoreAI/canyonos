@@ -103,6 +103,30 @@ def deployment_name():
     return f"{name}-{deployment_id[:8]}" if deployment_id else name
 
 
+# The `kubernetes:` block `deploy --target kubernetes` gives a workflow group without
+# one: the local cluster `canyonos cluster up` makes, and its registry. Its own namespace,
+# apart from those the platform's local stack deploys orgs' workflows to on the same k3d
+# cluster (`<org>-<6 hex>`).
+LOCAL_KUBERNETES = {"namespace": "canyonos-local-dev", "registry": "localhost:5001"}
+
+
+def set_target(target, config_path=None):
+    """Make `target` the workflow group's, in its `workflow_group.yaml` (the record's,
+    as `deploy` runs from it), for this deploy and the commands after it. A Kubernetes
+    target without a `kubernetes:` block gets the local cluster's."""
+    if target not in TARGETS:
+        raise RuntimeError(f"--target takes {' or '.join(TARGETS)}, not {target}")
+    config_path = config_path or deployment_config_path()
+    yaml_rt = round_trip_yaml()
+    data = load_yaml(config_path, yaml_rt.load) if os.path.exists(config_path) else None
+    if not isinstance(data, dict):
+        data = {}
+    data["target"] = target
+    if target == "kubernetes" and not data.get("kubernetes"):
+        data["kubernetes"] = dict(LOCAL_KUBERNETES)
+    write_config(config_path, data, yaml_rt)
+
+
 def workflow_ids(folders, new=True):
     """Map each folder to its workflow_id: the one the workflow group's `workflows:` keeps
     for its path, else a new random one when `new` (the deploy saves it, see

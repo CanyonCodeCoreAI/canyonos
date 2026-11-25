@@ -71,6 +71,17 @@ It makes:
 `kubectl` then points at the new cluster. After you upgrade the CLI, run
 `canyonos cluster up` again to bring the cluster to the same release.
 
+To use [k3d](https://k3d.io/stable/#installation) instead of kind
+(`brew install k3d`), run `canyonos cluster up --k3d`. It makes a lighter cluster, the
+same one the CanyonOS platform's local stack makes, so the two share it: k3d's
+`canyonos`, one node, with its registry `k3d-canyonos-registry` on `localhost:5001`. k3s
+enforces NetworkPolicy and ships metrics-server itself; it has no Traefik, no servicelb
+and no Pod Security `restricted`. It leaves kubectl's current context as it is: deploy
+to it after `kubectl config use-context k3d-canyonos`. A workflow group deployed with
+`canyonos deploy --target kubernetes` and no `kubernetes:` block goes to the namespace
+`canyonos-local-dev`. `canyonos cluster down` deletes the cluster whichever made it; only
+one of the two can exist at a time.
+
 To develop CanyonOS itself on a local cluster, see
 [Kubernetes on kind](../contributing/DEVELOPMENT.md#kubernetes-on-kind).
 

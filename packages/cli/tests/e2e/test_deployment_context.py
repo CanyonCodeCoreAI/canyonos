@@ -147,6 +147,45 @@ def test_list_shows_each_deployment_and_marks_one_deployed_without_an_api_key(
     assert "(selected)" not in result.stdout, result.stdout
 
 
+def test_list_json_gives_each_workflow_group_with_its_workflow_folders(
+    cli_case: CliCase,
+):
+    first = _record(cli_case, "app-abcz", FIRST_ID)
+    second = _record(cli_case, "app-qrst", SECOND_ID, deployed=False)
+
+    result = cli_case.run_cli(["list", "--json"])
+
+    assert result.returncode == 0, _said(result)
+    listed = json.loads(result.stdout)
+    groups = {group["name"]: group for group in listed["workflow_groups"]}
+    assert set(groups) == {first, second}, result.stdout
+    assert listed["selected"] is None
+    assert groups[first]["workflow_group_id"] == FIRST_ID
+    assert groups[first]["deployed"] is True
+    assert groups[first]["running"] == "unknown"
+    assert groups[second]["deployed"] is False and groups[second]["running"] is None
+    assert groups[first]["target"] == "docker"
+    [workflow] = groups[first]["workflows"]
+    assert workflow["path"] == str((cli_case.cwd / "app-abcz").resolve())
+    assert workflow["workflow_id"]
+    assert listed["records_dir"] == str(cli_case.home / ".canyonos" / "workflows")
+    assert groups[first]["record"] == str(_record_dir(cli_case, first))
+
+
+def test_list_json_without_status_does_not_ask_the_api(cli_case: CliCase):
+    """`list --json --no-status` lists a deployed workflow group as `unchecked` rather
+    than asking the CanyonOS API, which `_record` leaves down (`unknown` otherwise)."""
+    first = _record(cli_case, "app-abcz", FIRST_ID)
+    second = _record(cli_case, "app-qrst", SECOND_ID, deployed=False)
+
+    result = cli_case.run_cli(["list", "--json", "--no-status"])
+
+    assert result.returncode == 0, _said(result)
+    groups = {g["name"]: g for g in json.loads(result.stdout)["workflow_groups"]}
+    assert groups[first]["running"] == "unchecked", result.stdout
+    assert groups[second]["running"] is None, result.stdout
+
+
 def test_select_context_takes_the_forms_stop_takes_and_list_marks_it(
     cli_case: CliCase,
 ):
