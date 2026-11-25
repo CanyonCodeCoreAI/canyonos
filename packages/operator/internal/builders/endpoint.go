@@ -48,7 +48,8 @@ func EndpointServiceURL(p *canyonosv1alpha1.CanyonProject) string {
 
 // EndpointURL is where callers reach the endpoint, published in the project's status
 // and by the global controller: the URL the project gives, else its Ingress host
-// (https with a certificate), else the in-cluster Service.
+// (https with a certificate, its own or the ingress controller's), else the
+// in-cluster Service.
 func EndpointURL(p *canyonosv1alpha1.CanyonProject) string {
 	endpoint := p.Spec.Endpoint
 	switch {
@@ -56,7 +57,7 @@ func EndpointURL(p *canyonosv1alpha1.CanyonProject) string {
 		return endpoint.URL
 	case endpoint.Ingress == nil:
 		return EndpointServiceURL(p)
-	case endpoint.Ingress.TLSSecretName != "":
+	case endpoint.Ingress.TLSSecretName != "" || endpoint.Ingress.TLS:
 		return "https://" + endpoint.Ingress.Host
 	default:
 		return "http://" + endpoint.Ingress.Host
@@ -89,8 +90,14 @@ func EndpointIngress(p *canyonosv1alpha1.CanyonProject) *networkingv1.Ingress {
 			}},
 		},
 	}
-	if spec.TLSSecretName != "" {
+	switch {
+	case spec.TLSSecretName != "":
 		ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{spec.Host}, SecretName: spec.TLSSecretName}}
+	case spec.TLS:
+		// The controller's own certificate: an empty entry, which OpenShift makes an
+		// edge Route with its router's certificate (a host listed without a Secret it
+		// takes for a missing Secret, and makes no Route).
+		ingress.Spec.TLS = []networkingv1.IngressTLS{{}}
 	}
 	return ingress
 }

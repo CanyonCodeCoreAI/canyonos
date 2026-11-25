@@ -6,8 +6,23 @@
 # CanyonOS pod gets (seccomp and AppArmor unconfined, for the user namespaces BuildKit
 # builds in), so it lives alone in its own namespace, which this enables explicitly:
 # the one Pod Security exception CanyonOS asks for, and only when the builder is on.
+# On OpenShift, which admits pods by SecurityContextConstraints rather than namespace
+# labels, BuildKit runs under the cluster's own nested-container SCC instead.
 {{- if .Values.builder.enabled }}
 {{- $ns := .Values.builder.namespace }}
+{{- $openshift := eq (include "canyonos.openshift" .) "true" }}
+{{- /* The user IDs builds map to on OpenShift: the pod's user namespace holds 0-65535
+only, too few for the image's own 100000-165535, so every ID but BuildKit's own 1000. */}}
+{{- $subids := "user:1:999\nuser:1001:64535\n" }}
+{{- if and $openshift (lookup "v1" "Namespace" "" "kube-system") }}
+{{- /* Installed on the cluster, not rendered without it (helm template, GitOps): it must
+have the SCC BuildKit runs under, which OpenShift ships from 4.20. */}}
+{{- if not (.Capabilities.APIVersions.Has "security.openshift.io/v1") }}
+{{- fail "openshift is true, but this cluster is not OpenShift: it has no security.openshift.io API" }}
+{{- else if not (lookup "security.openshift.io/v1" "SecurityContextConstraints" "" "nested-container") }}
+{{- fail "BuildKit runs under OpenShift's nested-container SCC, which this cluster lacks: CanyonOS needs OpenShift 4.20 or later" }}
+{{- end }}
+{{- end }}
 {{- if .Values.builder.createNamespace }}
 apiVersion: v1
 kind: Namespace
@@ -18,6 +33,50 @@ metadata:
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/warn: privileged
     pod-security.kubernetes.io/audit: privileged
+    {{- if $openshift }}
+    # OpenShift would otherwise set these labels itself, from the SCCs in use here.
+    security.openshift.io/scc.podSecurityLabelSync: "false"
+    {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: buildkitd
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+{{- if $openshift }}
+# OpenShift's SCC for container engines in pods (4.20 and later): SELinux type
+# container_engine_t, which the mounts of each build step need, and a user namespace of
+# the pod's own, so no ID in it is privileged on the node.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canyonos-buildkitd-scc
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:nested-container
+subjects:
+  - {kind: ServiceAccount, name: buildkitd, namespace: {{ $ns }}}
+---
+# The user IDs builds map to in the pod's user namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-subids
+  namespace: {{ $ns }}
+  labels:
+    {{- include "canyonos.labels" . | nindent 4 }}
+data:
+  subuid: {{ $subids | quote }}
+  subgid: {{ $subids | quote }}
 ---
 {{- end }}
 apiVersion: v1
@@ -33,6 +92,11 @@ data:
     [registry."{{ . }}"]
       http = true
       insecure = true
+    {{- end }}
+    {{- /* Listed as insecure above already: one table per registry. */}}
+    {{- if and $openshift (not (has "image-registry.openshift-image-registry.svc:5000" .Values.builder.insecureRegistries)) }}
+    [registry."image-registry.openshift-image-registry.svc:5000"]
+      ca = ["/etc/canyonos/service-ca/service-ca.crt"]
     {{- end }}
 ---
 apiVersion: v1
@@ -62,9 +126,17 @@ spec:
       labels:
         {{- include "canyonos.podLabels" (list . (dict "app.kubernetes.io/name" "canyonos-buildkitd" "app.kubernetes.io/part-of" "canyonos")) | trim | nindent 8 }}
       annotations:
-        checksum/config: {{ toJson .Values.builder.insecureRegistries | sha256sum }}
+        checksum/config: {{ toJson (list .Values.builder.insecureRegistries $openshift $subids) | sha256sum }}
+        {{- if $openshift }}
+        # This SCC or none: another one granted here (anyuid) must not be picked.
+        openshift.io/required-scc: nested-container
+        {{- end }}
     spec:
+      serviceAccountName: buildkitd
       automountServiceAccountToken: false
+      {{- if $openshift }}
+      hostUsers: false
+      {{- end }}
       {{- with include "canyonos.podExtras" (list . .Values.builder) | trim }}
       {{- . | nindent 6 }}
       {{- end }}
@@ -100,9 +172,22 @@ spec:
           volumeMounts:
             - {name: cache, mountPath: /home/user/.local/share/buildkit}
             - {name: config, mountPath: /home/user/.config/buildkit}
+            {{- if $openshift }}
+            - {name: service-ca, mountPath: /etc/canyonos/service-ca, readOnly: true}
+            - {name: subids, mountPath: /etc/subuid, subPath: subuid, readOnly: true}
+            - {name: subids, mountPath: /etc/subgid, subPath: subgid, readOnly: true}
+            {{- end }}
       volumes:
         - name: config
           configMap: {name: buildkitd}
+        {{- if $openshift }}
+        # OpenShift's service CA, which signs its built-in registry's certificate;
+        # OpenShift keeps this ConfigMap in every namespace.
+        - name: service-ca
+          configMap: {name: openshift-service-ca.crt}
+        - name: subids
+          configMap: {name: buildkitd-subids}
+        {{- end }}
         - name: cache
           emptyDir: {sizeLimit: {{ .Values.builder.cacheSize }}}
 ---

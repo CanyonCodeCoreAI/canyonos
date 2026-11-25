@@ -118,6 +118,10 @@ def _project_spec(
             ingress["className"] = exposure.ingress_class
         if exposure.tls_secret:
             ingress["tlsSecretName"] = exposure.tls_secret
+        if exposure.tls:
+            ingress["tls"] = True
+        if exposure.annotations:
+            ingress["annotations"] = dict(exposure.annotations)
         endpoint["ingress"] = ingress
     if exposure.url:
         endpoint["url"] = exposure.url

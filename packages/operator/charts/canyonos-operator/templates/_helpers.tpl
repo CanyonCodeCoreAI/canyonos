@@ -31,6 +31,37 @@ control-plane: controller-manager
 {{- end -}}
 {{- end }}
 
+{{/* (list "name" value): "true" or "false" when the value says so, as a bool or a string
+in any case (--set-string, GitOps tools); "" when it is unset or empty. Anything else
+fails, naming the value. */}}
+{{- define "canyonos.setting" -}}
+{{- $name := index . 0 -}}
+{{- $value := index . 1 -}}
+{{- if not (kindIs "invalid" $value) -}}
+{{- $text := toString $value | lower -}}
+{{- if has $text (list "true" "false") -}}
+{{ $text }}
+{{- else if ne $text "" -}}
+{{- fail (printf "%s must be true or false, not %q" $name (toString $value)) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/* "true" on OpenShift: the openshift value when set, else the cluster's security API
+(SecurityContextConstraints). */}}
+{{- define "canyonos.openshift" -}}
+{{- include "canyonos.setting" (list "openshift" .Values.openshift) | default (toString (.Capabilities.APIVersions.Has "security.openshift.io/v1")) -}}
+{{- end }}
+
+{{/* "true" when pods run as the user IDs CanyonOS's images expect: fixedUsers when set,
+otherwise everywhere but OpenShift, which assigns each namespace its own range. Earlier
+releases had dashboard.fixedUsers instead, true by default; false there, set for
+OpenShift, still counts (`helm upgrade --reuse-values` keeps it). */}}
+{{- define "canyonos.fixedUsers" -}}
+{{- $earlier := include "canyonos.setting" (list "dashboard.fixedUsers" (dig "fixedUsers" "" (.Values.dashboard | default dict))) | eq "false" | ternary "false" "" -}}
+{{- include "canyonos.setting" (list "fixedUsers" .Values.fixedUsers) | default $earlier | default (toString (ne (include "canyonos.openshift" .) "true")) -}}
+{{- end }}
+
 {{/* A CanyonOS image of this chart's release: (list . "core") is canyonos-core. */}}
 {{- define "canyonos.releaseImage" -}}
 {{- $root := index . 0 -}}

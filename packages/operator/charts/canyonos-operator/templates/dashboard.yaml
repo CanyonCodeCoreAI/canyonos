@@ -83,7 +83,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        {{- if .Values.dashboard.fixedUsers }}
+        {{- if eq (include "canyonos.fixedUsers" .) "true" }}
         runAsUser: 70     # postgres in the alpine image
         runAsGroup: 70
         fsGroup: 70
@@ -204,7 +204,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        {{- if .Values.dashboard.fixedUsers }}
+        {{- if eq (include "canyonos.fixedUsers" .) "true" }}
         # bun in the api image. The core image has no user of its own, so core runs as
         # bun too, and both may change what the other writes in /workspace.
         runAsUser: 1000
@@ -333,7 +333,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        {{- if .Values.dashboard.fixedUsers }}
+        {{- if eq (include "canyonos.fixedUsers" .) "true" }}
         runAsUser: 1000
         runAsGroup: 1000
         {{- end }}

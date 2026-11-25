@@ -111,7 +111,7 @@ var _ = Describe("CanyonProject API", func() {
 		project := validProject(name)
 		project.Spec.Endpoint.Ingress = &canyonosv1alpha1.EndpointIngress{Host: "Acme.Example.com"}
 		Expect(k8sClient.Create(ctx, project)).NotTo(Succeed())
-		project.Spec.Endpoint.Ingress.Host = "acme.apps.example.com"
+		project.Spec.Endpoint.Ingress.Host = testIngressHost
 		project.Spec.Endpoint.URL = "acme.example.com/run"
 		Expect(k8sClient.Create(ctx, project)).NotTo(Succeed())
 		project.Spec.Endpoint.URL = "https://acme.example.com/api"

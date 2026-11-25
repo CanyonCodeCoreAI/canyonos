@@ -34,6 +34,20 @@ controllerImage: ""
 # the operator's default.
 redisImage: ""
 
+# Whether the cluster is OpenShift. Unset: when it has OpenShift's security.openshift.io
+# API. Set it when the chart is rendered without the cluster (`helm template`), which
+# cannot see that API. On OpenShift, BuildKit runs under the cluster's nested-container
+# SCC and trusts its service CA, and pods run as the user IDs OpenShift assigns
+# (fixedUsers).
+openshift: null
+
+# Run CanyonOS's pods (projects, builds, the dashboard) as the user IDs their images
+# expect. Unset: yes, except on OpenShift, which assigns each namespace its own range of
+# user IDs. false only where the platform assigns them: the core and Redis images would
+# otherwise start as root, which the pods refuse. It replaces dashboard.fixedUsers, whose
+# false still counts.
+fixedUsers: null
+
 # One operator serves the whole cluster (a second install is refused), one project per
 # namespace. Empty: it runs projects in any namespace (cluster-wide permissions).
 # A list: only in these namespaces, with its permissions granted in them alone; add a
@@ -92,10 +106,6 @@ dashboard:
   existingSecret: ""
   # The API's working space: every workflow group's uploaded workflows, while it runs.
   workspaceSize: 4Gi
-  # Run its images as their own users (postgres 70, bun and caddy 1000; the API's core
-  # container as bun). Turn off on OpenShift, which assigns each namespace its own range
-  # of user IDs.
-  fixedUsers: true
   # Days the API keeps raw five-second metric ticks (read for ranges of 30 minutes or
   # less) and five-minute rollups (read for longer ranges).
   metricsRawRetentionDays: 3

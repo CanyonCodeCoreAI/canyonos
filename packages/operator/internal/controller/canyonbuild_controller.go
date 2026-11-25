@@ -13,9 +13,11 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -45,10 +47,16 @@ type CanyonBuildReconciler struct {
 	RegistryAliases map[string]string
 	// Version is the CanyonOS release of this operator, reported on every build.
 	Version string
+	// PlatformUsers runs build pods under the user IDs the platform assigns
+	// (OpenShift) instead of canyonos-core's (builders.UsePlatformUsers).
+	PlatformUsers bool
 }
 
 // +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonbuilds,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonbuilds/status,verbs=get;update;patch
+// A build owns its Job and identity; where the API server enforces owner references
+// (OpenShift), owning blocks the build's deletion, which needs this.
+// +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonbuilds/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch
 // A build's Role grants these; Kubernetes lets the operator grant only what it holds.
 // apply-project creates a project's CanyonProject the first time it is deployed.
@@ -83,6 +91,9 @@ func (r *CanyonBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		push = alias
 	}
 	want := builders.BuildJob(build, builders.BuildOptions{Image: image, BuilderAddress: r.BuilderAddress, PushRegistry: push})
+	if r.PlatformUsers {
+		builders.UsePlatformUsers(&want.Spec.Template)
+	}
 	job := &batchv1.Job{ObjectMeta: objectMeta(want.ObjectMeta)}
 	if err := ensureOwned(ctx, r.Client, r.Scheme, build, job, func() {
 		job.Labels = want.Labels
@@ -101,12 +112,21 @@ func (r *CanyonBuildReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, r.setStatus(ctx, build, phase, podName, message)
 }
 
-// ensureIdentity gives the build its own ServiceAccount, bound to a Role allowing
-// only what applying its project needs, all owned by the build.
+// ensureIdentity runs the build as the namespace's build ServiceAccount, bound to a
+// Role of the build's own allowing only what applying its project needs. The Role and
+// its binding are the build's. The ServiceAccount is the namespace's own when it has
+// one of that name, used as it is; else CanyonOS's, which every build using it owns,
+// so it goes once the last of them does.
 func (r *CanyonBuildReconciler) ensureIdentity(ctx context.Context, build *canyonosv1alpha1.CanyonBuild) error {
 	wantAccount := builders.BuildServiceAccount(build)
 	account := &corev1.ServiceAccount{ObjectMeta: objectMeta(wantAccount.ObjectMeta)}
-	if err := ensureOwned(ctx, r.Client, r.Scheme, build, account, func() { account.Labels = wantAccount.Labels }); err != nil {
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, account, func() error {
+		if !account.CreationTimestamp.IsZero() && account.Labels[builders.LabelManagedBy] != builders.ManagedBy {
+			return nil // the namespace's own
+		}
+		account.Labels = wantAccount.Labels
+		return controllerutil.SetOwnerReference(build, account, r.Scheme)
+	}); err != nil {
 		return err
 	}
 	wantRole := builders.BuildRole(build)
@@ -117,7 +137,18 @@ func (r *CanyonBuildReconciler) ensureIdentity(ctx context.Context, build *canyo
 	}); err != nil {
 		return err
 	}
-	wantBinding := builders.BuildRoleBinding(build)
+	// A Job's pod keeps the ServiceAccount it was made with: one an earlier release
+	// started runs as the build's own, which its binding must keep granting.
+	runsAs := builders.BuildServiceAccountName
+	job := &batchv1.Job{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(build), job); err == nil {
+		if name := job.Spec.Template.Spec.ServiceAccountName; name != "" {
+			runsAs = name
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	wantBinding := builders.BuildRoleBinding(build, runsAs)
 	binding := &rbacv1.RoleBinding{ObjectMeta: objectMeta(wantBinding.ObjectMeta)}
 	return ensureOwned(ctx, r.Client, r.Scheme, build, binding, func() {
 		binding.Labels = wantBinding.Labels

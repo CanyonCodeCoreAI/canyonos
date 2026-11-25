@@ -122,8 +122,12 @@
         "displayName": "Demo_Project",
         "endpoint": {
           "ingress": {
+            "annotations": {
+              "route.openshift.io/termination": "edge"
+            },
             "className": "nginx",
             "host": "agents.example.com",
+            "tls": true,
             "tlsSecretName": "agents-tls"
           },
           "routes": [

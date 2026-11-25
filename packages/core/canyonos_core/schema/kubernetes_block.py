@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 
 from canyonos_core.kubernetes.api import resource_name
+from canyonos_core.schema.errors import SchemaViolation
 from canyonos_core.schema._checks import (
     _boolean,
     _integer,
@@ -49,7 +50,9 @@ DATABASE_KEYS = frozenset({"run_as_user", "fs_group", "storage", "storage_class"
 REDIS_KEYS = frozenset(
     {"storage", "storage_class", "host", "port", "tls", "password_secret"}
 )
-ENDPOINT_KEYS = frozenset({"host", "ingress_class", "tls_secret", "url"})
+ENDPOINT_KEYS = frozenset(
+    {"host", "ingress_class", "tls_secret", "tls", "annotations", "url"}
+)
 
 # The workflow group's own objects in its namespace; no agent may be named like them.
 RESERVED_NAMES = frozenset(
@@ -81,11 +84,16 @@ class KubernetesRedis:
 @dataclass(frozen=True)
 class KubernetesEndpoint:
     """How callers outside the cluster reach the endpoint: an Ingress at `host`, or a
-    `url` the customer exposes it at. Neither: inside the cluster only."""
+    `url` the customer exposes it at. Neither: inside the cluster only. `tls`: the
+    ingress controller serves the host over https with a default certificate of its
+    own (OpenShift's router, as an edge Route), where `tls_secret` would name one;
+    `annotations` configure that controller."""
 
     host: str | None = None
     ingress_class: str | None = None
     tls_secret: str | None = None
+    tls: bool = False
+    annotations: dict = field(default_factory=dict)
     url: str | None = None
 
 
@@ -177,7 +185,7 @@ def _endpoint(collector, block):
     prefix = f"{SECTION}.endpoint"
     host = _matching(collector, node, "host", prefix, _DNS_NAME, "a lowercase DNS name")
     if "host" not in node:
-        for key in ("ingress_class", "tls_secret"):
+        for key in ("ingress_class", "tls_secret", "tls", "annotations"):
             if key in node:
                 collector.add(
                     node,
@@ -189,6 +197,8 @@ def _endpoint(collector, block):
         host=host,
         ingress_class=_string(collector, node, "ingress_class", prefix),
         tls_secret=_string(collector, node, "tls_secret", prefix),
+        tls=_boolean(collector, node, "tls", prefix, False),
+        annotations=_string_mapping(collector, node, "annotations", prefix),
         url=_matching(
             collector, node, "url", prefix, _URL, "an http:// or https:// URL"
         ),
@@ -282,6 +292,40 @@ def _agent_names(collector, node):
             )
         else:
             taken[name] = entry["name"]
+
+
+def image_name_clashes(agent_specs, config_path_of):
+    """The violations of agents whose images the in-cluster build would push to one
+    repository: it writes each run of `.`, `_` and `-` in an image's name as one `.`
+    and drops one at the end (`_registry_repository`), so `x`, `_x` and `x_` share one.
+    `config_path_of(workflow)` is the file a workflow's agents are written in."""
+    # Here, not at the top: kubernetes.commands imports the schema.
+    from canyonos_core.controller.utils.container_names import image_name
+    from canyonos_core.kubernetes.commands import _registry_repository
+
+    violations = []
+    taken = {}
+    index_in_workflow = {}
+    for agent_spec in agent_specs:
+        index = index_in_workflow.get(agent_spec.workflow, 0)
+        index_in_workflow[agent_spec.workflow] = index + 1
+        if agent_spec.type != "agent":
+            continue  # a database runs its own image, which is never built
+        repository = _registry_repository(image_name(agent_spec.name))
+        if repository in taken:
+            violations.append(
+                SchemaViolation(
+                    config_path_of(agent_spec.workflow),
+                    0,
+                    f"agents[{index}].name",
+                    f"{agent_spec.name!r} gets the same image name on Kubernetes as "
+                    f"{taken[repository]!r}: each run of '.', '_' and '-' in it is one "
+                    "'.', and none ends it; rename one",
+                )
+            )
+        else:
+            taken[repository] = agent_spec.name
+    return violations
 
 
 def parse_kubernetes(collector, node):

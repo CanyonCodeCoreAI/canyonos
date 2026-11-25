@@ -162,6 +162,50 @@ jobs:
             --set dashboard.enabled=true --set dashboard.resources=null > /tmp/no-sizes.yaml
           diff /tmp/sizes.yaml /tmp/no-sizes.yaml
 
+      # On OpenShift (its security API, or `openshift` set where the chart is rendered
+      # without the cluster), pods run as the user IDs it assigns unless fixedUsers says
+      # otherwise, and BuildKit runs under its nested-container SCC.
+      - name: OpenShift
+        run: |
+          render() {  # render <helm template args>: the chart with the builder and dashboard on
+            helm template t canyonos-operator --set dashboard.existingSecret=mine \
+              --set builder.enabled=true --set dashboard.enabled=true "$@"
+          }
+          render --api-versions security.openshift.io/v1 > /tmp/openshift.yaml
+          grep -q -- '--fixed-users=false' /tmp/openshift.yaml
+          if render --api-versions security.openshift.io/v1 --show-only templates/dashboard.yaml \
+            | grep -q runAsUser; then
+            echo "a dashboard pod asks for a fixed user on OpenShift"; exit 1
+          fi
+          grep -q 'name: system:openshift:scc:nested-container' /tmp/openshift.yaml
+          grep -q 'hostUsers: false' /tmp/openshift.yaml
+          render --api-versions security.openshift.io/v1 --set fixedUsers=true | grep -q -- '--fixed-users=true'
+          render --set openshift=true | grep -q -- '--fixed-users=false'
+          render | grep -q -- '--fixed-users=true'
+          # Elsewhere BuildKit gets none of it: hostUsers: false or OpenShift's ConfigMaps
+          # would keep its pod from starting.
+          if render --show-only templates/builder.yaml \
+            | grep -v '^ *#' | grep -qE 'hostUsers|required-scc|nested-container|openshift-service-ca|subids'; then
+            echo "BuildKit gets OpenShift settings off OpenShift"; exit 1
+          fi
+          # One registry table each, also when the built-in registry is listed as insecure.
+          render --set openshift=true \
+            --set "builder.insecureRegistries={image-registry.openshift-image-registry.svc:5000}" \
+            --show-only templates/builder.yaml > /tmp/insecure.yaml
+          [ "$(grep -c '\[registry\.' /tmp/insecure.yaml)" = 1 ]
+          # A string in any case counts; anything but true or false fails, naming it.
+          render --set-string fixedUsers=False | grep -q -- '--fixed-users=false'
+          if render --set-string openshift=yes > /tmp/yes.txt 2>&1; then
+            echo "openshift=yes was taken"; exit 1
+          fi
+          grep -q 'openshift must be true or false' /tmp/yes.txt || { cat /tmp/yes.txt; exit 1; }
+          # Earlier releases' dashboard.fixedUsers: false still counts; its default true
+          # (kept by --reuse-values) changes nothing.
+          render --set dashboard.fixedUsers=false | grep -q -- '--fixed-users=false'
+          render --api-versions security.openshift.io/v1 --set dashboard.fixedUsers=true \
+            | grep -q -- '--fixed-users=false'
+          render --set dashboard.fixedUsers=false --set fixedUsers=true | grep -q -- '--fixed-users=true'
+
   # The operator image for both platforms, as the release builds it, so a Dockerfile
   # that no longer builds fails here and not in a release. Pushes nothing.
   image:

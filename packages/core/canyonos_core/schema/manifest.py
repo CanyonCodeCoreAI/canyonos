@@ -52,6 +52,7 @@ from canyonos_core.schema.errors import SchemaError, SchemaViolation
 from canyonos_core.schema.kubernetes_block import (
     MISSING_SECTION_HINT,
     KubernetesSpec,
+    image_name_clashes,
     parse_kubernetes,
 )
 from canyonos_core.schema.functions import STUB_GLOBAL_NAMES, _functions, _identifier
@@ -964,6 +965,10 @@ def load_deployment(workspace):
                 "ssh_private_key_path",
                 _unset_message(document["ssh_private_key_path"]),
             )
+    if manifest.kubernetes is not None:
+        violations += image_name_clashes(
+            agent_specs, lambda workflow: os.path.join(workspace, workflow, CONFIG_PATH)
+        )
     violations += collector.violations
     if violations:
         raise SchemaError(violations)

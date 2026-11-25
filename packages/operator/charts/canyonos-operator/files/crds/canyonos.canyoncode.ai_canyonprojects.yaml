@@ -113,6 +113,12 @@ spec:
                         maxLength: 253
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                         type: string
+                      tls:
+                        description: |-
+                          tls says the ingress controller serves the host over https with a default
+                          certificate of its own (OpenShift's router, as an edge Route): the Ingress gets
+                          one empty tls entry, and the endpoint is published as https.
+                        type: boolean
                       tlsSecretName:
                         description: |-
                           tlsSecretName names a Secret in the namespace holding the host's certificate;

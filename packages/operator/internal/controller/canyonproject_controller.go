@@ -72,6 +72,9 @@ type CanyonProjectReconciler struct {
 	// RedisLogin fingerprints the login of a project's Redis, so its pods restart
 	// when the password rotates; nil leaves them as they are.
 	RedisLogin RedisLogin
+	// PlatformUsers runs the project's pods under the user IDs the platform assigns
+	// (OpenShift) instead of the ones its images expect (builders.UsePlatformUsers).
+	PlatformUsers bool
 }
 
 // +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonprojects,verbs=get;list;watch;update;patch
@@ -303,6 +306,9 @@ func (r *CanyonProjectReconciler) reconcileGC(
 		r.DashboardNamespace)
 	builders.StampRedisLogin(&want.Spec.Template, login)
 	builders.StampAPIKey(&want.Spec.Template, builders.SecretVersion(key))
+	if r.PlatformUsers {
+		builders.UsePlatformUsers(&want.Spec.Template)
+	}
 	deployment := &appsv1.Deployment{ObjectMeta: objectMeta(want.ObjectMeta)}
 	if err := r.ensure(ctx, project, deployment, func() {
 		deployment.Labels = want.Labels
@@ -367,6 +373,9 @@ func (r *CanyonProjectReconciler) reconcileEndpoint(
 	}
 	want := builders.EndpointStatefulSet(project, r.controllerImage(project))
 	builders.StampRedisLogin(&want.Spec.Template, login)
+	if r.PlatformUsers {
+		builders.UsePlatformUsers(&want.Spec.Template)
+	}
 	statefulSet := &appsv1.StatefulSet{}
 	err := r.Get(ctx, client.ObjectKeyFromObject(want), statefulSet)
 	if client.IgnoreNotFound(err) != nil {
@@ -477,6 +486,9 @@ func (r *CanyonProjectReconciler) reconcileRedis(
 		return false, err
 	}
 	want := builders.RedisStatefulSet(project, r.RedisImage, builders.SecretVersion(secret))
+	if r.PlatformUsers {
+		builders.UsePlatformUsers(&want.Spec.Template)
+	}
 	statefulSet := &appsv1.StatefulSet{ObjectMeta: objectMeta(want.ObjectMeta)}
 	if err := r.ensure(ctx, project, statefulSet, func() {
 		statefulSet.Labels = want.Labels

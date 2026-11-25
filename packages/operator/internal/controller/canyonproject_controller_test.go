@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -33,6 +34,7 @@ import (
 const (
 	testControllerImage   = "ghcr.io/canyoncodecoreai/canyonos-core:1.2.3"
 	testExternalRedisHost = "redis.example.internal"
+	testIngressHost       = "acme.apps.example.com"
 	testAPIKeyHashA       = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 	testAPIKeyHashB       = "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
 )
@@ -425,7 +427,7 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 	It("exposes the endpoint through an Ingress when asked, and publishes its host", func() {
 		createProject(func(p *canyonosv1alpha1.CanyonProject) {
 			p.Spec.Endpoint.Ingress = &canyonosv1alpha1.EndpointIngress{
-				Host: "acme.apps.example.com", TLSSecretName: "acme-tls",
+				Host: testIngressHost, TLSSecretName: "acme-tls",
 			}
 		})
 		reconcileProject()
@@ -434,15 +436,15 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 
 		ingress := &networkingv1.Ingress{}
 		get(ingress, builders.EndpointName)
-		Expect(ingress.Spec.Rules[0].Host).To(Equal("acme.apps.example.com"))
+		Expect(ingress.Spec.Rules[0].Host).To(Equal(testIngressHost))
 		Expect(ingress.GetOwnerReferences()[0].Kind).To(Equal("CanyonProject"))
 		project := &canyonosv1alpha1.CanyonProject{}
 		get(project, testProjectName)
-		Expect(project.Status.EndpointURL).To(Equal("https://acme.apps.example.com"))
+		Expect(project.Status.EndpointURL).To(Equal("https://" + testIngressHost))
 		deployment := &appsv1.Deployment{}
 		get(deployment, builders.GCName)
 		Expect(deployment.Spec.Template.Spec.Containers[0].Env).To(ContainElement(
-			corev1.EnvVar{Name: "CANYONOS_ENDPOINT_URL", Value: "https://acme.apps.example.com"}))
+			corev1.EnvVar{Name: "CANYONOS_ENDPOINT_URL", Value: "https://" + testIngressHost}))
 
 		By("removing the Ingress it made once the project no longer asks for one")
 		project.Spec.Endpoint.Ingress = nil
@@ -452,6 +454,22 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		get(project, testProjectName)
 		Expect(project.Status.EndpointURL).To(Equal("http://canyonos-endpoint." + namespace + ".svc:8080"))
+	})
+
+	It("asks the ingress controller for https with its own certificate when tls is set", func() {
+		createProject(func(p *canyonosv1alpha1.CanyonProject) {
+			p.Spec.Endpoint.Ingress = &canyonosv1alpha1.EndpointIngress{Host: testIngressHost, TLS: true}
+		})
+		reconcileProject()
+		markRedisReady()
+		reconcileProject()
+
+		ingress := &networkingv1.Ingress{}
+		get(ingress, builders.EndpointName)
+		Expect(ingress.Spec.TLS).To(Equal([]networkingv1.IngressTLS{{}}))
+		project := &canyonosv1alpha1.CanyonProject{}
+		get(project, testProjectName)
+		Expect(project.Status.EndpointURL).To(Equal("https://" + testIngressHost))
 	})
 
 	It("publishes a URL the customer exposes the endpoint at, and creates nothing for it", func() {
@@ -627,6 +645,84 @@ var _ = Describe("CanyonProject controller: Redis", func() {
 		get(first, testProjectName)
 		Expect(meta.FindStatusCondition(first.Status.Conditions, ConditionRedisReady).Reason).
 			NotTo(Equal("NamespaceInUse"))
+	})
+
+	It("with --fixed-users=false, leaves the user IDs of every pod but a database's unset", func() {
+		createProject(nil)
+		platform := reconciler()
+		platform.PlatformUsers = true
+		reconcileOn := func() {
+			_, err := platform.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: namespace, Name: testProjectName},
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		reconcileOn()
+		markRedisReady()
+		reconcileOn()
+		agents := &CanyonAgentReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(), PlatformUsers: true,
+			RedisFor: func(context.Context, *canyonosv1alpha1.CanyonProject) (redis.Cmdable, error) { return rdb, nil },
+		}
+		agent := validAgent(testAgentName)
+		db := validAgent("statedb")
+		db.Spec.AgentName, db.Spec.Image, db.Spec.Type = "StateDB", testDatabaseImage, builders.TypeDatabase
+		db.Spec.Database = &canyonosv1alpha1.DatabaseSpec{
+			Port: 5432, MountPath: testDatabaseMount, RunAsUser: new(int64(70)), FSGroup: new(int64(70)),
+		}
+		for _, a := range []*canyonosv1alpha1.CanyonAgent{agent, db} {
+			a.Namespace = namespace
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+			_, err := agents.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		build := &canyonosv1alpha1.CanyonBuild{
+			ObjectMeta: metav1.ObjectMeta{Name: "acme-t1", Namespace: namespace},
+			Spec: canyonosv1alpha1.CanyonBuildSpec{
+				Project: testProjectName, Config: "config/workflow_config.yaml", Registry: testRegistry, Tag: "t1",
+			},
+		}
+		Expect(k8sClient.Create(ctx, build)).To(Succeed())
+		builds := &CanyonBuildReconciler{
+			Client: k8sClient, Scheme: k8sClient.Scheme(), ControllerImage: testControllerImage,
+			BuilderAddress: "tcp://buildkitd.canyonos-build.svc:1234", PlatformUsers: true,
+		}
+		_, err := builds.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(build)})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Every Deployment, StatefulSet and Job in the namespace, so one added later is checked too.
+		templates := map[string]corev1.PodTemplateSpec{}
+		deployments := &appsv1.DeploymentList{}
+		statefulSets := &appsv1.StatefulSetList{}
+		jobs := &batchv1.JobList{}
+		for _, list := range []client.ObjectList{deployments, statefulSets, jobs} {
+			Expect(k8sClient.List(ctx, list, client.InNamespace(namespace))).To(Succeed())
+		}
+		for _, d := range deployments.Items {
+			templates["Deployment/"+d.Name] = d.Spec.Template
+		}
+		for _, s := range statefulSets.Items {
+			templates["StatefulSet/"+s.Name] = s.Spec.Template
+		}
+		for _, j := range jobs.Items {
+			templates["Job/"+j.Name] = j.Spec.Template
+		}
+		Expect(templates).To(HaveKey("Deployment/" + builders.GCName))
+		Expect(templates).To(HaveKey("StatefulSet/" + builders.EndpointWorkload))
+		Expect(templates).To(HaveKey("StatefulSet/" + builders.RedisName))
+		Expect(templates).To(HaveKey("StatefulSet/" + testAgentName))
+		Expect(templates).To(HaveKey("Job/acme-t1"))
+		for kind, template := range templates {
+			security := template.Spec.SecurityContext
+			if kind == "StatefulSet/statedb" {
+				Expect(*security.RunAsUser).To(Equal(int64(70)), kind)
+				continue
+			}
+			Expect(security.RunAsUser).To(BeNil(), kind)
+			Expect(security.RunAsGroup).To(BeNil(), kind)
+			Expect(security.FSGroup).To(BeNil(), kind)
+			Expect(*security.RunAsNonRoot).To(BeTrue(), kind)
+		}
 	})
 
 	It("uses a project's own controller image, for a registry mirror", func() {

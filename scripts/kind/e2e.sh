@@ -13,6 +13,8 @@
 #     and CANYONOS_API_KEY sets the key for one deploy;
 #   - `deploy` refuses an empty kubernetes: block, saying what to add, and a config that is not valid YAML
 #     is refused rather than taken for a Docker deployment;
+#   - `deploy` refuses two agents whose images get one name on Kubernetes (`HelloAgent` and
+#     `_HelloAgent`), naming both;
 #   - the endpoint needs the API key: none is 401 auth.missing_key, another one 401
 #     auth.invalid_key, a 503 auth.not_ready while the Global Controller has not
 #     published its hash counts as not up, `canyonos test` sends the key and never
@@ -26,6 +28,8 @@
 #     serve keeps it there;
 #   - `doctor` and `status` fail when the cluster cannot be reached, `status --json`
 #     still prints its report, and `stop` still closes the forwards;
+#   - every agent image is named as any registry takes it, OpenShift's included (one
+#     separator at a time: <group>-<workflow>.<agent>);
 #   - requests through the endpoint complete, also at /<workflow_id>, the URL
 #     `status --json` gives, as on Docker; an unknown request 404s at once, with no
 #     lookup in a dashboard database the namespace cannot reach;
@@ -44,7 +48,12 @@
 #   - a rotated Redis password restarts every pod that uses it, and requests still work;
 #   - `canyonos stop` closes both forwards, and `canyonos clean` removes the project and
 #     leaves the namespace;
-#   - with `deploy_mode: toy`, one agent StatefulSet runs the project and answers.
+#   - with `deploy_mode: toy`, one agent StatefulSet runs the project and answers; it
+#     has an image_pull_secret, which the build takes and still pushes with (it reads
+#     the Secret and writes its own docker config), and which the pods name to pull
+#     with; and the builds' ServiceAccount canyonos-build goes with the last build.
+#     The kind registry takes any login or none, so this does not prove the Secret's
+#     credentials are the ones the push used.
 #
 # Usage: scripts/kind/e2e.sh   (CANYONOS_KIND_CLUSTER names another cluster than canyonos)
 # Needs docker, kind, kubectl, bun and git on this machine; everything else runs in a
@@ -167,6 +176,25 @@ EOF
   echo "${said}" | grep -qF "add one with \`namespace\` and \`registry\` to the workflow group's \`workflow_group.yaml\`" \
     || fail "deploy did not say what to add to the kubernetes: block: ${said}"
 
+  log "deploy refuses two agents whose images get one name"
+  cp -r /w/examples/helloworld /tmp/Image_Clash
+  kubernetes_block /tmp/Image_Clash image-clash
+  printf '\n\nclass _HelloAgent(HelloAgent):\n    pass\n' >> /tmp/Image_Clash/helloworld/agents/hello_agent.py
+  /w/.venv/bin/python - /tmp/Image_Clash/helloworld/config/workflow_config.yaml <<'PY'
+import sys
+import yaml
+path = sys.argv[1]
+with open(path) as f:
+    config = yaml.safe_load(f)
+config["agents"].append({**next(a for a in config["agents"] if a["name"] == "HelloAgent"), "name": "_HelloAgent"})
+with open(path, "w") as f:
+    yaml.safe_dump(config, f, sort_keys=False)
+PY
+  said="$(canyonos_in "${ADMIN_TOKEN}" /tmp/Image_Clash deploy helloworld 2>&1)" \
+    && fail "deploy passed two agents whose images get one name"
+  echo "${said}" | grep -q "_HelloAgent' gets the same image name on Kubernetes as '[^']*HelloAgent'" \
+    || fail "deploy did not name the agents whose images get one name: ${said}"
+
   log "a config that is not valid YAML is refused, not taken for a Docker project"
   cp -r /w/examples/helloworld /tmp/Bad_Yaml
   sed -i 's/^target: docker$/target: kubernetes/' /tmp/Bad_Yaml/workflow_group.yaml
@@ -277,6 +305,17 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
     curl -s -m 10 -o /tmp/query.json -w '%{http_code}' -X POST http://127.0.0.1:8080/${workflow}/Workflow/main \
       -H "Authorization: Bearer $1" -H 'Content-Type: application/json' -d '{"query": "e2e"}'
   }
+  log "Agent images are named as every registry takes them, OpenShift's included"
+  images="$(as_deployer kubectl -n "${NS}" get canyonagents -o jsonpath='{range .items[*]}{.spec.image}{"\n"}{end}')"
+  [ -n "${images}" ] || fail "no CanyonAgent has an image"
+  for image in ${images}; do
+    case "${image}" in "${REGISTRY}"/*) ;; *) continue ;; esac  # built, not a database's
+    repository="${image#"${REGISTRY}"/}"
+    repository="${repository%@*}"
+    echo "${repository}" | grep -qE '^[a-z0-9]+([._-][a-z0-9]+)*$' \
+      || fail "an agent image OpenShift's registry would refuse: ${image}"
+  done
+
   log "Requests through the endpoint"
   requests || fail "requests"
 
@@ -654,6 +693,11 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
   cp -r /w/examples/helloworld /toy
   printf 'deploy_mode: toy\n' >> /toy/workflow_group.yaml
   kubernetes_block /toy "${NS}"
+  # The build pushes with this Secret in its docker config, and the pods name it. The
+  # kind registry takes any login or none, so a push that ignored it would pass too.
+  as_deployer kubectl -n "${NS}" create secret docker-registry registry-login \
+    --docker-server="${REGISTRY%%/*}" --docker-username=e2e --docker-password=e2e >/dev/null
+  printf '  image_pull_secret: registry-login\n' >> /toy/workflow_group.yaml
   # CANYONOS_API_KEY sets this deploy's key without saving it.
   (cd /toy && KUBECONFIG="${DEPLOYER}" CANYONOS_API_KEY="${api_key}" /w/.venv/bin/canyonos deploy helloworld) \
     || fail "toy deploy"
@@ -663,6 +707,15 @@ for path in glob.glob(os.path.expanduser("~/.canyonos/workflows/*/workflow_group
     && [ "$(as_deployer kubectl -n "${NS}" get statefulsets -l canyonos.canyoncode.ai/agent -o name)" = "statefulset.apps/${workflow}-toy" ] \
     && as_deployer kubectl -n "${NS}" get statefulset endpoint >/dev/null \
     || fail "toy runs: $(as_deployer kubectl -n "${NS}" get canyonagents,statefulsets -o name)"
+  [ "$(as_deployer kubectl -n "${NS}" get statefulset "${workflow}-toy" \
+    -o jsonpath='{.spec.template.spec.imagePullSecrets[0].name}')" = registry-login ] \
+    || fail "the toy's pods do not pull with its image_pull_secret"
+  for _ in $(seq 60); do
+    as_deployer kubectl -n "${NS}" get serviceaccount canyonos-build >/dev/null 2>&1 || break
+    sleep 1
+  done
+  as_deployer kubectl -n "${NS}" get serviceaccount canyonos-build >/dev/null 2>&1 \
+    && fail "the builds' ServiceAccount stayed after the last build"
   said="$(endpoint_up http://127.0.0.1:8080 "${api_key}")" || fail "the toy endpoint is not up with its key: ${said}"
   id="$(curl -s -m 10 -X POST http://127.0.0.1:8080/${workflow}/Workflow/main -H "Authorization: Bearer ${api_key}" \
     -H 'Content-Type: application/json' -d '{"query": "toy"}' | python -c 'import sys, json; print(json.load(sys.stdin)["request_id"])')" || fail "toy query"

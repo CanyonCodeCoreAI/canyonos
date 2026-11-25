@@ -132,6 +132,12 @@ type EndpointIngress struct {
 	// +optional
 	TLSSecretName string `json:"tlsSecretName,omitempty"`
 
+	// tls says the ingress controller serves the host over https with a default
+	// certificate of its own (OpenShift's router, as an edge Route): the Ingress gets
+	// one empty tls entry, and the endpoint is published as https.
+	// +optional
+	TLS bool `json:"tls,omitempty"`
+
 	// annotations for the Ingress, for the ingress controller in use (for example
 	// alb.ingress.kubernetes.io/scheme or route.openshift.io/termination).
 	// +optional

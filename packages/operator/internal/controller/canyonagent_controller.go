@@ -39,6 +39,10 @@ type CanyonAgentReconciler struct {
 	// RedisLogin fingerprints the login of a project's Redis, so the agent's pods
 	// restart when the password rotates; nil leaves them as they are.
 	RedisLogin RedisLogin
+	// PlatformUsers runs agents under the user IDs the platform assigns (OpenShift)
+	// instead of the one their images expect (builders.UsePlatformUsers). A database
+	// keeps the user IDs its spec names, if any.
+	PlatformUsers bool
 }
 
 // +kubebuilder:rbac:groups=canyonos.canyoncode.ai,resources=canyonagents,verbs=get;list;watch;update;patch
@@ -152,6 +156,8 @@ func (r *CanyonAgentReconciler) reconcileAgent(
 	want := builders.AgentStatefulSet(project, agent)
 	if database {
 		want = builders.DatabaseStatefulSet(project, agent)
+	} else if r.PlatformUsers {
+		builders.UsePlatformUsers(&want.Spec.Template)
 	}
 	if r.RedisLogin != nil {
 		login, err := r.RedisLogin(ctx, project)

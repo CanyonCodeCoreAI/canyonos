@@ -10,19 +10,24 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	canyonosv1alpha1 "github.com/CanyonCodeCoreAI/canyonos-internal/packages/operator/api/v1alpha1"
 	"github.com/CanyonCodeCoreAI/canyonos-internal/packages/operator/internal/builders"
 )
 
-const testBuildName = "acme-t1"
+const (
+	testBuildName = "acme-t1"
+	testRegistry  = "localhost:5001"
+)
 
 var _ = Describe("CanyonBuild controller", func() {
 	var namespace string
@@ -33,7 +38,7 @@ var _ = Describe("CanyonBuild controller", func() {
 		build := &canyonosv1alpha1.CanyonBuild{
 			ObjectMeta: metav1.ObjectMeta{Name: testBuildName, Namespace: namespace},
 			Spec: canyonosv1alpha1.CanyonBuildSpec{
-				Project: testProjectName, Config: "config/workflow_config.yaml", Registry: "localhost:5001", Tag: "t1",
+				Project: testProjectName, Config: "config/workflow_config.yaml", Registry: testRegistry, Tag: "t1",
 			},
 		}
 		if mutate != nil {
@@ -56,7 +61,7 @@ var _ = Describe("CanyonBuild controller", func() {
 		*reconciler = CanyonBuildReconciler{
 			Client: k8sClient, Scheme: k8sClient.Scheme(), ControllerImage: testControllerImage,
 			BuilderAddress:  "tcp://buildkitd.canyonos-build.svc:1234",
-			RegistryAliases: map[string]string{"localhost:5001": "kind-registry:5000"},
+			RegistryAliases: map[string]string{testRegistry: "kind-registry:5000"},
 		}
 	})
 
@@ -66,6 +71,17 @@ var _ = Describe("CanyonBuild controller", func() {
 		Expect(build.Status.OperatorVersion).To(Equal("0.1.739"))
 	})
 
+	It("with --fixed-users=false, leaves the build pod's user IDs unset", func() {
+		reconciler.PlatformUsers = true
+		reconcileBuild(newBuild(nil))
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
+		security := job.Spec.Template.Spec.SecurityContext
+		Expect(security.RunAsUser).To(BeNil())
+		Expect(security.RunAsGroup).To(BeNil())
+		Expect(*security.RunAsNonRoot).To(BeTrue())
+	})
+
 	It("fails at once on a cluster with no builder", func() {
 		reconciler.BuilderAddress = ""
 		build := reconcileBuild(newBuild(nil))
@@ -73,11 +89,11 @@ var _ = Describe("CanyonBuild controller", func() {
 		Expect(build.Status.Message).To(ContainSubstring("builder.enabled=true"))
 	})
 
-	It("runs the build as a Job with its own identity, pushing to the alias", func() {
+	It("runs the build as a Job with its own Role, pushing to the alias", func() {
 		build := reconcileBuild(newBuild(nil))
 		Expect(build.Status.Phase).To(Equal(BuildPending))
 
-		for _, obj := range []client.Object{&batchv1.Job{}, &corev1.ServiceAccount{}, &rbacv1.Role{}, &rbacv1.RoleBinding{}} {
+		for _, obj := range []client.Object{&batchv1.Job{}, &rbacv1.Role{}, &rbacv1.RoleBinding{}} {
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, obj)).To(Succeed())
 			Expect(obj.GetOwnerReferences()[0].Kind).To(Equal("CanyonBuild"))
 		}
@@ -85,6 +101,113 @@ var _ = Describe("CanyonBuild controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
 		Expect(job.Spec.Template.Spec.Containers[1].Command[2]).To(ContainSubstring("--push-registry 'kind-registry:5000'"))
 		Expect(job.Spec.Template.Spec.Containers[1].Image).To(Equal(testControllerImage))
+	})
+
+	It("runs every build in a namespace as one ServiceAccount, which the builds own", func() {
+		reconcileBuild(newBuild(nil))
+		second := reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) { b.Name = "acme-t2" }))
+
+		account := &corev1.ServiceAccount{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: builders.BuildServiceAccountName},
+			account)).To(Succeed())
+		owners := make([]string, 0, len(account.OwnerReferences))
+		for _, owner := range account.OwnerReferences {
+			Expect(owner.Controller).To(BeNil())
+			owners = append(owners, owner.Name)
+		}
+		// Kubernetes deletes it with the last of them.
+		Expect(owners).To(ConsistOf(testBuildName, second.Name))
+		for _, name := range []string{testBuildName, second.Name} {
+			job := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, job)).To(Succeed())
+			Expect(job.Spec.Template.Spec.ServiceAccountName).To(Equal(builders.BuildServiceAccountName))
+			binding := &rbacv1.RoleBinding{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, binding)).To(Succeed())
+			Expect(binding.Subjects[0].Name).To(Equal(builders.BuildServiceAccountName))
+		}
+	})
+
+	It("uses the namespace's own build ServiceAccount as it is, for its workload identity", func() {
+		own := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Name: builders.BuildServiceAccountName, Namespace: namespace,
+			Annotations: map[string]string{"eks.amazonaws.com/role-arn": "arn:aws:iam::1:role/build"},
+		}}
+		Expect(k8sClient.Create(ctx, own)).To(Succeed())
+		reconcileBuild(newBuild(nil))
+
+		account := &corev1.ServiceAccount{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(own), account)).To(Succeed())
+		Expect(account.OwnerReferences).To(BeEmpty())
+		Expect(account.Labels).To(BeEmpty())
+		Expect(account.ResourceVersion).To(Equal(own.ResourceVersion))
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
+		Expect(job.Spec.Template.Spec.ServiceAccountName).To(Equal(builders.BuildServiceAccountName))
+	})
+
+	It("keeps a build an earlier release started able to apply its project after an upgrade", func() {
+		build := newBuild(nil)
+		// What the release before canyonos-build made: the build's own ServiceAccount,
+		// bound to its Role, which its Job's pod runs as.
+		ownAccount := build.Name
+		labels := map[string]string{
+			builders.LabelName: "canyonos-build", builders.LabelManagedBy: builders.ManagedBy,
+			builders.LabelPartOf: "canyonos", builders.LabelBuild: build.Name,
+		}
+		meta := metav1.ObjectMeta{Name: build.Name, Namespace: namespace, Labels: labels}
+		job := builders.BuildJob(build, builders.BuildOptions{
+			Image: testControllerImage, BuilderAddress: reconciler.BuilderAddress, PushRegistry: "kind-registry:5000",
+		})
+		job.Spec.Template.Spec.ServiceAccountName = ownAccount
+		for _, obj := range []client.Object{
+			&corev1.ServiceAccount{ObjectMeta: meta},
+			builders.BuildRole(build),
+			&rbacv1.RoleBinding{
+				ObjectMeta: meta,
+				RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: build.Name},
+				Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: ownAccount, Namespace: namespace}},
+			},
+			job,
+		} {
+			Expect(controllerutil.SetControllerReference(build, obj, k8sClient.Scheme())).To(Succeed())
+			Expect(k8sClient.Create(ctx, obj)).To(Succeed())
+		}
+
+		reconcileBuild(build)
+
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: "system:serviceaccount:" + namespace + ":" + ownAccount,
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: namespace, Verb: "create", Group: canyonosv1alpha1.SchemeGroupVersion.Group, Resource: "canyonagents",
+			},
+		}}
+		Expect(k8sClient.Create(ctx, review)).To(Succeed())
+		Expect(review.Status.Allowed).To(BeTrue(), "the running build's pod may no longer create its CanyonAgents")
+	})
+
+	It("hands the build its registry Secret outside $HOME/.docker, where buildx writes", func() {
+		reconcileBuild(newBuild(func(b *canyonosv1alpha1.CanyonBuild) { b.Spec.RegistrySecretRef = "push-login" }))
+
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: testBuildName}, job)).To(Succeed())
+		build := job.Spec.Template.Spec.Containers[1]
+		Expect(envOf(build)).To(HaveKeyWithValue(builders.EnvRegistryAuth, "/etc/canyonos/registry/config.json"))
+		var registryVolume string
+		for _, mount := range build.VolumeMounts {
+			Expect(mount.MountPath).NotTo(HavePrefix("/tmp/.docker"))
+			if mount.MountPath == "/etc/canyonos/registry" {
+				registryVolume = mount.Name
+			}
+		}
+		Expect(registryVolume).NotTo(BeEmpty(), "nothing is mounted at /etc/canyonos/registry")
+		var secretName string
+		for _, volume := range job.Spec.Template.Spec.Volumes {
+			if volume.Name == registryVolume && volume.Secret != nil {
+				secretName = volume.Secret.SecretName
+				Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: corev1.DockerConfigJsonKey, Path: "config.json"}))
+			}
+		}
+		Expect(secretName).To(Equal("push-login"))
 	})
 
 	buildEnv := func() map[string]string {

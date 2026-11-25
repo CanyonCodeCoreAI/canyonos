@@ -32,6 +32,16 @@ const (
 	uploadTimeoutSeconds = 900
 	// buildDeadlineSeconds bounds a whole build, upload included.
 	buildDeadlineSeconds = 3600
+
+	// BuildServiceAccountName is the identity every build in a namespace runs as. One
+	// name, so what grants a build access outside the cluster can name it: EKS Pod
+	// Identity, GKE Workload Identity, an IRSA role's trust, OpenShift's image-builder
+	// role. A namespace's own ServiceAccount of that name is used as it is.
+	BuildServiceAccountName = "canyonos-build"
+	// EnvRegistryAuth names the docker config of the build's registry Secret; the
+	// build copies it into a docker config it may write (buildx keeps its state there).
+	EnvRegistryAuth = "CANYONOS_REGISTRY_AUTH"
+	registryAuthDir = "/etc/canyonos/registry"
 )
 
 // BuildOptions is what the operator knows about the cluster's builder.
@@ -66,19 +76,23 @@ func BuildRole(build *canyonosv1alpha1.CanyonBuild) *rbacv1.Role {
 	}
 }
 
-// BuildServiceAccount is the build's identity, bound to BuildRole.
+// BuildServiceAccount is the identity the namespace's builds share, bound to each
+// build's BuildRole while that build lasts.
 func BuildServiceAccount(build *canyonosv1alpha1.CanyonBuild) *corev1.ServiceAccount {
+	labels := buildLabels(build)
+	delete(labels, LabelBuild) // every build's
 	return &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{Name: build.Name, Namespace: build.Namespace, Labels: buildLabels(build)},
+		ObjectMeta: metav1.ObjectMeta{Name: BuildServiceAccountName, Namespace: build.Namespace, Labels: labels},
 	}
 }
 
-// BuildRoleBinding grants BuildRole to BuildServiceAccount.
-func BuildRoleBinding(build *canyonosv1alpha1.CanyonBuild) *rbacv1.RoleBinding {
+// BuildRoleBinding grants BuildRole to the ServiceAccount the build's pod runs as:
+// BuildServiceAccountName, or the build's own for a Job an earlier release started.
+func BuildRoleBinding(build *canyonosv1alpha1.CanyonBuild, account string) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: build.Name, Namespace: build.Namespace, Labels: buildLabels(build)},
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: build.Name},
-		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: build.Name, Namespace: build.Namespace}},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: account, Namespace: build.Namespace}},
 	}
 }
 
@@ -138,8 +152,9 @@ func BuildJob(build *canyonosv1alpha1.CanyonBuild, opts BuildOptions) *batchv1.J
 		{Name: volumeTmp, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	if build.Spec.RegistrySecretRef != "" {
-		// docker reads $HOME/.docker/config.json; the builder pushes with it.
-		mounts = append(mounts, corev1.VolumeMount{Name: "registry", MountPath: tmpDir + "/.docker", ReadOnly: true})
+		// The builder pushes with it. Not at $HOME/.docker: buildx writes there.
+		env = append(env, corev1.EnvVar{Name: EnvRegistryAuth, Value: registryAuthDir + "/config.json"})
+		mounts = append(mounts, corev1.VolumeMount{Name: "registry", MountPath: registryAuthDir, ReadOnly: true})
 		volumes = append(volumes, corev1.Volume{Name: "registry", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
 				SecretName: build.Spec.RegistrySecretRef,
@@ -150,7 +165,7 @@ func BuildJob(build *canyonosv1alpha1.CanyonBuild, opts BuildOptions) *batchv1.J
 
 	pod := corev1.PodSpec{
 		RestartPolicy:                corev1.RestartPolicyNever,
-		ServiceAccountName:           build.Name,
+		ServiceAccountName:           BuildServiceAccountName,
 		AutomountServiceAccountToken: new(true), // apply-project calls the API
 		ImagePullSecrets:             build.Spec.ImagePullSecrets,
 		SecurityContext: &corev1.PodSecurityContext{

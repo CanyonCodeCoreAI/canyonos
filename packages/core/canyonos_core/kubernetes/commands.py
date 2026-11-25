@@ -9,6 +9,7 @@ upload), `run-gc` (the Global Controller's pod), and `kubernetes-plan` and
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -21,6 +22,7 @@ from canyonos_core.cli import (
     _write_bake_file,
 )
 from canyonos_core.controller.utils.config_env import read_dotenv
+from canyonos_core.kubernetes import registry_login
 from canyonos_core.kubernetes.api import KubernetesApi, resource_name
 from canyonos_core.schema import (
     DEPLOYMENT_CONFIG,
@@ -37,15 +39,34 @@ logger = logging.getLogger(__name__)
 
 # The buildx builder `canyonos_core build --builder` registers for a remote BuildKit.
 REMOTE_BUILDER = "canyonos-remote"
+# A run of separators in an image name; a registry repository takes one at a time.
+_SEPARATORS = re.compile(r"[._-]{2,}")
+
+
+def _registry_repository(image_name):
+    """`image_name` as a repository any registry takes, a run of separators made one
+    `.` and none at the end: an agent's image is `<group>-<workflow>--<agent>` as
+    Docker names it, which OpenShift's registry refuses (an ImageStream's name allows
+    one separator between letters and digits), so it is pushed as
+    `<group>-<workflow>.<agent>`."""
+    return _SEPARATORS.sub(".", image_name).rstrip("._-")
 
 
 def _bake_remote(
-    bake_targets, project_dir, platform, address, push_registry, pull_registry, tag
+    bake_targets,
+    project_dir,
+    platform,
+    address,
+    push_registry,
+    pull_registry,
+    tag,
+    buildx_env=None,
 ):
     """Build every image on the BuildKit daemon at `address` and push it from there to
     `push_registry`; return {service: pull_registry/image@digest}, the digests read from
     bake's metadata. The two registries are one registry under the names the builder
-    and the nodes reach it by (kind: kind-registry:5000 and localhost:5001)."""
+    and the nodes reach it by (kind: kind-registry:5000 and localhost:5001).
+    `buildx_env` adds to the environment buildx pushes in."""
     if not bake_targets:
         return {}
     known = subprocess.run(
@@ -81,7 +102,7 @@ def _bake_remote(
         ],
         check=True,
         # Unchanged code must keep its digest; the default provenance differs per build.
-        env={**os.environ, "BUILDX_NO_DEFAULT_ATTESTATIONS": "1"},
+        env={**os.environ, **(buildx_env or {}), "BUILDX_NO_DEFAULT_ATTESTATIONS": "1"},
     )  # fmt: skip
     with open(metadata_path, encoding="utf-8") as f:
         metadata = json.load(f)
@@ -105,19 +126,24 @@ def _cmd_build(args):
     workspace = os.path.dirname(os.path.abspath(args.config))
     manifest, config = _checked_config(workspace)
     bake_targets = _generate_build_contexts(manifest, config, workspace)
+    for target in bake_targets:
+        target["image_name"] = _registry_repository(target["image_name"])
     from canyonos_core.stub_generator import this_machine_platform
 
     # The project's `kubernetes.platform`, else the nodes' own (this pod's): there is
     # no Docker daemon here to ask, and agents run on the cluster, not a host.
     platform = os.environ.get("CANYONOS_DOCKER_PLATFORM") or this_machine_platform()
+    push_registry = args.push_registry or args.registry
+    buildx_env = registry_login.prepare(push_registry)
     images = _bake_remote(
         bake_targets,
         os.getcwd(),
         platform,
         args.builder,
-        args.push_registry or args.registry,
+        push_registry,
         args.registry,
         args.tag,
+        buildx_env,
     )
     with open(args.output_json, "w", encoding="utf-8") as f:
         json.dump({"images": images}, f, indent=2)

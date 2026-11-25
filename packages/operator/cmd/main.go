@@ -49,7 +49,7 @@ func main() {
 	var probeAddr, controllerImage, redisImage, watchNamespaces, builderAddress, dashboardNamespace string
 	var canyonosVersion string
 	registryAliases := aliasFlag{}
-	var enableLeaderElection, secureMetrics, enableHTTP2 bool
+	var enableLeaderElection, secureMetrics, enableHTTP2, fixedUsers bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -79,6 +79,9 @@ func main() {
 			"empty for none.")
 	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
 		"Comma-separated namespaces to run projects in, for an install granted only those; empty for all.")
+	flag.BoolVar(&fixedUsers, "fixed-users", true,
+		"Run pods as the user IDs CanyonOS's images expect. --fixed-users=false leaves them to the platform, "+
+			"e.g. OpenShift, which assigns each namespace its own range.")
 	// Production logging by default; --zap-devel switches to development logs.
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
@@ -156,15 +159,17 @@ func main() {
 		ControllerImage:    controllerImage,
 		RedisFor:           projectRedis.For,
 		RedisLogin:         projectRedis.Login,
+		PlatformUsers:      !fixedUsers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonproject")
 		os.Exit(1)
 	}
 	if err := (&controller.CanyonAgentReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		RedisFor:   projectRedis.For,
-		RedisLogin: projectRedis.Login,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		RedisFor:      projectRedis.For,
+		RedisLogin:    projectRedis.Login,
+		PlatformUsers: !fixedUsers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonagent")
 		os.Exit(1)
@@ -176,6 +181,7 @@ func main() {
 		BuilderAddress:  builderAddress,
 		RegistryAliases: registryAliases,
 		Version:         canyonosVersion,
+		PlatformUsers:   !fixedUsers,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "canyonbuild")
 		os.Exit(1)

@@ -96,10 +96,11 @@ in-cluster image builder and the [dashboard](#dashboard)'s web front end come wi
 Add any of the [operator settings](#operator-settings) below.
 
 Where your cluster's policy forbids privileged namespaces or pods (Pod Security enforced
-cluster-wide, a Kyverno or Gatekeeper rule, OpenShift's default security policies), this
-install fails, or the builder never starts: install with `--set builder.enabled=false`.
-Deploys then can't build images in the cluster. See
-[Permissions and Pod Security](#permissions-and-pod-security).
+cluster-wide, a Kyverno or Gatekeeper rule), this install fails, or the builder never
+starts: install with `--set builder.enabled=false`. Deploys then can't build images in
+the cluster. See [Permissions and Pod Security](#permissions-and-pod-security).
+OpenShift 4.20 or later takes the install as it is, builder included: see
+[OpenShift](#openshift).
 
 </div>
 
@@ -114,19 +115,21 @@ matching CLI. See [Upgrading the operator](#upgrading-the-operator).
 
 Set these with `--set` on `helm install`:
 
-| Setting                            | Default                        | What it does                                                                                                                                                                             |
-| ---------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `builder.enabled`                  | `true`                         | Installs the in-cluster image builder (rootless BuildKit in `canyonos-build`). Every deploy builds with it. Turn it off only where policy forbids its privileged namespace.              |
-| `builder.registryAliases`          | `{}`                           | A registry the builder reaches by another name than the nodes pull it by. kind: `{"localhost:5001": "kind-registry:5000"}`.                                                              |
-| `builder.insecureRegistries`       | `[]`                           | Registries the builder may push to over plain HTTP. Use it for a local kind registry only.                                                                                               |
-| `dashboard.enabled`                | `true`                         | The dashboard's web front end, for every workflow on the cluster. The CanyonOS API is installed either way. See [Dashboard](#dashboard).                                                 |
-| `watchNamespaces`                  | `[]`                           | Empty: workflows may run in any namespace, and the operator has cluster-wide permissions. A list: only those namespaces, with the operator's permissions granted in them alone.          |
-| `userRoles.enabled`                | `true`                         | Whoever may administer, edit or view a namespace may do the same with its CanyonProjects, CanyonAgents and CanyonBuilds. This is what makes a namespace's edit role enough to deploy.    |
-| `imageRegistry`                    | `ghcr.io/canyoncodecoreai`     | Where CanyonOS's own images come from. Each image setting left empty is `<imageRegistry>/canyonos-<name>:<version>`. Point it at a registry mirror that holds them under the same names. |
-| `controllerImage`                  | this release's `canyonos-core` | The image that every workflow's Global Controller and endpoint, the in-cluster build, and the CanyonOS API's `core` container run.                                                       |
-| `image.repository`, `image.digest` | this release's operator        | The operator's own image. Prefer a digest.                                                                                                                                               |
-| `redisImage`                       | the operator's default         | The image of each workflow's Redis, for a mirror.                                                                                                                                        |
-| `metrics.enabled`                  | `true`                         | Serves the operator's Prometheus metrics on `8443` over HTTPS. Callers need the `canyonos-metrics-reader` role.                                                                          |
+| Setting                            | Default                           | What it does                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `builder.enabled`                  | `true`                            | Installs the in-cluster image builder (rootless BuildKit in `canyonos-build`). Every deploy builds with it. Turn it off only where policy forbids its privileged namespace.                                                                                                                                                                                                                    |
+| `builder.registryAliases`          | `{}`                              | A registry the builder reaches by another name than the nodes pull it by. kind: `{"localhost:5001": "kind-registry:5000"}`.                                                                                                                                                                                                                                                                    |
+| `builder.insecureRegistries`       | `[]`                              | Registries the builder may push to over plain HTTP. Use it for a local kind registry only.                                                                                                                                                                                                                                                                                                     |
+| `dashboard.enabled`                | `true`                            | The dashboard's web front end, for every workflow on the cluster. The CanyonOS API is installed either way. See [Dashboard](#dashboard).                                                                                                                                                                                                                                                       |
+| `watchNamespaces`                  | `[]`                              | Empty: workflows may run in any namespace, and the operator has cluster-wide permissions. A list: only those namespaces, with the operator's permissions granted in them alone.                                                                                                                                                                                                                |
+| `userRoles.enabled`                | `true`                            | Whoever may administer, edit or view a namespace may do the same with its CanyonProjects, CanyonAgents and CanyonBuilds. This is what makes a namespace's edit role enough to deploy.                                                                                                                                                                                                          |
+| `imageRegistry`                    | `ghcr.io/canyoncodecoreai`        | Where CanyonOS's own images come from. Each image setting left empty is `<imageRegistry>/canyonos-<name>:<version>`. Point it at a registry mirror that holds them under the same names.                                                                                                                                                                                                       |
+| `controllerImage`                  | this release's `canyonos-core`    | The image that every workflow's Global Controller and endpoint, the in-cluster build, and the CanyonOS API's `core` container run.                                                                                                                                                                                                                                                             |
+| `image.repository`, `image.digest` | this release's operator           | The operator's own image. Prefer a digest.                                                                                                                                                                                                                                                                                                                                                     |
+| `redisImage`                       | the operator's default            | The image of each workflow's Redis, for a mirror.                                                                                                                                                                                                                                                                                                                                              |
+| `metrics.enabled`                  | `true`                            | Serves the operator's Prometheus metrics on `8443` over HTTPS. Callers need the `canyonos-metrics-reader` role.                                                                                                                                                                                                                                                                                |
+| `openshift`                        | detected                          | Whether the cluster is OpenShift. Unset, the chart checks for OpenShift's `security.openshift.io` API. Set it when the chart is rendered without the cluster's API versions (`helm template` without `--api-versions`). See [OpenShift](#openshift).                                                                                                                                           |
+| `fixedUsers`                       | `false` on OpenShift, else `true` | Runs every CanyonOS pod (workflows, builds, the CanyonOS API and dashboard) as the user IDs its image expects. `false` leaves them to the platform, which only OpenShift does: elsewhere the core and Redis images would start as root, which the pods refuse. A database agent keeps the user IDs its `databases` settings name. Replaces `dashboard.fixedUsers`, whose `false` still counts. |
 
 The CanyonOS API's and the dashboard's own settings are under [Dashboard settings](#dashboard-settings).
 
@@ -215,6 +218,24 @@ from keeps that ID. The workflow's CanyonProject is named after its workflow gro
 folder's name and the start of that ID (`helloworld-4eeed6f3`), so two folders of the
 same name never share one in a namespace.
 
+### The build's identity
+
+Every build in a namespace runs as the ServiceAccount `canyonos-build`, so a role
+binding can name it before any build runs: on OpenShift, the `system:image-builder` role
+it pushes to the built-in registry with (see [OpenShift](#openshift)). The build's pod
+runs `buildx` and applies the workflow group's objects; each image's build steps run in
+the BuildKit pod, as its own `buildkitd` ServiceAccount, with no Kubernetes token, so
+nothing granted to `canyonos-build` reaches them. The build never pushes with cloud
+credentials (EKS Pod Identity, IRSA, GKE Workload Identity): for a cloud registry, give
+the workflow group an `image_pull_secret`.
+
+Without a `canyonos-build` in the namespace, the operator creates one and deletes it
+with the last build, along with anything you added to it, such as annotations. To keep
+your own, create it before the first deploy, without the
+`app.kubernetes.io/managed-by: canyonos-operator` label: builds then use it as it is,
+and the operator never changes or deletes it. Each build gets a Role of its own, bound
+to `canyonos-build` while it runs, allowing only what applying its workflow group needs.
+
 ### Reach the endpoint
 
 | In the `kubernetes:` block | Where the endpoint is                                                                                                                                 |
@@ -262,24 +283,26 @@ filled in from that file too, not from the workflow's own `.env`.
 
 Optional settings:
 
-| Setting                  | Default                 | What it does                                                                                                                                                                                                                                         |
-| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `platform`               | the nodes' own          | `linux/amd64` or `linux/arm64`. Left out, the build targets the architecture of the node it runs on, so an ARM cluster (Graviton, kind on Apple silicon) gets ARM images. On a mixed cluster, set it and a `node_selector` for `kubernetes.io/arch`. |
-| `image_pull_secret`      | none                    | A `docker-registry` Secret in the namespace, for a private registry. The build pushes with it, and every pod pulls with it.                                                                                                                          |
-| `service_account`        | the namespace's default | The ServiceAccount agents run as, for IRSA or workload identity. Agents get no Kubernetes API token either way.                                                                                                                                      |
-| `env_secret`             | made from `.env`        | An existing Secret to give every pod as its environment, instead of the one `canyonos deploy` makes from `.env`.                                                                                                                                     |
-| `node_selector`          | none                    | The node labels the workflow's pods must match.                                                                                                                                                                                                      |
-| `redis.storage`          | `1Gi`                   | The disk of the Redis the operator runs.                                                                                                                                                                                                             |
-| `redis.storage_class`    | the cluster's default   | The storage class of that disk.                                                                                                                                                                                                                      |
-| `redis.host`             | none                    | Your own Redis (for example, ElastiCache) instead of one the operator runs. `redis.storage` and `redis.storage_class` then don't apply.                                                                                                              |
-| `redis.port`             | `6379`                  | The port of your own Redis. Needs `redis.host`.                                                                                                                                                                                                      |
-| `redis.tls`              | `false`                 | Connect to your own Redis over TLS. Needs `redis.host`.                                                                                                                                                                                              |
-| `redis.password_secret`  | none                    | A Secret with `password`, and optionally `username`, for your own Redis. Needs `redis.host`.                                                                                                                                                         |
-| `endpoint.host`          | none                    | Expose the endpoint through an Ingress at this host, served by the cluster's default ingress class. On OpenShift, the router serves the Ingress as a Route.                                                                                          |
-| `endpoint.ingress_class` | the cluster's default   | The ingress class of that Ingress. Needs `endpoint.host`.                                                                                                                                                                                            |
-| `endpoint.tls_secret`    | none                    | A Secret with the host's certificate. The endpoint is then served over HTTPS. Needs `endpoint.host`.                                                                                                                                                 |
-| `endpoint.url`           | none                    | The URL callers use when you expose the endpoint yourself (Gateway API, a service mesh, a Route made by hand). CanyonOS creates nothing for it.                                                                                                      |
-| `databases`              | none                    | Settings for each `type: database` agent. See [Databases](#databases).                                                                                                                                                                               |
+| Setting                  | Default                 | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform`               | the nodes' own          | `linux/amd64` or `linux/arm64`. Left out, the build targets the architecture of the node it runs on, so an ARM cluster (Graviton, kind on Apple silicon) gets ARM images. On a mixed cluster, set it and a `node_selector` for `kubernetes.io/arch`.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `image_pull_secret`      | none                    | A `docker-registry` Secret in the namespace, for a private registry. The build pushes with it, and every pod pulls with it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `service_account`        | the namespace's default | The ServiceAccount agents run as, for IRSA or workload identity. Agents get no Kubernetes API token either way.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `env_secret`             | made from `.env`        | An existing Secret to give every pod as its environment, instead of the one `canyonos deploy` makes from `.env`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `node_selector`          | none                    | The node labels the workflow's pods must match.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `redis.storage`          | `1Gi`                   | The disk of the Redis the operator runs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `redis.storage_class`    | the cluster's default   | The storage class of that disk.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `redis.host`             | none                    | Your own Redis (for example, ElastiCache) instead of one the operator runs. `redis.storage` and `redis.storage_class` then don't apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `redis.port`             | `6379`                  | The port of your own Redis. Needs `redis.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `redis.tls`              | `false`                 | Connect to your own Redis over TLS. Needs `redis.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `redis.password_secret`  | none                    | A Secret with `password`, and optionally `username`, for your own Redis. Needs `redis.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `endpoint.host`          | none                    | Expose the endpoint through an Ingress at this host, served by the cluster's default ingress class. On OpenShift, the router serves the Ingress as a Route.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `endpoint.ingress_class` | the cluster's default   | The ingress class of that Ingress. Needs `endpoint.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `endpoint.tls_secret`    | none                    | A Secret with the host's certificate. The endpoint is then served over HTTPS. Needs `endpoint.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `endpoint.tls`           | `false`                 | The ingress controller serves the host over HTTPS with a default certificate of its own, so no Secret is needed: the Ingress gets one empty `tls` entry, and the endpoint's URL is `https://`. OpenShift's router makes it an edge Route with the router's certificate. Only OpenShift's router and ingress-nginx serve it over HTTPS; others, AWS Load Balancer Controller and Traefik among them, ignore the empty entry and serve plain HTTP while the URL says `https://`. Use it only with a controller whose default certificate callers trust: ingress-nginx, for one, would serve its self-signed one. Needs `endpoint.host`. |
+| `endpoint.annotations`   | none                    | Annotations for that Ingress, for the ingress controller in use. On OpenShift, `haproxy.router.openshift.io/timeout` allows calls longer than the router's 30 seconds. Needs `endpoint.host`.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `endpoint.url`           | none                    | The URL callers use when you expose the endpoint yourself (Gateway API, a service mesh, a Route made by hand). CanyonOS creates nothing for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `databases`              | none                    | Settings for each `type: database` agent. See [Databases](#databases).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Each agent's `resources` become its pods' limits: `cpu` cores, `memory` in MB, and `gpu`
 as `nvidia.com/gpu`. Each pod requests 100m of CPU and all of its memory.
@@ -375,7 +398,7 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
   the local dashboard does, it asks for the key (see
   [API key](AUTHORIZATION.md#send-the-key)).
 - **Which key it takes:** each workflow group's own, the one its `canyonos deploy
-  --api-key` set, whose sha256 its CanyonProject holds in `spec.auth.apiKeyHash`. A
+--api-key` set, whose sha256 its CanyonProject holds in `spec.auth.apiKeyHash`. A
   key shows the workflows of the workflow groups it opens and of the open ones, never
   another workflow group's. A redeploy with a new key holds from the next request; the
   API is not restarted. A CanyonProject made by hand in another namespace with a
@@ -389,17 +412,16 @@ canyonos serve    # http://127.0.0.1:8081, until canyonos stop
 
 ### Dashboard settings
 
-| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                                               |
-| -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The CanyonOS API's and the web front end's images, for a mirror. The API's `core` container runs `controllerImage`.                                                                                                                                                                        |
-| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                                      |
-| `dashboard.storage`                    | `1Gi`                                            | The database's disk, a PersistentVolumeClaim every install makes.                                                                                                                                                                                                                          |
-| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                                            |
+| Setting                                | Default                                          | What it does                                                                                                                                                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dashboard.apiImage`, `webImage`       | this release's `canyonos-api` and `canyonos-web` | The CanyonOS API's and the web front end's images, for a mirror. The API's `core` container runs `controllerImage`.                                                                                                                                                       |
+| `dashboard.dbImage`                    | `postgres:16-alpine`                             | The database's image.                                                                                                                                                                                                                                                     |
+| `dashboard.storage`                    | `1Gi`                                            | The database's disk, a PersistentVolumeClaim every install makes.                                                                                                                                                                                                         |
+| `dashboard.storageClassName`           | the cluster's default                            | The storage class of that disk.                                                                                                                                                                                                                                           |
 | `dashboard.existingSecret`             | none                                             | Your own Secret with `db-password` and a `redis-password-key` of 32 characters or more. Without it, the chart makes one on install and keeps it. Set it when the chart is rendered without the cluster (`helm template`, Argo CD), which can't keep a generated password. |
-| `dashboard.workspaceSize`              | `4Gi`                                            | The CanyonOS API's `/workspace`, which holds every uploaded workflow group while its pod runs.                                                                                                                                                                                             |
-| `dashboard.fixedUsers`                 | `true`                                           | Runs the images as their own users. Set it to `false` on OpenShift, which assigns user IDs itself.                                                                                                                                                                                         |
-| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                                        |
-| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                                                |
+| `dashboard.workspaceSize`              | `4Gi`                                            | The CanyonOS API's `/workspace`, which holds every uploaded workflow group while its pod runs.                                                                                                                                                                            |
+| `dashboard.metricsRawRetentionDays`    | `3`                                              | Days to keep raw five-second metric ticks, which ranges of 30 minutes or less read.                                                                                                                                                                                       |
+| `dashboard.metricsRollupRetentionDays` | `120`                                            | Days to keep five-minute rollups, which longer ranges read.                                                                                                                                                                                                               |
 
 ## Stop and clean up
 
@@ -440,6 +462,14 @@ dashboard's) stays as it was, so pass its new value with `--set`. A
 `dashboard.apiKeyHash` an older install set is no longer read: each workflow group's
 dashboard routes take its own key.
 
+The build pushes each agent's image as `canyonos-<group>-<workflow>.<agent>` in
+`registry`, each run of `.`, `_` and `-` written as one `.`, and none at the end.
+Releases before OpenShift support pushed `canyonos-<group>-<workflow>--<agent>`, which
+OpenShift's registry refuses, so the first deploy after an upgrade from one pushes to
+new repositories, and every agent restarts on its new image name. Where a repository
+must exist before a push, as on ECR, create the new ones first. Two agents whose images
+would get one name, such as `x` and `_x`, are refused at deploy.
+
 `--reuse-values` also keeps the builder and the dashboard's web front end as the install
 had them. An install from 0.2.x, where both were off unless set, keeps them off: to turn
 them on, add `--set builder.enabled=true --set dashboard.enabled=true`. A `helm upgrade`
@@ -462,6 +492,54 @@ The operator makes a new password, restarts Redis with it, then restarts the Glo
 Controller, the endpoint and the agents, one pod at a time, so they sign in with it.
 Until a pod restarts it can't reach Redis, so requests fail for the minute or two this
 takes.
+
+## OpenShift
+
+CanyonOS runs on OpenShift 4.20 or later, ROSA included, under OpenShift's default
+`restricted-v2` SCC; on an older cluster, `helm install` stops and says so. The chart
+sees OpenShift by its `security.openshift.io` API and:
+
+- runs every CanyonOS pod but BuildKit as the user IDs OpenShift assigns the namespace
+  (`fixedUsers`);
+- lets BuildKit run under OpenShift's `nested-container` SCC (from 4.20), made for
+  container engines in pods: its SELinux type allows the mounts each build step
+  needs, and the pod gets a user namespace of its own;
+- makes BuildKit trust the cluster's service CA, so it can push to the built-in
+  registry.
+
+Installing the chart needs cluster-admin (on ROSA: `rosa grant user cluster-admin`).
+Then, for each namespace a workflow group runs in, the namespace's admin:
+
+```bash
+oc new-project acme
+oc policy add-role-to-user system:image-builder -z canyonos-build -n acme
+```
+
+```yaml
+target: kubernetes
+kubernetes:
+  namespace: acme
+  registry: image-registry.openshift-image-registry.svc:5000/acme
+  endpoint:
+    host: acme.apps.<cluster domain>
+    tls: true
+    annotations:
+      haproxy.router.openshift.io/timeout: 5m
+```
+
+The router serves the endpoint's Ingress as a Route under the cluster's apps domain,
+over https with the router's certificate. Leave `image_pull_secret` out with the
+built-in registry: pods would pull with it instead of the namespace's own credentials
+for the registry. The build would still push as `canyonos-build`, unless the Secret
+has credentials for the built-in registry itself.
+
+A database agent runs as the namespace's user ID too, so leave its `run_as_user` and
+`fs_group` out. Its disk then belongs to that user's group but not to the user, and
+Postgres insists on owning its data folder: give it one below the disk, with
+`env: {PGDATA: /var/lib/postgresql/data/pgdata}` for a `volume_path` of
+`/var/lib/postgresql/data`. Or keep the user IDs and have the admin grant `nonroot-v2`
+to the service account its pods run as (`service_account`, else the namespace's
+`default`).
 
 ## Known limits
 
