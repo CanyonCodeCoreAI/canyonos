@@ -33,9 +33,13 @@ _CTRL_C = "\x03"
 # How often a held lock is retried: msvcrt can only wait 10 s before giving up.
 _LOCK_RETRY_SECONDS = 0.1
 
-# No console, and a process group of its own, so Ctrl+C in the terminal never reaches it.
+# A console of its own that is never shown, and a process group of its own, so Ctrl+C
+# in the terminal never reaches it and closing the terminal doesn't end it. Not
+# DETACHED_PROCESS (no console at all): the python.exe of a virtual environment, and
+# the released binary, start the real program as a child, and Windows gives a console
+# program started without a console a new, visible window of its own.
 DETACHED_PROCESS_OPTIONS = {
-    "creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 }
 
 

@@ -42,7 +42,10 @@ UTIL_COMMANDS = (
     ("logs", "Follow the running workflow group's logs"),
     ("new-app", "Create a starter CanyonOS workflow with two agents"),
     ("quickstart", "Guided first run, from a starter workflow to your first trace"),
-    ("provision", "Provision or tear down a cloud machine (e.g. AWS) to deploy from"),
+    (
+        "provision",
+        "Provision or tear down a cloud machine or cluster (AWS EC2, ROSA) to deploy with",
+    ),
     (
         "select-context",
         "Pick the workflow group commands act on outside a workflow group's folders",

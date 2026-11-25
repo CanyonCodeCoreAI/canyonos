@@ -21,7 +21,7 @@ import yaml
 
 from canyonos import env, ui
 from canyonos.forwards import close_forwards_to
-from canyonos.kubernetes_target import kubectl
+from canyonos.kubernetes_target import kubectl, sign_in_as_admin_account
 
 CLUSTER_ENV = "CANYONOS_KIND_CLUSTER"
 # Keep these in step with scripts/kind/up.sh; tests/test_kubernetes_local.py checks it.
@@ -43,7 +43,6 @@ KIND_VALUES = (
     "--set", "dashboard.enabled=true",
 )  # fmt: skip
 MIN_CPUS, MIN_MEMORY_MIB = 4, 7500
-ADMIN_ACCOUNT = "canyonos-admin"
 
 
 def cluster_name():
@@ -226,34 +225,6 @@ def _create_cluster(name, workers):
         )  # fmt: skip
 
 
-def _sign_in_with_token(name):
-    """Give the cluster an admin service account, and have the kind context sign in
-    with its token, which canyonos can send, instead of kind's client certificate."""
-    account = {
-        "apiVersion": "v1",
-        "kind": "ServiceAccount",
-        "metadata": {"name": ADMIN_ACCOUNT, "namespace": "kube-system"},
-    }
-    binding = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "ClusterRoleBinding",
-        "metadata": {"name": ADMIN_ACCOUNT},
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "ClusterRole",
-            "name": "cluster-admin",
-        },
-        "subjects": [{"kind": "ServiceAccount", **account["metadata"]}],
-    }
-    kubectl(["apply", "-f", "-"], input_text=yaml.safe_dump_all([account, binding]))
-    token = kubectl(
-        ["-n", "kube-system", "create", "token", ADMIN_ACCOUNT, "--duration=87600h"]
-    ).stdout.strip()
-    # Kind's own user name, so `kind delete cluster` removes it too.
-    kubectl(["config", "delete-user", f"kind-{name}"])
-    kubectl(["config", "set-credentials", f"kind-{name}", f"--token={token}"])
-
-
 def _connect_registry(name):
     """Point every node's localhost:5001 at the registry container, and tell tools
     where the cluster's registry is (KEP-1755)."""
@@ -379,7 +350,8 @@ def run_cluster_up(workers=None):
         with ui.status(f"Creating the kind cluster {name} (a few minutes)..."):
             _create_cluster(name, workers or 1)
     _run(["kubectl", "config", "use-context", f"kind-{name}"])
-    _sign_in_with_token(name)
+    # Kind's own user name, so `kind delete cluster` removes it too.
+    sign_in_as_admin_account(f"kind-{name}")
     with ui.status("Connecting the nodes to the registry..."):
         _connect_registry(name)
     with ui.status("Installing Calico and metrics-server..."):

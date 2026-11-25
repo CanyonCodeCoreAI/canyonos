@@ -17,6 +17,8 @@ path = [
   "**/*.md",
   "**/*.json",
   "**/*.lock",
+  # Terraform's provider lock files, which `terraform providers lock` rewrites.
+  "**/.terraform.lock.hcl",
   "**/*.svg",
   "**/*.png",
   "**/*.jpg",

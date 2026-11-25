@@ -53,6 +53,10 @@ canyonos = [
     # The quickstart's workflows; `.*` catches each one's .env.
     "starters/**/*",
     "starters/**/.*",
+    # The Terraform modules `canyonos provision` makes clusters with; `.*` catches
+    # each one's provider lock file.
+    "terraform/**/*",
+    "terraform/**/.*",
 ]
 
 [dependency-groups]

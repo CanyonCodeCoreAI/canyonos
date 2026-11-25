@@ -14,6 +14,8 @@ import subprocess
 import threading
 from urllib.parse import urlsplit
 
+import yaml
+
 from canyonos import ui
 from canyonos.constants import DEFAULT_API_PORT, deployment_config_path, read_config
 from canyonos.deployment import deployment_name
@@ -35,6 +37,8 @@ DASHBOARD_PORT = 8080
 # the Docker dashboard's API takes here, and the dashboard's 8081, as Docker does.
 LOCAL_API_PORT = 8000
 LOCAL_DASHBOARD_PORT = 8081
+# The cluster-admin ServiceAccount the CLI signs in as on a cluster it made.
+ADMIN_ACCOUNT = "canyonos-admin"
 # The fix when the cluster has no CanyonOS API there, or an older chart's.
 UPGRADE_CHART = (
     "Upgrade the CanyonOS operator chart: this CLI needs the CanyonOS API it installs"
@@ -47,11 +51,18 @@ KUBERNETES_DASHBOARD_KEY = (
 
 
 def kubectl(args, *, input_text=None, check=True, timeout=120):
-    """Run kubectl with the current context and return the finished process."""
+    """Run kubectl with the current context and return the finished process. It gets
+    `input_text` as its input, else none: never this process's own stdin, which may be
+    a channel such as the MCP server's (on Windows a child given a pipe another thread
+    is reading from can hang)."""
     try:
         result = subprocess.run(
             ["kubectl", *args],
-            input=input_text,
+            **(
+                {"input": input_text}
+                if input_text is not None
+                else {"stdin": subprocess.DEVNULL}
+            ),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -67,6 +78,34 @@ def kubectl(args, *, input_text=None, check=True, timeout=120):
             f"kubectl {' '.join(args[:3])} failed: {(result.stderr or result.stdout).strip()}"
         )
     return result
+
+
+def sign_in_as_admin_account(user):
+    """Give the cluster of the current context an admin ServiceAccount, and have the
+    kubeconfig user `user` sign in with its token, which canyonos can send and which
+    lasts ten years, in place of the credentials the cluster was made with."""
+    account = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": {"name": ADMIN_ACCOUNT, "namespace": "kube-system"},
+    }
+    binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRoleBinding",
+        "metadata": {"name": ADMIN_ACCOUNT},
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cluster-admin",
+        },
+        "subjects": [{"kind": "ServiceAccount", **account["metadata"]}],
+    }
+    kubectl(["apply", "-f", "-"], input_text=yaml.safe_dump_all([account, binding]))
+    token = kubectl(
+        ["-n", "kube-system", "create", "token", ADMIN_ACCOUNT, "--duration=87600h"]
+    ).stdout.strip()
+    kubectl(["config", "delete-user", user])
+    kubectl(["config", "set-credentials", user, f"--token={token}"])
 
 
 def current_context():
