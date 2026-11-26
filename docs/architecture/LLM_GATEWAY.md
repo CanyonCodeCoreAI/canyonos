@@ -15,30 +15,30 @@ What a user configures is in [LLM Gateway](../guides/LLM_GATEWAY.md). This page 
 
 All under `packages/core/canyonos_core/llm_gateway/`:
 
-| Module                          | Role                                                              |
-| ------------------------------- | ----------------------------------------------------------------- |
-| `__main__.py`, `config.py`      | Entry point, and settings from the environment                    |
-| `app.py`                        | The Flask app: `GET /healthz` and `/<provider>/<path>`            |
-| `core.py`                       | `proxy_request`, the per-call path                                |
-| `providers/`                    | One forwarder per provider: OpenAI, Anthropic, Bedrock            |
-| `routing.py`                    | The 5-second config refresh, and the allow-list and cap decision  |
-| `llms.py`                       | Loads `llms:config`                                               |
-| `pricing.py`, `llm_prices.json` | `LLM_HOSTS`, token prices and call cost                           |
-| `prompts.py`                    | The live prompt version per `<workflow>.<agent>.<function>`       |
-| `hooks.py`                      | Usage extraction, and the telemetry each response writes to Redis |
-| `proxy.py`                      | The mitmproxy addon on `127.0.0.1:8082` that catches LLM calls    |
+| Module                          | Role                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `__main__.py`, `config.py`      | Entry point, and settings from the environment                                                                                                         |
+| `app.py`                        | The Flask app: `GET /healthz`, `/<provider>/<path>` and `/future/<id>/<agent>/<provider>/<path>`                                                       |
+| `core.py`                       | `proxy_request`, the per-call path                                                                                                                     |
+| `providers/`                    | One forwarder per provider: OpenAI, Anthropic, Bedrock                                                                                                 |
+| `routing.py`                    | The 5-second config refresh, and the allow-list and cap decision                                                                                       |
+| `llms.py`                       | Loads `llms:config`                                                                                                                                    |
+| `pricing.py`, `llm_prices.json` | `LLM_HOSTS`, token prices and call cost                                                                                                                |
+| `prompts.py`                    | The live prompt version per `<workflow>.<agent>.<function>`                                                                                            |
+| `hooks.py`                      | Usage extraction, and the telemetry each response writes to Redis                                                                                      |
+| `proxy.py`                      | The mitmproxy addon on `127.0.0.1:8082` that catches LLM calls, and swaps the future and agent in a subprocess's proxy credentials for request headers |
 
 Pieces that live elsewhere, under `packages/core/canyonos_core/` unless noted:
 
-| Path                                                   | Role                                                             |
-| ------------------------------------------------------ | ---------------------------------------------------------------- |
-| `controller/local_controller.py`                       | Starts the gateway, waits for `/healthz`, restarts it            |
-| `controller/gateway_headers.py`                        | Adds the future and function headers in the agent's process      |
-| `controller/governance.py`                             | The spend rule's model switch                                    |
-| `reconciler/providers/shared_utils/llm_gateway_env.py` | The environment that routes the container's calls to the gateway |
-| `packages/operator/internal/builders/agent.go`         | The same environment, for Kubernetes                             |
-| `agent_base/Dockerfile`                                | The gateway's own venv, in the base of every agent image         |
-| `controller/utils/otel_writer.py`                      | Prices calls for the dashboard                                   |
+| Path                                                   | Role                                                                                                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `controller/local_controller.py`                       | Starts the gateway, waits for `/healthz`, restarts it                                                                                             |
+| `controller/gateway_headers.py`                        | Adds the future and function headers in the agent's process, and attaches that future and agent to subprocesses started while a future is running |
+| `controller/governance.py`                             | The spend rule's model switch                                                                                                                     |
+| `reconciler/providers/shared_utils/llm_gateway_env.py` | The environment that routes the container's calls to the gateway                                                                                  |
+| `packages/operator/internal/builders/agent.go`         | The same environment, for Kubernetes                                                                                                              |
+| `agent_base/Dockerfile`                                | The gateway's own venv, in the base of every agent image                                                                                          |
+| `controller/utils/otel_writer.py`                      | Prices calls for the dashboard                                                                                                                    |
 
 ## Where it runs
 
@@ -75,6 +75,7 @@ The agent is never told about the gateway. The container's environment sends its
 4. `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `AWS_CA_BUNDLE` point at a bundle the proxy writes: system roots plus its own CA. Clients then trust the proxy's certificates.
 5. The proxy decrypts only hosts in `LLM_HOSTS`. A `POST` to an OpenAI-format or Anthropic path with a string `model` in its JSON body goes to the gateway. Everything else goes to its host unchanged.
 6. `NO_PROXY` keeps localhost and the cloud metadata addresses direct, so boto3 still gets its credentials.
+7. For a subprocess started with `subprocess.Popen` while a future is running, its `HTTP_PROXY`, `HTTPS_PROXY` and Bedrock address (as long as they are still at their default values) carry the future and its agent: in the proxy address they go in the credentials position, and when the proxy receives them it swaps them for the `x-canyonos-future-id` and `x-canyonos-agent` request headers and drops the credentials; in the Bedrock address they go in the `/future/<id>/<agent>/` path, where the gateway reads them.
 
 Calls that miss all of this reach the provider directly. The user guide lists them in [Code that bypasses the gateway](../guides/LLM_GATEWAY.md#code-that-bypasses-the-gateway).
 

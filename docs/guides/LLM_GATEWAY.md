@@ -2,10 +2,11 @@
 
 Every model call an agent makes goes through the LLM Gateway inside the agent's
 container. With no setup, every agent can call every model, and the gateway records each
-call's tokens and cost on its request for the [dashboard](DASHBOARD.md). That record
-needs calls sent with httpx, as the OpenAI and Anthropic SDKs do, or boto3; see
-[Code that bypasses the gateway](#code-that-bypasses-the-gateway). How the gateway
-is built is in [LLM Gateway architecture](../architecture/LLM_GATEWAY.md).
+call's tokens and cost on its request for the [dashboard](DASHBOARD.md). In the agent's
+own process, this attribution requires that the call be made with httpx (which both the
+OpenAI and Anthropic SDKs use) or boto3; see [Code that bypasses the
+gateway](#code-that-bypasses-the-gateway). How the gateway is built is in [LLM Gateway
+architecture](../architecture/LLM_GATEWAY.md).
 
 **Estimated time:** a few minutes. Allowing or capping a model is one entry in
 `llms.yaml` and one `canyonos sync`; see
@@ -159,6 +160,15 @@ The gateway does not convert between providers: the request body, model ID and r
 parsing stay as your code wrote them. Streamed responses are relayed chunk by chunk as
 they arrive.
 
+When an agent's method is executing, LLM calls made by subprocesses it starts via
+`subprocess` (such as `run` or `Popen`) are also attributed to that method call and
+handled according to the agent's rules in `llms.yaml`. This applies to any client in the
+subprocess that reads the proxy variables, but these calls get no prompt from
+`prompts.yaml`. The following subprocesses are not covered: those started outside a
+method, those not started through `subprocess.Popen` (such as `os.system`), those that
+pass `env` as a positional argument and those whose proxy or Bedrock address is not the
+default.
+
 ## What goes in `.env`
 
 | Calls                       | Credentials                                                                                                                                                                                                                                                                                                       |
@@ -178,10 +188,11 @@ aiohttp.ClientSession(trust_env=True)
 ```
 
 That call then goes through the gateway and its limits in `llms.yaml`, but its tokens
-and cost aren't recorded on the request, and it gets no prompt from `prompts.yaml`. Only
-calls sent with httpx (the OpenAI and Anthropic SDKs) or with boto3's default session,
-such as `boto3.client("bedrock-runtime")`, carry what ties them to a request. A client
-made from your own `boto3.Session()` doesn't.
+and cost aren't recorded on the request, and it gets no prompt from `prompts.yaml`. In
+the agent's own process, only calls made with httpx (the OpenAI and Anthropic SDKs) or
+the default boto3 session (for example `boto3.client("bedrock-runtime")`) carry the
+information that ties them to a request; clients created with your own `boto3.Session()`
+do not. For subprocesses, see [Which calls go through it](#which-calls-go-through-it).
 
 A client that pins certificates, sends a client certificate (mTLS) or uses its own CA
 bundle for an LLM host fails instead, since the proxy answers with its own certificate.

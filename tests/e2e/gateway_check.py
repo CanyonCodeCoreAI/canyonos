@@ -6,15 +6,19 @@
 Runs a fake OpenAI-compatible server in the container, reached by the container's
 hostname so calls go through the proxy, and checks that LLM calls reach the gateway
 (their tokens land on the future in Redis), that streams arrive chunk by chunk, that a
-child process is caught too, that other calls pass through, that the prices the global
-controller published load, and that a killed gateway comes back. The futures it
-records tokens on are deleted from Redis when it ends, whether it passed or not.
+child process is caught too, that one started during a future is recorded on that
+future and one started outside a future keeps its environment, that proxy credentials
+naming no future are dropped, that the gateway's /future/<id>/<agent>/ route records
+on that future, that other calls pass through, that the prices the global controller
+published load, and that a killed gateway comes back. The futures it records tokens on
+are deleted from Redis when it ends, whether it passed or not.
 
 Usage (inside the replica): python gateway_check.py
 """
 
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -30,14 +34,25 @@ import redis
 
 FAKE_PORT = 18080
 FAKE_URL = f"http://{socket.gethostname()}:{FAKE_PORT}"
-GATEWAY_HEALTH = "http://127.0.0.1:8081/healthz"
+GATEWAY = "http://127.0.0.1:8081"
+GATEWAY_HEALTH = f"{GATEWAY}/healthz"
 GATEWAY_PYTHON = "/opt/canyonos-gateway/bin/python"
 RESTART_TIMEOUT = 90
 CONFIG_TIMEOUT = 20
 USAGE = {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}
 WORDS = ("one", "two", "three")
 seen = []
+# The headers of each call the fake provider gets, kept apart from `seen`.
+seen_headers = []
 created = []
+# An LLM call from a child process, with no future-id header of its own.
+CHILD_CALL = (
+    "import json, urllib.request; "
+    f"r = urllib.request.Request({FAKE_URL + '/v1/chat/completions'!r}, "
+    "data=json.dumps({'model': 'fake-model'}).encode(), "
+    "headers={'Content-Type': 'application/json'}, method='POST'); "
+    "urllib.request.urlopen(r, timeout=30).read()"
+)
 
 
 class FakeProvider(BaseHTTPRequestHandler):
@@ -53,6 +68,7 @@ class FakeProvider(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
         seen.append((self.path, body))
+        seen_headers.append({name.lower() for name in self.headers})
         if not body.get("stream"):
             out = json.dumps(
                 {"model": body.get("model"), "choices": [], "usage": USAGE}
@@ -82,6 +98,14 @@ class FakeProvider(BaseHTTPRequestHandler):
 def new_future():
     """A future id for one check, noted so it is deleted at the end."""
     created.append(uuid.uuid4().hex)
+    return created[-1]
+
+
+def new_real_future():
+    """A future id in the form futures really get (16 hex digits, controller/future.py),
+    which the proxy needs before it takes one from a child's proxy credentials; noted so
+    it is deleted at the end."""
+    created.append(secrets.token_hex(8))
     return created[-1]
 
 
@@ -249,6 +273,96 @@ def check_llm_policy():
         _restore_llms(saved)
 
 
+def check_child_processes():
+    """Install the subprocess wrapper the Local Controller installs, standing in for a
+    running future, and check what a child gets when started during one and outside
+    one; subprocess is put back as it was for the checks that follow."""
+    import gateway_headers  # the image's flat module, as local_controller.py imports it
+
+    running = {"future": "", "agent": ""}
+    original_init = subprocess.Popen.__init__
+    gateway_headers.install_child_env(
+        lambda: running["future"], lambda: running["agent"]
+    )
+    try:
+        future = new_real_future()
+        running.update(future=future, agent=os.environ["CANYONOS_AGENT_NAME"])
+        subprocess.run([sys.executable, "-c", CHILD_CALL], check=True, timeout=60)
+        check(
+            "a child process's call is recorded on its future",
+            tokens(future) == (3, 5),
+            tokens(future),
+        )
+
+        running.update(future="", agent="")
+        printed = subprocess.run(
+            [sys.executable, "-c", "import os; print(os.environ['HTTPS_PROXY'])"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        check(
+            "a child started outside a future keeps its environment",
+            printed == os.environ["HTTPS_PROXY"],
+            printed,
+        )
+    finally:
+        subprocess.Popen.__init__ = original_init
+
+
+def check_foreign_proxy_credentials():
+    """Call through the proxy with credentials that name no future: the proxy takes no
+    future from them, and drops them before the call goes on."""
+    created.append("alice")  # so a record wrongly made for it is deleted at the end
+    proxy = os.environ["HTTP_PROXY"].replace("http://", "http://alice:x@", 1)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy}))
+    before = len(seen_headers)
+    opener.open(
+        urllib.request.Request(
+            FAKE_URL + "/v1/chat/completions",
+            data=json.dumps({"model": "fake-model", "messages": []}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        ),
+        timeout=30,
+    ).read()
+    got = seen_headers[before:]
+    check(
+        "proxy credentials that name no future never reach the provider",
+        len(got) == 1 and "proxy-authorization" not in got[0],
+        got,
+    )
+    check(
+        "proxy credentials that name no future record nothing",
+        tokens("alice") is None and not REDIS.exists("future:alice"),
+    )
+
+
+def check_future_route():
+    """Call the gateway under /future/<id>/<agent>/, as a child's Bedrock endpoint does,
+    and check the call is recorded on the future the path names."""
+    name = "a call under /future/<id>/<agent>/ is recorded on that future"
+    future = new_real_future()
+    agent = os.environ["CANYONOS_AGENT_NAME"]
+    try:
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{GATEWAY}/future/{future}/{agent}/openai/v1/chat/completions",
+                data=json.dumps({"model": "fake-model", "messages": []}).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "x-canyonos-upstream": FAKE_URL,
+                },
+                method="POST",
+            ),
+            timeout=30,
+        ).read()
+    except urllib.error.HTTPError as error:
+        check(name, False, f"{error.code} {error.read()[:200]!r}")
+    check(name, tokens(future) == (3, 5), tokens(future))
+
+
 def gateway_pids():
     pids = []
     for pid in filter(str.isdigit, os.listdir("/proc")):
@@ -330,6 +444,10 @@ def main():
         tokens(future) == (3, 5),
         tokens(future),
     )
+
+    check_child_processes()
+    check_foreign_proxy_credentials()
+    check_future_route()
 
     future = new_future()
     post("/v3/collectors/1/responses", {"answers": []}, future).read()

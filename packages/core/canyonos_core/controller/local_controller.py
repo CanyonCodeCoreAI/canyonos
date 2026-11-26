@@ -102,6 +102,9 @@ gateway_headers.install(
     canyonos_context.get_current_function,
     canyonos_context.get_current_agent,
 )
+gateway_headers.install_child_env(
+    canyonos_context.get_current_future_id, canyonos_context.get_current_agent
+)
 
 
 logging.basicConfig(level=logging.INFO)
